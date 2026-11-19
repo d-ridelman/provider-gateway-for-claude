@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 /// Файл перевода в папке настроек приложения.
 pub const TRANSLATION_FILE: &str = "claude-ru.json";
 /// Меняется, когда меняется сам патч: старые копии пересобираются.
-const PATCH_REV: u32 = 5;
+const PATCH_REV: u32 = 7;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
 
@@ -350,11 +350,17 @@ pub const REAL_LOCALAPPDATA_VAR: &str = "CTP_REAL_LOCALAPPDATA";
 /// меняется на настоящее, заданное иначе — не трогается; `CTP_REAL_LOCALAPPDATA` детям
 /// не передаётся, а у самого Claude остаётся (его `app.relaunch` сохранит правку).
 /// `undefined`/`null` на месте опций заменяются, а не сдвигают колбэк. `util.promisify`
-/// у `exec`/`execFile` ведёт себя как прежде ({stdout, stderr}).
+/// у `exec`/`execFile` ведёт себя как прежде ({stdout, stderr}). Включён советник
+/// (`CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL`, его ставит запуск копии) — снимается
+/// `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS`, который Desktop даёт сессиям Code: с ним
+/// Claude Code советника не объявляет. Сессии тогда идут как Claude Code в консоли.
+/// И пустую `ANTHROPIC_DEFAULT_FABLE_MODEL` (Desktop задаёт её только из списка моделей,
+/// а вторая запись задвоила бы модель в выборе) получает сильная модель (`…_OPUS_…`):
+/// иначе `fable` у советника и субагентов уходит в `claude-fable-…`, которого у шлюза нет.
 /// shortcut: процессы `utilityProcess` (MCP на встроенном Node, терминал, хост MCP
 /// режима 3p) не тронуты — некоторые из них сами ищут данные профиля через
 /// `LOCALAPPDATA`; расширить, если это начнёт мешать на деле.
-const ENV_PRELUDE: &str = r#";(()=>{try{const real=process.env.CTP_REAL_LOCALAPPDATA,over=process.env.LOCALAPPDATA;if(!real||!over||real.toLowerCase()===over.toLowerCase())return;const cp=require("child_process"),util=require("util");const fix=(env)=>{const e=Object.assign({},env||process.env);for(const k of Object.keys(e)){const u=k.toUpperCase();if(u==="CTP_REAL_LOCALAPPDATA")delete e[k];else if(u==="LOCALAPPDATA"&&typeof e[k]==="string"&&e[k].toLowerCase()===over.toLowerCase())e[k]=real}return e};const fixArgs=(name,a)=>{a=Array.prototype.slice.call(a);if(name!=="exec"&&name!=="execSync"&&a.length>1&&(a[1]===undefined||a[1]===null))a[1]=[];const i=a.findIndex((x,j)=>j>0&&x!==null&&typeof x==="object"&&!Array.isArray(x));if(i>0){a[i]=Object.assign({},a[i],{env:fix(a[i].env)})}else{const at=(name==="exec"||name==="execSync")?1:(Array.isArray(a[1])?2:1);if(at<a.length&&(a[at]===undefined||a[at]===null))a[at]={env:fix()};else a.splice(Math.min(at,a.length),0,{env:fix()})}return a};for(const name of ["spawn","spawnSync","execFile","execFileSync","exec","execSync","fork"]){const orig=cp[name];if(typeof orig!=="function")continue;const wrapped=function(){return orig.apply(this,fixArgs(name,arguments))};const custom=orig[util.promisify.custom];if(typeof custom==="function"){wrapped[util.promisify.custom]=function(){return custom.apply(this,fixArgs(name,arguments))}}Object.defineProperty(wrapped,"name",{value:name});cp[name]=wrapped}}catch(e){}})();"#;
+const ENV_PRELUDE: &str = r#";(()=>{try{const real=process.env.CTP_REAL_LOCALAPPDATA,over=process.env.LOCALAPPDATA;if(!real||!over||real.toLowerCase()===over.toLowerCase())return;const cp=require("child_process"),util=require("util");const fix=(env)=>{const e=Object.assign({},env||process.env);const adv=Object.keys(e).some((k)=>k.toUpperCase()==="CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL"&&e[k]&&e[k]!=="0");for(const k of Object.keys(e)){const u=k.toUpperCase();if(u==="CTP_REAL_LOCALAPPDATA"||adv&&u==="CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS")delete e[k];else if(u==="LOCALAPPDATA"&&typeof e[k]==="string"&&e[k].toLowerCase()===over.toLowerCase())e[k]=real}if(adv){const key=(n)=>Object.keys(e).find((k)=>k.toUpperCase()===n);const f=key("ANTHROPIC_DEFAULT_FABLE_MODEL"),o=key("ANTHROPIC_DEFAULT_OPUS_MODEL");if(o&&e[o]&&!(f&&e[f]))e[f||"ANTHROPIC_DEFAULT_FABLE_MODEL"]=e[o]}return e};const fixArgs=(name,a)=>{a=Array.prototype.slice.call(a);if(name!=="exec"&&name!=="execSync"&&a.length>1&&(a[1]===undefined||a[1]===null))a[1]=[];const i=a.findIndex((x,j)=>j>0&&x!==null&&typeof x==="object"&&!Array.isArray(x));if(i>0){a[i]=Object.assign({},a[i],{env:fix(a[i].env)})}else{const at=(name==="exec"||name==="execSync")?1:(Array.isArray(a[1])?2:1);if(at<a.length&&(a[at]===undefined||a[at]===null))a[at]={env:fix()};else a.splice(Math.min(at,a.length),0,{env:fix()})}return a};for(const name of ["spawn","spawnSync","execFile","execFileSync","exec","execSync","fork"]){const orig=cp[name];if(typeof orig!=="function")continue;const wrapped=function(){return orig.apply(this,fixArgs(name,arguments))};const custom=orig[util.promisify.custom];if(typeof custom==="function"){wrapped[util.promisify.custom]=function(){return custom.apply(this,fixArgs(name,arguments))}}Object.defineProperty(wrapped,"name",{value:name});cp[name]=wrapped}}catch(e){}})();"#;
 
 /// Для самопроверки: есть ли вставка окружения в уже собранной копии этой версии; копии
 /// ещё нет — можно ли её встроить (точка входа главного процесса читается).
@@ -1209,6 +1215,16 @@ out.push(cp.execFileSync(process.execPath,show).toString());
 out.push(cp.spawnSync(process.execPath,show,{env:Object.assign({},process.env,{LOCALAPPDATA:"custom"})}).stdout.toString());
 out.push(cp.execSync("node -e process.stdout.write(process.env.LOCALAPPDATA)").toString());
 out.push(String(process.env.LOCALAPPDATA)+'|'+String(process.env.CTP_REAL_LOCALAPPDATA));
+// Advisor on: Desktop's ban on experimental betas is lifted; off: kept.
+const betas=["-e","process.stdout.write(String(process.env.CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS))"];
+out.push("adv:"+cp.spawnSync(process.execPath,betas,{env:Object.assign({},process.env,{CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL:"1",CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS:"1"})}).stdout.toString());
+out.push("off:"+cp.spawnSync(process.execPath,betas,{env:Object.assign({},process.env,{CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS:"1"})}).stdout.toString());
+// Empty fable gets the strong model only with the advisor on; a set one is kept.
+const fable=["-e","process.stdout.write(String(process.env.ANTHROPIC_DEFAULT_FABLE_MODEL))"];
+const roles=(more)=>Object.assign({},process.env,{ANTHROPIC_DEFAULT_OPUS_MODEL:"strong",ANTHROPIC_DEFAULT_FABLE_MODEL:""},more);
+out.push("f1:"+cp.spawnSync(process.execPath,fable,{env:roles({CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL:"1"})}).stdout.toString());
+out.push("f2:"+cp.spawnSync(process.execPath,fable,{env:roles({})}).stdout.toString());
+out.push("f3:"+cp.spawnSync(process.execPath,fable,{env:roles({CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL:"1",ANTHROPIC_DEFAULT_FABLE_MODEL:"own"})}).stdout.toString());
 // undefined/null where args or options go: the callback must still be called.
 cp.execFile("hostname",undefined,undefined,(e0)=>{out.push("cb0:"+(e0?"err":"ok"));
 cp.execFile(process.execPath,show,undefined,(e,so)=>{out.push("cb1:"+so);
@@ -1231,6 +1247,11 @@ util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.
                 "custom|undefined",
                 "C:/real",
                 "C:/over|C:/real",
+                "adv:undefined",
+                "off:1",
+                "f1:strong",
+                "f2:",
+                "f3:own",
                 "cb0:ok",
                 "cb1:C:/real|undefined",
                 "cb2:C:/real",
