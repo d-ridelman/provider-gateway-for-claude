@@ -311,45 +311,175 @@ fn convert_tools(body: &Value) -> Vec<Value> {
 /// одного инструмента MCP: например, `^[^\uD800-\uDFFF]*$` (суррогаты) или шаблоны из
 /// JS с `\uXXXX` и просмотром вперёд. Шаблон — лишь подсказка модели: входные данные
 /// всё равно проверяет сам инструмент. Чистятся строковые `pattern` и ключи
-/// `patternProperties`; в данные (`default`, `enum`, `examples`, `const`) не заходим —
-/// там `pattern` может быть просто полем значения.
+/// `patternProperties`. Ключи читаются как ключевые слова только в самой схеме: в
+/// картах «имя → схема» (`properties`, `$defs`…) имена — это просто имена свойств, а в
+/// данные (`default`, `enum`, `examples`, `const`) не заходим вовсе.
 fn portable_schema(schema: &Value) -> Value {
-    match schema {
-        Value::Object(map) => Value::Object(
-            map.iter()
-                .filter(|(key, value)| {
-                    !(key.as_str() == "pattern"
-                        && value.as_str().is_some_and(|re| !portable_regex(re)))
-                })
-                .map(|(key, value)| {
-                    let value = match key.as_str() {
-                        "default" | "enum" | "examples" | "example" | "const" => value.clone(),
-                        "patternProperties" => match value {
-                            Value::Object(props) => Value::Object(
-                                props
-                                    .iter()
-                                    .filter(|(re, _)| portable_regex(re))
-                                    .map(|(re, sub)| (re.clone(), portable_schema(sub)))
-                                    .collect(),
-                            ),
-                            other => portable_schema(other),
-                        },
-                        _ => portable_schema(value),
-                    };
-                    (key.clone(), value)
-                })
+    let Value::Object(map) = schema else {
+        // `items: [..]`, `true`/`false` и прочее без ключевых слов.
+        return match schema {
+            Value::Array(items) => Value::Array(items.iter().map(portable_schema).collect()),
+            other => other.clone(),
+        };
+    };
+    let named = |value: &Value, keep: &dyn Fn(&str) -> bool| match value {
+        Value::Object(entries) => Value::Object(
+            entries
+                .iter()
+                .filter(|(name, _)| keep(name))
+                .map(|(name, sub)| (name.clone(), portable_schema(sub)))
                 .collect(),
         ),
-        Value::Array(items) => Value::Array(items.iter().map(portable_schema).collect()),
         other => other.clone(),
+    };
+    Value::Object(
+        map.iter()
+            .filter(|(key, value)| {
+                !(key.as_str() == "pattern" && value.as_str().is_some_and(|re| !portable_regex(re)))
+            })
+            .map(|(key, value)| {
+                let value = match key.as_str() {
+                    "default" | "enum" | "examples" | "example" | "const" => value.clone(),
+                    "properties" | "$defs" | "definitions" | "dependentSchemas" => {
+                        named(value, &|_| true)
+                    }
+                    "patternProperties" => named(value, &portable_regex),
+                    _ => portable_schema(value),
+                };
+                (key.clone(), value)
+            })
+            .collect(),
+    )
+}
+
+/// Регулярка, которую примет Go `regexp` (синтаксис RE2). Разбор в дерево, а не
+/// компиляция: микросекунды даже на сотнях инструментов. Дерево Rust шире Go, поэтому
+/// поверх разбора — его ограничения (`go_compatible`). `\u` Go не знает вовсе.
+fn portable_regex(re: &str) -> bool {
+    !re.contains("\\u")
+        && regex_syntax::ast::parse::Parser::new()
+            .parse(re)
+            .is_ok_and(|ast| go_compatible(&ast, 1))
+}
+
+/// Ограничения Go `regexp/syntax`, которых нет в Rust: повтор не больше 1000 (и
+/// произведение вложенных тоже), без повтора повтора (`a++`, `a**`), флаги только
+/// `i m s U`, без `\U…`, без операций над классами (`&&`, `--`, `~~`), без `\b{…}` и
+/// свойств Unicode, которых нет в таблицах Go (`\p{Emoji}`, `\p{sc=Latin}`).
+fn go_compatible(ast: &regex_syntax::ast::Ast, outer: u64) -> bool {
+    use regex_syntax::ast::{
+        AssertionKind, Ast, GroupKind, HexLiteralKind, LiteralKind, RepetitionKind, RepetitionRange,
+    };
+    match ast {
+        Ast::Empty(_) | Ast::Dot(_) | Ast::ClassPerl(_) => true,
+        Ast::Flags(set) => go_flags(&set.flags),
+        Ast::Literal(literal) => !matches!(
+            literal.kind,
+            LiteralKind::HexFixed(HexLiteralKind::UnicodeLong)
+                | LiteralKind::HexBrace(HexLiteralKind::UnicodeLong)
+        ),
+        Ast::Assertion(assertion) => matches!(
+            assertion.kind,
+            AssertionKind::StartLine
+                | AssertionKind::EndLine
+                | AssertionKind::StartText
+                | AssertionKind::EndText
+                | AssertionKind::WordBoundary
+                | AssertionKind::NotWordBoundary
+        ),
+        Ast::ClassUnicode(class) => go_unicode_class(&class.kind),
+        Ast::ClassBracketed(class) => go_class_set(&class.kind),
+        Ast::Repetition(rep) => {
+            if matches!(*rep.ast, Ast::Repetition(_)) {
+                return false;
+            }
+            let count = match &rep.op.kind {
+                RepetitionKind::Range(
+                    RepetitionRange::Exactly(n)
+                    | RepetitionRange::AtLeast(n)
+                    | RepetitionRange::Bounded(_, n),
+                ) => u64::from(*n),
+                _ => 1,
+            };
+            let total = outer.saturating_mul(count.max(1));
+            count <= 1000 && total <= 1000 && go_compatible(&rep.ast, total)
+        }
+        Ast::Group(group) => {
+            let flags_ok = match &group.kind {
+                GroupKind::NonCapturing(flags) => go_flags(flags),
+                _ => true,
+            };
+            flags_ok && go_compatible(&group.ast, outer)
+        }
+        Ast::Alternation(alt) => alt.asts.iter().all(|a| go_compatible(a, outer)),
+        Ast::Concat(cat) => cat.asts.iter().all(|a| go_compatible(a, outer)),
     }
 }
 
-/// Регулярка, которую примет движок вида RE2. Разбор, а не компиляция: микросекунды
-/// даже на сотнях инструментов и без отказа из-за лимита размера автомата. `\u`
-/// Go не знает вовсе (в отличие от Rust), поэтому такие шаблоны тоже непереносимы.
-fn portable_regex(re: &str) -> bool {
-    !re.contains("\\u") && regex_syntax::Parser::new().parse(re).is_ok()
+fn go_flags(flags: &regex_syntax::ast::Flags) -> bool {
+    use regex_syntax::ast::{Flag, FlagsItemKind};
+    flags.items.iter().all(|item| match item.kind {
+        FlagsItemKind::Negation => true,
+        FlagsItemKind::Flag(flag) => matches!(
+            flag,
+            Flag::CaseInsensitive | Flag::MultiLine | Flag::DotMatchesNewLine | Flag::SwapGreed
+        ),
+    })
+}
+
+/// `\pL`, `\p{Lu}` (категории) и распространённые письменности есть в Go; свойства вида
+/// `\p{Alphabetic}`, `\p{Emoji}` и `name=value` — только в Rust.
+fn go_unicode_class(kind: &regex_syntax::ast::ClassUnicodeKind) -> bool {
+    use regex_syntax::ast::ClassUnicodeKind;
+    const GO_NAMES: &[&str] = &[
+        "Arabic",
+        "Armenian",
+        "Bengali",
+        "Common",
+        "Cyrillic",
+        "Devanagari",
+        "Georgian",
+        "Greek",
+        "Han",
+        "Hangul",
+        "Hebrew",
+        "Hiragana",
+        "Inherited",
+        "Katakana",
+        "Latin",
+        "Tamil",
+        "Thai",
+    ];
+    match kind {
+        ClassUnicodeKind::OneLetter(_) => true,
+        ClassUnicodeKind::Named(name) => {
+            (name.len() <= 2 && name.chars().all(|c| c.is_ascii_alphabetic()))
+                || GO_NAMES.contains(&name.as_str())
+        }
+        ClassUnicodeKind::NamedValue { .. } => false,
+    }
+}
+
+fn go_class_set(set: &regex_syntax::ast::ClassSet) -> bool {
+    use regex_syntax::ast::{ClassSet, ClassSetItem};
+    fn item(it: &ClassSetItem) -> bool {
+        match it {
+            ClassSetItem::Unicode(class) => go_unicode_class(&class.kind),
+            ClassSetItem::Bracketed(inner) => go_class_set(&inner.kind),
+            ClassSetItem::Union(union) => union.items.iter().all(item),
+            ClassSetItem::Literal(literal) => !matches!(
+                literal.kind,
+                regex_syntax::ast::LiteralKind::HexFixed(
+                    regex_syntax::ast::HexLiteralKind::UnicodeLong
+                )
+            ),
+            _ => true,
+        }
+    }
+    match set {
+        ClassSet::Item(it) => item(it),
+        ClassSet::BinaryOp(_) => false,
+    }
 }
 
 fn convert_tool_choice(value: Option<&Value>, has_tools: bool) -> (Option<Value>, Option<bool>) {
@@ -426,6 +556,57 @@ mod tests {
         let pattern_props = props["map"]["patternProperties"].as_object().unwrap();
         assert!(pattern_props.contains_key("^[a-z]+$"));
         assert!(!pattern_props.contains_key("^(?!x).*$"));
+    }
+
+    #[test]
+    fn regexes_follow_go_limits() {
+        for ok in [
+            r"^[a-z0-9-]+$",
+            r"^\d{4}-\d{2}-\d{2}$",
+            r"(?i)^[\pL\p{Lu}\p{Greek}]+$",
+            r"^\x{41}+$",
+            r"^[[:alpha:]]{1,1000}$",
+            r"^(?:a+)+$",
+            r"(?P<year>\d{4})",
+        ] {
+            assert!(portable_regex(ok), "{ok}");
+        }
+        for bad in [
+            r"^[^\uD800-\uDFFF]*$",
+            r"^[\u0000-\u007F]*$",
+            r"^\w{1,2000}$",
+            r".{1,1001}",
+            r"(?:\w{1,100}){50}",
+            r"a++",
+            r"a**",
+            r"(?x)a b",
+            r"(?u)\w",
+            r"\p{Alphabetic}",
+            r"\p{Emoji}",
+            r"\p{sc=Latin}",
+            r"[\w&&\d]",
+            r"\b{start}x",
+            r"^(?=a)a$",
+            r"\U0001F600",
+        ] {
+            assert!(!portable_regex(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn keywords_only_count_inside_a_schema() {
+        let schema = json!({"type": "object", "properties": {
+            // Properties called like keywords are schemas and get cleaned too.
+            "default": {"type": "string", "pattern": "(?=x)"},
+            "patternProperties": {"type": "string", "pattern": "(?=y)"}
+        }});
+        let out = portable_schema(&schema);
+        assert!(out["properties"]["default"].get("pattern").is_none());
+        assert!(
+            out["properties"]["patternProperties"]
+                .get("pattern")
+                .is_none()
+        );
     }
 
     fn provider() -> Provider {

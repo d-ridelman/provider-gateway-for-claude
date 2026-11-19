@@ -406,7 +406,7 @@ pub fn launch(
     // Настоящая AppData\Local для процессов, которые запускает копия (ruui::ENV_PRELUDE).
     // Из системной папки Windows, а не из окружения: приложение могли запустить из сессии
     // Claude, у которой оно само подменено.
-    if let Some(real) = real_local_appdata(&base) {
+    if let Some(real) = real_local_appdata() {
         command.env(crate::ruui::REAL_LOCALAPPDATA_VAR, real);
     }
     // Снимок до запуска: копия перепишет `claude://` и COM-класс на себя (проверено вживую).
@@ -444,19 +444,10 @@ pub fn launch(
     })
 }
 
-/// Настоящая папка AppData\Local (системная, SHGetKnownFolderPath): существует и не наша
-/// подменённая база — иначе `None`, и процессы копии останутся как раньше.
-fn real_local_appdata(base: &Path) -> Option<PathBuf> {
-    local_appdata().filter(|real| real.is_dir() && !same_dir(real, base))
-}
-
-fn same_dir(a: &Path, b: &Path) -> bool {
-    let norm = |p: &Path| {
-        p.to_string_lossy()
-            .trim_end_matches(['\\', '/'])
-            .to_ascii_lowercase()
-    };
-    norm(a) == norm(b)
+/// Настоящая папка AppData\Local (системная, SHGetKnownFolderPath), если она есть;
+/// иначе `None`, и процессы копии останутся как раньше.
+fn real_local_appdata() -> Option<PathBuf> {
+    local_appdata().filter(|real| real.is_dir())
 }
 
 #[cfg(windows)]

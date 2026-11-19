@@ -8,6 +8,11 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 - **Models for Claude Code** in Settings: a gateway model for each role Claude Code asks for — main (`sonnet`; also the gateway's model for unknown names, so unassigned roles and inheriting subagents such as Explore land on it), strong (`opus`) and fast (`haiku`). Applies to the Claude Code console, the copied command and the Code tab of Claude Desktop (`anthropicFamilyTier` in its model list).
 
+### Fixed
+
+- Code sessions in the Russian copy of Claude (and their shells, MCP servers and other tools) now see the usual `%LOCALAPPDATA%` like in the regular Claude, instead of the app's own folder; running `claude.exe` from a session no longer pops up in the copy.
+- Requests no longer fail with 400 "is not a regex" when an MCP tool schema has a pattern the provider's regex engine (Go/RE2) does not accept; such hints are dropped from the schema.
+
 ### Changed
 
 - **Copy the Claude Code command** is built from the same environment as the Claude Code button (it now includes the context window and all model roles).
