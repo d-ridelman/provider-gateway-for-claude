@@ -583,7 +583,8 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
                         "Russian can be added to this version"
                     ),
                 );
-                let env = ruui::env_prelude_applies(&app);
+                let env = crate::claude::copies_root()
+                    .is_ok_and(|root| ruui::env_prelude_ok(&app, &root));
                 check.push_optional(
                     patches.folderless && env,
                     code_tab_line(patches.folderless, env),

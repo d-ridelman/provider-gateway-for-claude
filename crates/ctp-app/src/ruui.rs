@@ -354,10 +354,24 @@ pub const REAL_LOCALAPPDATA_VAR: &str = "CTP_REAL_LOCALAPPDATA";
 /// shortcut: процессы `utilityProcess` (MCP на встроенном Node, терминал, хост MCP
 /// режима 3p) не тронуты — некоторые из них сами ищут данные профиля через
 /// `LOCALAPPDATA`; расширить, если это начнёт мешать на деле.
-const ENV_PRELUDE: &str = r#";(()=>{try{const real=process.env.CTP_REAL_LOCALAPPDATA,over=process.env.LOCALAPPDATA;if(!real||!over||real.toLowerCase()===over.toLowerCase())return;const cp=require("child_process"),util=require("util");const fix=(env)=>{const e=Object.assign({},env||process.env);for(const k of Object.keys(e)){const u=k.toUpperCase();if(u==="CTP_REAL_LOCALAPPDATA")delete e[k];else if(u==="LOCALAPPDATA"&&typeof e[k]==="string"&&e[k].toLowerCase()===over.toLowerCase())e[k]=real}return e};const fixArgs=(name,a)=>{a=Array.prototype.slice.call(a);const i=a.findIndex((x,j)=>j>0&&x!==null&&typeof x==="object"&&!Array.isArray(x));if(i>0){a[i]=Object.assign({},a[i],{env:fix(a[i].env)})}else{const at=(name==="exec"||name==="execSync")?1:(Array.isArray(a[1])?2:1);if(at<a.length&&(a[at]===undefined||a[at]===null))a[at]={env:fix()};else a.splice(Math.min(at,a.length),0,{env:fix()})}return a};for(const name of ["spawn","spawnSync","execFile","execFileSync","exec","execSync","fork"]){const orig=cp[name];if(typeof orig!=="function")continue;const wrapped=function(){return orig.apply(this,fixArgs(name,arguments))};const custom=orig[util.promisify.custom];if(typeof custom==="function"){wrapped[util.promisify.custom]=function(){return custom.apply(this,fixArgs(name,arguments))}}Object.defineProperty(wrapped,"name",{value:name});cp[name]=wrapped}}catch(e){}})();"#;
+const ENV_PRELUDE: &str = r#";(()=>{try{const real=process.env.CTP_REAL_LOCALAPPDATA,over=process.env.LOCALAPPDATA;if(!real||!over||real.toLowerCase()===over.toLowerCase())return;const cp=require("child_process"),util=require("util");const fix=(env)=>{const e=Object.assign({},env||process.env);for(const k of Object.keys(e)){const u=k.toUpperCase();if(u==="CTP_REAL_LOCALAPPDATA")delete e[k];else if(u==="LOCALAPPDATA"&&typeof e[k]==="string"&&e[k].toLowerCase()===over.toLowerCase())e[k]=real}return e};const fixArgs=(name,a)=>{a=Array.prototype.slice.call(a);if(name!=="exec"&&name!=="execSync"&&a.length>1&&(a[1]===undefined||a[1]===null))a[1]=[];const i=a.findIndex((x,j)=>j>0&&x!==null&&typeof x==="object"&&!Array.isArray(x));if(i>0){a[i]=Object.assign({},a[i],{env:fix(a[i].env)})}else{const at=(name==="exec"||name==="execSync")?1:(Array.isArray(a[1])?2:1);if(at<a.length&&(a[at]===undefined||a[at]===null))a[at]={env:fix()};else a.splice(Math.min(at,a.length),0,{env:fix()})}return a};for(const name of ["spawn","spawnSync","execFile","execFileSync","exec","execSync","fork"]){const orig=cp[name];if(typeof orig!=="function")continue;const wrapped=function(){return orig.apply(this,fixArgs(name,arguments))};const custom=orig[util.promisify.custom];if(typeof custom==="function"){wrapped[util.promisify.custom]=function(){return custom.apply(this,fixArgs(name,arguments))}}Object.defineProperty(wrapped,"name",{value:name});cp[name]=wrapped}}catch(e){}})();"#;
 
-/// Можно ли встроить вставку окружения в эту версию Claude (для самопроверки).
-pub fn env_prelude_applies(app_dir: &Path) -> bool {
+/// Для самопроверки: есть ли вставка окружения в уже собранной копии этой версии; копии
+/// ещё нет — можно ли её встроить (точка входа главного процесса читается).
+pub fn env_prelude_ok(app_dir: &Path, cache_root: &Path) -> bool {
+    let version = app_dir.file_name().unwrap_or_default();
+    let copy_asar = cache_root.join(version).join("resources").join("app.asar");
+    if copy_asar.is_file() {
+        let entry = read_asar_file(&copy_asar, "package.json")
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<Value>(&raw).ok())
+            .and_then(|pkg| pkg.get("main").and_then(Value::as_str).map(str::to_string))
+            .and_then(|main| read_asar_file(&copy_asar, main.trim_start_matches("./")).ok());
+        return entry.is_some_and(|code| {
+            code.windows(REAL_LOCALAPPDATA_VAR.len())
+                .any(|w| w == REAL_LOCALAPPDATA_VAR.as_bytes())
+        });
+    }
     env_prelude_change(&app_dir.join("resources").join("app.asar")).is_ok()
 }
 
@@ -1168,6 +1182,8 @@ mod tests {
         assert!(exe_text.contains(&header_hash(&copy.join("app.asar"))));
         assert!(!exe_text.contains(&app_hash));
         assert!(copy.join("app.asar.unpacked").join("native.node").is_file());
+        // Self-check reads the built copy: the prelude is there.
+        assert!(env_prelude_ok(&app, &cache));
         fs::remove_dir_all(&dir).unwrap();
     }
 
@@ -1193,10 +1209,11 @@ out.push(cp.execFileSync(process.execPath,show).toString());
 out.push(cp.spawnSync(process.execPath,show,{env:Object.assign({},process.env,{LOCALAPPDATA:"custom"})}).stdout.toString());
 out.push(cp.execSync("node -e process.stdout.write(process.env.LOCALAPPDATA)").toString());
 out.push(String(process.env.LOCALAPPDATA)+'|'+String(process.env.CTP_REAL_LOCALAPPDATA));
-// undefined/null where options go: the callback must still be called.
+// undefined/null where args or options go: the callback must still be called.
+cp.execFile("hostname",undefined,undefined,(e0)=>{out.push("cb0:"+(e0?"err":"ok"));
 cp.execFile(process.execPath,show,undefined,(e,so)=>{out.push("cb1:"+so);
 cp.exec("node -e process.stdout.write(process.env.LOCALAPPDATA)",null,(e2,so2)=>{out.push("cb2:"+so2);
-util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.stdout);out.push(r.stdout);console.log(JSON.stringify(out));});});});
+util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.stdout);out.push(r.stdout);console.log(JSON.stringify(out));});});});});
 "#;
         fs::write(&script, [ENV_PRELUDE, body].concat()).unwrap();
         let output = std::process::Command::new("node")
@@ -1214,6 +1231,7 @@ util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.
                 "custom|undefined",
                 "C:/real",
                 "C:/over|C:/real",
+                "cb0:ok",
                 "cb1:C:/real|undefined",
                 "cb2:C:/real",
                 "string",
