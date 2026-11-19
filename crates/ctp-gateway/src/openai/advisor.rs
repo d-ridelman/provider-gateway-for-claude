@@ -160,10 +160,14 @@ async fn read_answer(response: reqwest::Response) -> Result<String, String> {
         ));
     }
     let mut advice = String::new();
+    // Совет полный, только если поток дошёл до конца: `[DONE]` или `finish_reason`.
+    // Оборванный на полуслове совет хуже честного «недоступен».
+    let mut complete = false;
     let mut source = response.bytes_stream().eventsource();
     while let Some(event) = source.next().await {
-        let event = event.map_err(|exc| exc.to_string())?;
+        let event = event.map_err(|exc| error_chain(&exc))?;
         if event.data.trim() == "[DONE]" {
+            complete = true;
             break;
         }
         let chunk: Value = serde_json::from_str(&event.data).map_err(|_| event.data.clone())?;
@@ -173,8 +177,19 @@ async fn read_answer(response: reqwest::Response) -> Result<String, String> {
         advice.push_str(&response::content_text(
             chunk.pointer("/choices/0/delta/content"),
         ));
+        complete |= chunk
+            .pointer("/choices/0/finish_reason")
+            .and_then(Value::as_str)
+            .is_some_and(|reason| !reason.is_empty());
     }
-    Ok(advice)
+    if complete {
+        Ok(advice)
+    } else {
+        Err(format!(
+            "stream ended before the answer was complete ({} chars received)",
+            advice.chars().count()
+        ))
+    }
 }
 
 /// Ошибка с причинами: у reqwest сам текст — «error sending request», суть в источниках.
