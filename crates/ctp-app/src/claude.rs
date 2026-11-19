@@ -194,8 +194,11 @@ pub fn code_env(
         set.push(("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), opus.alias.clone()));
         // fable — уровень выше opus (советники, `model: fable`): та же сильная модель.
         set.push(("ANTHROPIC_DEFAULT_FABLE_MODEL".into(), opus.alias.clone()));
-        // Советник (`/advisor`): Claude Code объявляет его шлюзу, шлюз ведёт к сильной.
-        set.push((ADVISOR_ENV.into(), "1".into()));
+        // Советник (`/advisor`): Claude Code объявляет его шлюзу, шлюз ведёт к сильной —
+        // если она на OpenAI-совместимом провайдере (другого советника шлюз не исполняет).
+        if opus.openai {
+            set.push((ADVISOR_ENV.into(), "1".into()));
+        }
     }
     set.extend([
         // haiku задавалась и до ролей: фоновые мелочи — на основной, если быстрой нет.
@@ -415,8 +418,11 @@ pub fn launch(
     if let Some(real) = real_local_appdata() {
         command.env(crate::ruui::REAL_LOCALAPPDATA_VAR, real);
     }
-    // Советник для сессий Code: Desktop передаёт им своё окружение.
-    if role_aliases(config).opus.is_some() {
+    // Советник для сессий Code: Desktop передаёт им своё окружение. Как в консоли — только
+    // если сильная модель на OpenAI-совместимом провайдере.
+    if let Some(strong) = role_aliases(config).opus
+        && status.models.iter().any(|m| m.alias == strong && m.openai)
+    {
         command.env(ADVISOR_ENV, "1");
     }
     // Снимок до запуска: копия перепишет `claude://` и COM-класс на себя (проверено вживую).
@@ -878,6 +884,22 @@ mod tests {
             get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
             Some("1000000".into())
         );
+
+        // Сильная на Anthropic-провайдере: fable — на неё, а советника нет (шлюз его там
+        // не исполняет, и снимать запрет на беты в копии незачем).
+        let anthropic = info("anth", None, false);
+        let mixed = status_with(vec![main.clone(), anthropic.clone()]);
+        let on_anthropic = RoleAliases {
+            opus: Some(anthropic.alias.clone()),
+            ..Default::default()
+        };
+        let (_, set) = code_env(&mixed, &on_anthropic, std::iter::empty()).unwrap();
+        let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert_eq!(
+            get("ANTHROPIC_DEFAULT_FABLE_MODEL"),
+            Some(anthropic.alias.clone())
+        );
+        assert!(get(ADVISOR_ENV).is_none());
 
         // Модель роли не запущена (шлюз со старым набором) — роль как не выбранная.
         let stale = RoleAliases {

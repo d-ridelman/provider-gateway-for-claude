@@ -1065,6 +1065,8 @@ async fn advisor_calls_are_capped_even_if_the_model_keeps_calling() {
     assert_eq!(results.len(), 4, "{body}");
     assert_eq!(results[3]["content"]["error_code"], "max_uses_exceeded");
     assert!(!body.contains("\"type\":\"tool_use\""), "{body}");
+    // Вызовов для Claude Code нет — и стоп не «жду инструмент».
+    assert!(body.contains("\"stop_reason\":\"end_turn\""), "{body}");
     assert!(body.contains("event: message_stop"));
 
     let requests = upstream.received_requests().await.unwrap();
