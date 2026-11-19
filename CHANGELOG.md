@@ -6,7 +6,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Added
 
-- **Models for Claude Code** in Settings: a gateway model for each role Claude Code asks for — main (`sonnet`), strong (`opus`, also the built-in Explore subagent through a gateway) and fast (`haiku`). Applies to the Claude Code console, the copied command and the Code tab of Claude Desktop (`anthropicFamilyTier` in its model list).
+- **Models for Claude Code** in Settings: a gateway model for each role Claude Code asks for — main (`sonnet`; also the gateway's model for unknown names, so unassigned roles and inheriting subagents such as Explore land on it), strong (`opus`) and fast (`haiku`). Applies to the Claude Code console, the copied command and the Code tab of Claude Desktop (`anthropicFamilyTier` in its model list).
 
 ### Changed
 

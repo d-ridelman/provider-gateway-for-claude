@@ -40,7 +40,7 @@ pub struct ModelRef {
 }
 
 /// Роли моделей в Claude Code. `sonnet` — основная (сессия и алиас `sonnet`), `opus` —
-/// сильная (алиас `opus`, через шлюз на ней же встроенный Explore), `haiku` — быстрая
+/// сильная (алиас `opus`: субагенты с `model: opus`), `haiku` — быстрая
 /// (алиас `haiku` и фоновые мелочи). `None` — как раньше: первая модель шлюза.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRoles {

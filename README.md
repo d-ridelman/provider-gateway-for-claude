@@ -84,11 +84,11 @@ Set **Max reasoning level** on a provider and Claude offers a level picker for i
 
 ### Different models for subagents
 
-Claude Code asks for models by role: `sonnet`, `opus` and `haiku`. Settings → **Models for Claude Code** picks a gateway model for each: main (`sonnet`, also the session model), strong (`opus`; through a gateway the built-in Explore subagent runs on it) and fast (`haiku`, background tasks). It applies to the **Claude Code** console, the copied command and the Code tab of Claude Desktop (from the next **Open Claude**). A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session.
+Claude Code asks for models by role: `sonnet`, `opus` and `haiku`. Settings → **Models for Claude Code** picks a gateway model for each: main (`sonnet`: the console session, subagents that inherit the model such as Explore and Plan, and every role left unassigned), strong (`opus`, for subagents with `model: opus`) and fast (`haiku`, for subagents with `model: haiku` and background tasks). It applies to the **Claude Code** console, the copied command and the Code tab of Claude Desktop (from the next **Open Claude**). A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session.
 
 ### Claude Code by hand
 
-Settings → **Copy the Claude Code command** puts a PowerShell snippet on the clipboard with the gateway address, token and model roles, the same as the **Claude Code** button, if you prefer your own terminal.
+Settings → **Copy the Claude Code command** puts a PowerShell snippet on the clipboard with the same variables the **Claude Code** button sets (gateway address, token, model roles), if you prefer your own terminal.
 
 ## Privacy and network
 

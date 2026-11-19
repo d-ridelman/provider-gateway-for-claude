@@ -924,9 +924,11 @@ async function saveSettings() {
     el.portInput.focus();
     return;
   }
-  // Only a new port stops the gateway; then bring it back if it was running.
+  // A new port or new model roles (the main model is the gateway's default) stop the
+  // gateway; then bring it back if it was running.
   const portChanged = port !== state.config?.port;
-  const wasRunning = portChanged && (starting > 0 || !!state.status?.running);
+  const rolesChanged = ROLES.some(([role, id]) => el[id].value !== roleKey(state.config?.modelRoles?.[role]));
+  const wasRunning = (portChanged || rolesChanged) && (starting > 0 || !!state.status?.running);
   try {
     state.config = await invoke("save_settings", {
       input: {
