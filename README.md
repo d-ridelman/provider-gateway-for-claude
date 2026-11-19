@@ -82,9 +82,13 @@ A portable `.exe` is attached to each release as well. Its built-in update runs 
 
 Set **Max reasoning level** on a provider and Claude offers a level picker for its models. The gateway passes the chosen level as `reasoning_effort` (OpenAI-compatible) or `output_config.effort` (Anthropic), capped at the maximum. **Default level** is used when Claude sends none, for example Claude Code without `--effort`.
 
+### Different models for subagents
+
+Claude Code asks for models by role: `sonnet`, `opus` and `haiku`. Settings → **Models for Claude Code** picks a gateway model for each: main (`sonnet`, also the session model), strong (`opus`; through a gateway the built-in Explore subagent runs on it) and fast (`haiku`, background tasks). It applies to the **Claude Code** console, the copied command and the Code tab of Claude Desktop (from the next **Open Claude**). A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session.
+
 ### Claude Code by hand
 
-Settings → **Copy the Claude Code command** puts a PowerShell snippet with `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and the model on the clipboard, if you prefer your own terminal.
+Settings → **Copy the Claude Code command** puts a PowerShell snippet on the clipboard with the gateway address, token and model roles, the same as the **Claude Code** button, if you prefer your own terminal.
 
 ## Privacy and network
 

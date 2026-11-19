@@ -284,7 +284,23 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
         version: env!("CARGO_PKG_VERSION").to_string(),
         russian_file: dir.join(crate::ruui::TRANSLATION_FILE).is_file(),
         config_dir: dir.display().to_string(),
+        model_roles: config.model_roles.clone(),
     }
+}
+
+/// Псевдоним шлюза для модели роли; провайдера или модели больше нет — `None`.
+pub fn role_alias(
+    config: &crate::model::Config,
+    role: Option<&crate::model::ModelRef>,
+) -> Option<String> {
+    let role = role?;
+    let provider = config.providers.iter().find(|p| p.id == role.provider)?;
+    // Без `[1m]`: дописанный или убранный суффикс не сбрасывает выбор.
+    let wanted = strip_1m(&role.model).trim();
+    alias_rows(provider)
+        .into_iter()
+        .find(|row| strip_1m(&row.model).trim() == wanted)
+        .map(|row| row.alias)
 }
 
 /// Провайдер в форме, понятной шлюзу: псевдоним → ID модели (без `[1m]`).
@@ -625,5 +641,34 @@ mod tests {
         row.id = "p".into();
         let cleaned = clean_row(row).unwrap();
         assert_eq!(cleaned.models, vec!["gpt-5.2"]);
+    }
+
+    #[test]
+    fn role_points_to_a_model_by_provider_and_id() {
+        use crate::model::{Config, ModelRef};
+        let mut provider = row();
+        provider.id = "oc".into();
+        provider.models = vec!["glm-5.3[1m]".into(), "deepseek-v4".into()];
+        let config = Config {
+            providers: vec![provider.clone()],
+            ..Default::default()
+        };
+        let glm = alias_rows(&provider)[0].alias.clone();
+        let role = |provider: &str, model: &str| ModelRef {
+            provider: provider.into(),
+            model: model.into(),
+        };
+        // `[1m]` в выборе и в списке может различаться — та же модель.
+        assert_eq!(
+            role_alias(&config, Some(&role("oc", "glm-5.3"))),
+            Some(glm.clone())
+        );
+        assert_eq!(
+            role_alias(&config, Some(&role("oc", "glm-5.3[1m]"))),
+            Some(glm)
+        );
+        assert_eq!(role_alias(&config, Some(&role("oc", "gone"))), None);
+        assert_eq!(role_alias(&config, Some(&role("other", "glm-5.3"))), None);
+        assert_eq!(role_alias(&config, None), None);
     }
 }

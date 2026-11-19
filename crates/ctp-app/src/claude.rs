@@ -119,10 +119,29 @@ const HOST_ENV_PREFIXES: [&str; 22] = [
 /// Какие переменные убрать и какие задать.
 pub type CodeEnv = (Vec<String>, Vec<(String, String)>);
 
-/// Окружение Claude Code через шлюз: что убрать и что задать. Модель по умолчанию и
-/// для фоновых запросов — первая модель шлюза (как «Скопировать env»).
+/// Псевдонимы моделей, выбранных на роли `sonnet`/`opus`/`haiku` (`None` — не выбрана
+/// или её больше нет у провайдера).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RoleAliases {
+    pub sonnet: Option<String>,
+    pub opus: Option<String>,
+    pub haiku: Option<String>,
+}
+
+pub fn role_aliases(config: &Config) -> RoleAliases {
+    let roles = &config.model_roles;
+    RoleAliases {
+        sonnet: crate::store::role_alias(config, roles.sonnet.as_ref()),
+        opus: crate::store::role_alias(config, roles.opus.as_ref()),
+        haiku: crate::store::role_alias(config, roles.haiku.as_ref()),
+    }
+}
+
+/// Окружение Claude Code через шлюз: что убрать и что задать. Основная модель — роль
+/// `sonnet` или первая модель шлюза; `opus` и `haiku` без выбора — как основная.
 pub fn code_env(
     status: &UiStatus,
+    roles: &RoleAliases,
     inherited: impl Iterator<Item = String>,
 ) -> Result<CodeEnv, String> {
     let first = status.models.first().ok_or_else(|| {
@@ -131,10 +150,19 @@ pub fn code_env(
             "The gateway has no models: add a provider and a model"
         )
     })?;
-    let model = first.alias.clone();
+    // Роль, чьей модели нет среди запущенных (шлюз не перезапускали), — как не выбранная.
+    let pick = |alias: &Option<String>| {
+        alias
+            .as_ref()
+            .and_then(|alias| status.models.iter().find(|m| &m.alias == alias))
+    };
+    let main = pick(&roles.sonnet).unwrap_or(first);
+    let opus = pick(&roles.opus).unwrap_or(main);
+    let haiku = pick(&roles.haiku).unwrap_or(main);
     // Имя шлюза Claude Code не знает и считает окно 1M — у модели без `[1m]` сжатие
     // разговора началось бы слишком поздно. Как в Claude Desktop: без `[1m]` — 200K.
-    let window = if first.supports_1m {
+    // Окно одно на сессию, а субагенты ходят и в opus/haiku: 1M — только если у всех.
+    let window = if [main, opus, haiku].iter().all(|m| m.supports_1m) {
         "1000000"
     } else {
         "200000"
@@ -151,12 +179,27 @@ pub fn code_env(
             format!("http://127.0.0.1:{}", status.port),
         ),
         ("ANTHROPIC_AUTH_TOKEN".into(), status.token.clone()),
-        ("ANTHROPIC_MODEL".into(), model.clone()),
-        ("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), model.clone()),
-        ("ANTHROPIC_SMALL_FAST_MODEL".into(), model),
+        ("ANTHROPIC_MODEL".into(), main.alias.clone()),
+        ("ANTHROPIC_DEFAULT_SONNET_MODEL".into(), main.alias.clone()),
+        ("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), opus.alias.clone()),
+        ("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), haiku.alias.clone()),
+        // Устаревшее имя той же роли: его ещё читают старые версии Claude Code.
+        ("ANTHROPIC_SMALL_FAST_MODEL".into(), haiku.alias.clone()),
         ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window.into()),
     ];
     Ok((remove, set))
+}
+
+/// Команда PowerShell для своего терминала («Скопировать команду») — те же переменные,
+/// что у кнопки «Claude Code».
+pub fn code_command(status: &UiStatus, roles: &RoleAliases) -> Result<String, String> {
+    let (_, set) = code_env(status, roles, std::iter::empty())?;
+    let mut lines: Vec<String> = set
+        .iter()
+        .map(|(name, value)| format!("$env:{name}=\"{value}\""))
+        .collect();
+    lines.push("claude".into());
+    Ok(lines.join("\n"))
 }
 
 /// Переменная, через которую внутренний `cmd` получает путь к `claude`.
@@ -200,6 +243,7 @@ pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String>
     // vars_os: значение не в Unicode не должно ронять запуск — нужны только имена.
     let (remove, set) = code_env(
         status,
+        &role_aliases(config),
         std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned()),
     )?;
     let cli = find_claude_cli().ok_or_else(|| {
@@ -326,7 +370,7 @@ pub fn launch(
         }
     }
     let id = LIBRARY_ID;
-    let models = inference_models(&status.models);
+    let models = inference_models(&status.models, &role_aliases(config));
     let entry = json!({
         "inferenceProvider": "gateway",
         "inferenceGatewayBaseUrl": format!("http://127.0.0.1:{}", status.port),
@@ -439,8 +483,15 @@ pub fn copies_root() -> anyhow::Result<PathBuf> {
 }
 
 /// Модели для 3p-конфига Claude. С уровнями рассуждения — `behavesAs` и `maxEffort`
-/// (схема `inferenceModels` в Claude 6.6395.0).
-fn inference_models(models: &[crate::model::ModelInfo]) -> Vec<serde_json::Value> {
+/// (схема `inferenceModels` в Claude 6.6395.0). Выбранные роли — `anthropicFamilyTier`
+/// и `isFamilyDefault`: по ним Desktop задаёт своим сессиям Code
+/// `ANTHROPIC_DEFAULT_{SONNET,OPUS,HAIKU}_MODEL`. Одна модель — одна роль (у записи одно
+/// поле): выбрана на несколько — достаётся первой из sonnet, opus, haiku, а остальные
+/// Desktop решает сам, как без выбора.
+fn inference_models(
+    models: &[crate::model::ModelInfo],
+    roles: &RoleAliases,
+) -> Vec<serde_json::Value> {
     models
         .iter()
         .map(|model| {
@@ -453,6 +504,18 @@ fn inference_models(models: &[crate::model::ModelInfo]) -> Vec<serde_json::Value
                 ),
                 "supports1m": model.supports_1m
             });
+            let tier = [
+                ("sonnet", &roles.sonnet),
+                ("opus", &roles.opus),
+                ("haiku", &roles.haiku),
+            ]
+            .into_iter()
+            .find(|(_, alias)| alias.as_deref() == Some(model.alias.as_str()))
+            .map(|(tier, _)| tier);
+            if let Some(tier) = tier {
+                row["anthropicFamilyTier"] = json!(tier);
+                row["isFamilyDefault"] = json!(true);
+            }
             if let Some(max) = &model.max_effort {
                 // Anthropic-провайдер отдаёт настоящую модель Claude — она и есть образец.
                 // Anthropic-совместимый endpoint может отдавать и не-Claude (DeepSeek, GLM):
@@ -559,7 +622,9 @@ mod tests {
             "CLAUDE_CODE_SIMPLE",
             "MCP_TIMEOUT",
         ];
-        let (remove, set) = code_env(&status, inherited.iter().map(|s| s.to_string())).unwrap();
+        let none = RoleAliases::default();
+        let (remove, set) =
+            code_env(&status, &none, inherited.iter().map(|s| s.to_string())).unwrap();
         assert_eq!(remove.len(), 9, "{remove:?}");
         assert!(
             !remove.contains(&"MCP_TIMEOUT".to_string()),
@@ -572,18 +637,25 @@ mod tests {
         assert_eq!(get("ANTHROPIC_BASE_URL"), Some("http://127.0.0.1:17899"));
         assert_eq!(get("ANTHROPIC_AUTH_TOKEN"), Some("tok"));
         assert_eq!(get("ANTHROPIC_MODEL"), Some("claude-p-claude-p-1"));
+        // Без выбора ролей все роли — первая модель, как до появления настройки.
+        for role in ["SONNET", "OPUS", "HAIKU"] {
+            assert_eq!(
+                get(&format!("ANTHROPIC_DEFAULT_{role}_MODEL")),
+                Some("claude-p-claude-p-1")
+            );
+        }
         assert!(get("ANTHROPIC_API_KEY").is_none());
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000"));
         let mut big = status.clone();
         big.models[0].supports_1m = true;
-        let (_, set_big) = code_env(&big, std::iter::empty()).unwrap();
+        let (_, set_big) = code_env(&big, &none, std::iter::empty()).unwrap();
         assert!(set_big.contains(&("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), "1000000".into())));
 
         let empty = UiStatus {
             models: Vec::new(),
             ..status
         };
-        assert!(code_env(&empty, std::iter::empty()).is_err());
+        assert!(code_env(&empty, &none, std::iter::empty()).is_err());
 
         // Путь к claude в командную строку не попадает — только переменная.
         let line = code_command_line();
@@ -666,12 +738,20 @@ mod tests {
 
     #[test]
     fn effort_fields_only_for_providers_with_levels() {
-        let rows = inference_models(&[
-            info("deepseek", Some("max"), true),
-            info("gpt", None, true),
-            info("claude-sonnet-4-6[1m]", Some("high"), false),
-            info("glm-5", Some("max"), false),
-        ]);
+        let none = RoleAliases::default();
+        let rows = inference_models(
+            &[
+                info("deepseek", Some("max"), true),
+                info("gpt", None, true),
+                info("claude-sonnet-4-6[1m]", Some("high"), false),
+                info("glm-5", Some("max"), false),
+            ],
+            &none,
+        );
+        assert!(
+            rows.iter().all(|r| r.get("anthropicFamilyTier").is_none()),
+            "без выбора ролей конфиг как раньше"
+        );
         assert_eq!(
             rows[3]["behavesAs"], EFFORT_PROFILE,
             "не-Claude за Anthropic API"
@@ -685,8 +765,105 @@ mod tests {
         let mut named = info("deepseek-v4-pro", None, true);
         named.label = Some("DeepSeek V4 Pro".into());
         assert_eq!(
-            inference_models(&[named])[0]["labelOverride"],
+            inference_models(&[named], &none)[0]["labelOverride"],
             "DeepSeek V4 Pro · P"
         );
+    }
+
+    fn status_with(models: Vec<ModelInfo>) -> UiStatus {
+        UiStatus {
+            running: true,
+            port: 17899,
+            token: "tok".into(),
+            models,
+            log_path: String::new(),
+            claude: None,
+            update: None,
+        }
+    }
+
+    #[test]
+    fn roles_go_to_cli_env_and_desktop_tiers() {
+        let mut fast = info("fast", None, true);
+        fast.supports_1m = true;
+        let mut strong = info("strong", None, true);
+        strong.supports_1m = true;
+        let main = info("main", None, true);
+        let status = status_with(vec![fast.clone(), main.clone(), strong.clone()]);
+        let roles = RoleAliases {
+            sonnet: Some(main.alias.clone()),
+            opus: Some(strong.alias.clone()),
+            haiku: Some(fast.alias.clone()),
+        };
+        let (_, set) = code_env(&status, &roles, std::iter::empty()).unwrap();
+        let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert_eq!(get("ANTHROPIC_MODEL"), Some(main.alias.clone()));
+        assert_eq!(
+            get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
+            Some(main.alias.clone())
+        );
+        assert_eq!(
+            get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+            Some(strong.alias.clone())
+        );
+        assert_eq!(
+            get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+            Some(fast.alias.clone())
+        );
+        assert_eq!(get("ANTHROPIC_SMALL_FAST_MODEL"), Some(fast.alias.clone()));
+        // Основная без 1M — окно 200K для всей сессии, даже если у других 1M.
+        assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000".into()));
+
+        // Только opus выбран: основная и haiku — первая модель.
+        let only_opus = RoleAliases {
+            opus: Some(strong.alias.clone()),
+            ..Default::default()
+        };
+        let (_, set) = code_env(&status, &only_opus, std::iter::empty()).unwrap();
+        let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+        assert_eq!(get("ANTHROPIC_MODEL"), Some(fast.alias.clone()));
+        assert_eq!(
+            get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+            Some(fast.alias.clone())
+        );
+        assert_eq!(
+            get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
+            Some(strong.alias.clone())
+        );
+        assert_eq!(
+            get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
+            Some("1000000".into())
+        );
+
+        // Модель роли не запущена (шлюз со старым набором) — роль как не выбранная.
+        let stale = RoleAliases {
+            sonnet: Some("claude-gone".into()),
+            ..Default::default()
+        };
+        let (_, set) = code_env(&status, &stale, std::iter::empty()).unwrap();
+        assert!(set.contains(&("ANTHROPIC_MODEL".into(), fast.alias.clone())));
+
+        // Desktop: роль — в записи модели; одна модель на две роли — первая из sonnet, opus.
+        let rows = inference_models(&status.models, &roles);
+        assert_eq!(rows[0]["anthropicFamilyTier"], "haiku");
+        assert_eq!(rows[1]["anthropicFamilyTier"], "sonnet");
+        assert_eq!(rows[2]["anthropicFamilyTier"], "opus");
+        assert!(rows.iter().all(|r| r["isFamilyDefault"] == true));
+        let shared = RoleAliases {
+            sonnet: Some(main.alias.clone()),
+            opus: Some(main.alias.clone()),
+            haiku: None,
+        };
+        let rows = inference_models(&status.models, &shared);
+        assert_eq!(rows[1]["anthropicFamilyTier"], "sonnet");
+        assert!(rows[0].get("anthropicFamilyTier").is_none());
+
+        // Команда для своего терминала — из того же окружения.
+        let text = code_command(&status, &roles).unwrap();
+        assert!(text.contains(&format!(
+            "$env:ANTHROPIC_DEFAULT_OPUS_MODEL=\"{}\"",
+            strong.alias
+        )));
+        assert!(text.ends_with("\nclaude"));
     }
 }

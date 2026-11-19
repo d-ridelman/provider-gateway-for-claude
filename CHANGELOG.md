@@ -2,6 +2,17 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-11-19
+
+### Added
+
+- **Models for Claude Code** in Settings: a gateway model for each role Claude Code asks for — main (`sonnet`), strong (`opus`, also the built-in Explore subagent through a gateway) and fast (`haiku`). Applies to the Claude Code console, the copied command and the Code tab of Claude Desktop (`anthropicFamilyTier` in its model list).
+
+### Changed
+
+- **Copy the Claude Code command** is built from the same environment as the Claude Code button (it now includes the context window and all model roles).
+- The console's context window is 1M only when every role's model supports 1M.
+
 ## [0.1.0] - 2026-11-19
 
 The first public release.
@@ -21,4 +32,5 @@ The first public release.
 - Updates from GitHub Releases, verified with the signing key built into the app.
 - Provider keys in Windows Credential Manager; the gateway requires a local token.
 
+[0.2.0]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.0
 [0.1.0]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.1.0

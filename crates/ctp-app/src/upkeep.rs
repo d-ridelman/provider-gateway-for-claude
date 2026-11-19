@@ -21,12 +21,14 @@ const TRANSLATION_META: &str = "claude-ru.meta.json";
 const TRANSLATION_URL: &str = "https://claude.ai/i18n/ru.json";
 const MAX_TRANSLATION: u64 = 64 * 1024 * 1024;
 /// Поля 3p-конфига, которые пишет приложение (`claude.rs`), и модель-образец уровней.
-const CONFIG_FIELDS: [&str; 6] = [
+const CONFIG_FIELDS: [&str; 8] = [
     "inferenceModels",
     "labelOverride",
     "supports1m",
     "behavesAs",
     "maxEffort",
+    "anthropicFamilyTier",
+    "isFamilyDefault",
     crate::claude::EFFORT_PROFILE,
 ];
 

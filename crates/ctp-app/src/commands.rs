@@ -179,6 +179,15 @@ pub fn save_settings(
         .map(|lang| lang.trim().to_string())
         .filter(|lang| lang == "ru" || lang == "en");
     next.auto_update = input.auto_update;
+    // Роль без провайдера или модели — не выбрана (пустой выбор в окне).
+    let keep = |role: Option<crate::model::ModelRef>| {
+        role.filter(|r| !r.provider.trim().is_empty() && !r.model.trim().is_empty())
+    };
+    next.model_roles = crate::model::ModelRoles {
+        sonnet: keep(input.model_roles.sonnet),
+        opus: keep(input.model_roles.opus),
+        haiku: keep(input.model_roles.haiku),
+    };
     store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
     *config = next;
     crate::i18n::apply(config.language.as_deref());
@@ -189,6 +198,13 @@ pub fn save_settings(
         runtime::stop(&shared);
     }
     Ok(ui)
+}
+
+/// «Скопировать команду для Claude Code»: те же переменные, что у кнопки «Claude Code».
+#[tauri::command]
+pub fn code_command(shared: State<'_, AppShared>) -> Result<String, String> {
+    let roles = claude::role_aliases(&shared.config.lock().unwrap());
+    claude::code_command(&runtime::status(&shared), &roles)
 }
 
 #[tauri::command]

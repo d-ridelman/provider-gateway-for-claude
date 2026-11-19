@@ -52,7 +52,7 @@ const el = Object.fromEntries(
     "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
     "dialogText", "dialogOk", "dialogCancel", "dialogAlt", "dialogCheckRow", "dialogCheck", "dialogCheckText",
-    "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn",
+    "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn", "roleSonnet", "roleOpus", "roleHaiku",
   ].map((id) => [id, $(id)]),
 );
 el.form = el.providerForm;
@@ -356,8 +356,53 @@ function settingsDirty() {
     el.claudePathInput.value.trim() !== (c.claudePath ?? "") ||
     el.codeDirInput.value.trim() !== (c.codeDir ?? "") ||
     el.russianInput.checked !== !!c.russianUi ||
-    el.autoUpdateInput.checked !== (c.autoUpdate !== false)
+    el.autoUpdateInput.checked !== (c.autoUpdate !== false) ||
+    ROLES.some(([role, id]) => el[id].value !== roleKey(c.modelRoles?.[role]))
   );
+}
+
+// Model roles of Claude Code: role, select id, text of the "not chosen" option.
+const ROLES = [
+  ["sonnet", "roleSonnet", "settings.roleFirst"],
+  ["opus", "roleOpus", "settings.roleAsMain"],
+  ["haiku", "roleHaiku", "settings.roleAsMain"],
+];
+
+// A role is stored as provider + model id (no [1m]): the alias changes with the provider.
+function roleKey(ref) {
+  return ref ? JSON.stringify([ref.provider, bareId(ref.model)]) : "";
+}
+
+function readRole(select) {
+  if (!select.value) return null;
+  const [provider, model] = JSON.parse(select.value);
+  return { provider, model };
+}
+
+function fillRole(select, ref, emptyText) {
+  const add = (value, text) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = text;
+    select.append(option);
+  };
+  select.replaceChildren();
+  add("", t(emptyText));
+  // The provider name only tells models apart when there are several providers.
+  const several = state.config.providers.length > 1;
+  for (const provider of state.config.providers) {
+    for (const row of provider.aliases ?? []) {
+      const id = bareId(row.model);
+      const name = row.label ?? id;
+      add(JSON.stringify([provider.id, id]), several ? `${name} · ${provider.name || provider.id}` : name);
+    }
+  }
+  // A saved choice whose model is gone stays visible (and unchanged) until replaced.
+  const key = roleKey(ref);
+  if (key && ![...select.options].some((option) => option.value === key)) {
+    add(key, t("settings.roleMissing", { model: bareId(ref.model) }));
+  }
+  select.value = key;
 }
 
 function renderNotice() {
@@ -378,6 +423,7 @@ function renderSettings() {
   el.portInput.value = state.config.port;
   el.claudePathInput.value = state.config.claudePath ?? "";
   el.codeDirInput.value = state.config.codeDir ?? "";
+  for (const [role, id, emptyText] of ROLES) fillRole(el[id], state.config.modelRoles?.[role], emptyText);
   el.tokenInput.value = state.config.token;
   el.detectedClaude.textContent = state.config.detectedClaude
     ? t("settings.found", { path: state.config.detectedClaude })
@@ -887,6 +933,7 @@ async function saveSettings() {
         port,
         claudePath: el.claudePathInput.value.trim() || null,
         codeDir: el.codeDirInput.value.trim() || null,
+        modelRoles: Object.fromEntries(ROLES.map(([role, id]) => [role, readRole(el[id])])),
         russianUi: el.russianInput.checked,
         language: el.languageInput.value,
         autoUpdate: el.autoUpdateInput.checked,
@@ -923,24 +970,17 @@ async function refreshLogs() {
   }
 }
 
-function copyEnv() {
-  const models = state.status?.models ?? [];
-  if (!models.length) {
+// The same variables as the Claude Code button, built in one place (Rust).
+async function copyEnv() {
+  if (!(state.status?.models ?? []).length) {
     toast(t("toast.needModels"), "error");
     return;
   }
-  const port = state.status?.port ?? state.config?.port;
-  const token = state.status?.token ?? state.config?.token;
-  const alias = models[0].alias;
-  const text = [
-    `$env:ANTHROPIC_BASE_URL="http://127.0.0.1:${port}"`,
-    `$env:ANTHROPIC_AUTH_TOKEN="${token}"`,
-    `$env:ANTHROPIC_MODEL="${alias}"`,
-    `$env:ANTHROPIC_DEFAULT_HAIKU_MODEL="${alias}"`,
-    `$env:ANTHROPIC_SMALL_FAST_MODEL="${alias}"`,
-    "claude",
-  ].join("\n");
-  copyText(text, t("toast.envCopied"));
+  try {
+    copyText(await invoke("code_command"), t("toast.envCopied"));
+  } catch (exc) {
+    toast(formatError(exc), "error");
+  }
 }
 
 async function copyText(text, message) {
