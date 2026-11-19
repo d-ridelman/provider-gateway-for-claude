@@ -52,7 +52,10 @@ pub fn translate(
         content.push(json!({"type": "tool_use", "id": id, "name": name, "input": input}));
     }
 
-    let has_tools = !tool_calls.is_empty();
+    // По блокам, которые ушли Claude Code: вызов без имени отброшен выше.
+    let has_tools = content
+        .iter()
+        .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"));
     let finish = choice.get("finish_reason").and_then(Value::as_str);
     let stop_reason = map_stop_reason(finish, has_tools);
 
@@ -274,6 +277,20 @@ fn usage_tokens(value: &Value, fallback_input: u64, fallback_output: u64) -> Usa
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_calls_finish_without_a_named_call_ends_the_turn() {
+        let value = json!({
+            "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+                "role": "assistant", "content": "hi",
+                "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "", "arguments": "{}"}}]
+            }}]
+        });
+        let message = translate(&value, "m", 1).unwrap();
+        assert_eq!(message["stop_reason"], "end_turn");
+        assert_eq!(map_stop_reason(Some("tool_calls"), false), "end_turn");
+        assert_eq!(map_stop_reason(Some("tool_calls"), true), "tool_use");
+    }
 
     #[test]
     fn translates_text_and_tool_call() {
