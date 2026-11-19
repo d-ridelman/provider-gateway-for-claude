@@ -26,6 +26,30 @@ pub struct Config {
     /// Проверять обновления на GitHub при старте и раз в сутки.
     #[serde(default = "default_true")]
     pub auto_update: bool,
+    /// Какие модели шлюза Claude Code считает «opus», «sonnet» и «haiku».
+    #[serde(default)]
+    pub model_roles: ModelRoles,
+}
+
+/// Модель шлюза: провайдер и ID модели у него (не псевдоним — тот меняется вместе с
+/// провайдером и правилами Claude).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelRef {
+    pub provider: String,
+    pub model: String,
+}
+
+/// Роли моделей в Claude Code. `sonnet` — основная (сессия и алиас `sonnet`), `opus` —
+/// сильная (алиас `opus`, через шлюз на ней же встроенный Explore), `haiku` — быстрая
+/// (алиас `haiku` и фоновые мелочи). `None` — как раньше: первая модель шлюза.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelRoles {
+    #[serde(default)]
+    pub sonnet: Option<ModelRef>,
+    #[serde(default)]
+    pub opus: Option<ModelRef>,
+    #[serde(default)]
+    pub haiku: Option<ModelRef>,
 }
 
 fn default_true() -> bool {
@@ -43,6 +67,7 @@ impl Default for Config {
             code_dir: None,
             language: None,
             auto_update: true,
+            model_roles: ModelRoles::default(),
         }
     }
 }
@@ -98,6 +123,7 @@ pub struct UiConfig {
     pub auto_update: bool,
     /// Версия этой сборки (`Cargo.toml`).
     pub version: String,
+    pub model_roles: ModelRoles,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -201,4 +227,6 @@ pub struct SettingsInput {
     pub language: Option<String>,
     #[serde(default = "default_true")]
     pub auto_update: bool,
+    #[serde(default)]
+    pub model_roles: ModelRoles,
 }
