@@ -866,6 +866,84 @@ async fn session_id_and_user_agent_reach_provider() {
     assert_eq!(second.status(), StatusCode::OK);
 }
 
+/// Base64 PNG `width`×`height` весом с настоящий скриншот (~300 КБ).
+fn screenshot_png(width: u32, height: u32) -> String {
+    let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();
+    bytes.extend(width.to_be_bytes());
+    bytes.extend(height.to_be_bytes());
+    bytes.extend(std::iter::repeat_n(0x5a, 300_000));
+    const ABC: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in bytes.chunks(3) {
+        let n = chunk.iter().fold(0u32, |n, b| n << 8 | u32::from(*b)) << (8 * (3 - chunk.len()));
+        for k in 0..=chunk.len() {
+            out.push(ABC[(n >> (18 - 6 * k) & 63) as usize] as char);
+        }
+        out.push_str(&"=".repeat(3 - chunk.len()));
+    }
+    out
+}
+
+/// Скриншот так, как его присылает инструмент (glidehand): внутри `tool_result`.
+fn messages_with_screenshot() -> Value {
+    json!([
+        {"role": "user", "content": "look"},
+        {"role": "assistant", "content": [{"type": "tool_use", "id": "t1", "name": "shot", "input": {}}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": [
+            {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                         "data": screenshot_png(1920, 1140)}},
+            {"type": "text", "text": "screenshot"}
+        ]}]}
+    ])
+}
+
+#[tokio::test]
+async fn screenshots_count_by_size_where_claude_code_reads_the_context() {
+    // count_tokens (панель «Контекст») у OpenAI-провайдера — локальная оценка.
+    let state = state_with("http://127.0.0.1:9", "openai", "gpt-5.2");
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/messages/count_tokens")
+        .header("x-api-key", "local-token")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({"model": "claude-p-00000000", "messages": messages_with_screenshot()})
+                .to_string(),
+        ))
+        .unwrap();
+    let counted = json_body(app(state).oneshot(request).await.unwrap()).await;
+    let tokens = counted["input_tokens"].as_u64().unwrap();
+    // ~1,5 тыс. за картинку, а не ~250 тыс. за её base64.
+    assert!(tokens < 3000, "{tokens}");
+
+    // input_tokens в message_start потокового ответа — по ним Claude Code решает о сжатии.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+            "text/event-stream",
+        ))
+        .mount(&upstream)
+        .await;
+    let response = app(state_with(&upstream.uri(), "openai", "gpt-5.2"))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
+            "messages": messages_with_screenshot()
+        })))
+        .await
+        .unwrap();
+    let body = text_body(response).await;
+    let start: Value = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .find(|event| event["type"] == "message_start")
+        .unwrap();
+    let tokens = start["message"]["usage"]["input_tokens"].as_u64().unwrap();
+    assert!(tokens < 3000, "{tokens}");
+}
+
 /// Основная модель `main-model` и сильная `strong-model` — советник из настроек.
 fn advisor_state(base_url: &str) -> AppState {
     let file: ProvidersFile = serde_json::from_value(json!({
