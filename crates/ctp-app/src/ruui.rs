@@ -217,14 +217,22 @@ pub fn patch_ion_dist(src: &Path, dst: &Path, ru_json: &[u8]) -> Result<(String,
         )
     );
 
-    let mut changes = locale_changes(src)?;
+    let mut changes = locale_changes(src)?.files;
     changes.push(("i18n/ru.json".to_string(), ru_json.to_vec()));
     rebuild(src, dst, &changes)
 }
 
-/// Бандлы интерфейса с `"ru"` в списке языков — без записи на диск: годится и для
-/// самопроверки новой версии Claude. Нет списка — версия устроена иначе: отказ.
-pub fn locale_changes(src: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+/// Изменённые бандлы интерфейса для копии.
+pub struct BundlePatches {
+    pub files: Vec<(String, Vec<u8>)>,
+    /// Флаг «Без папки» найден и включён; `false` — в этой версии Claude его нет.
+    pub folderless: bool,
+}
+
+/// Бандлы интерфейса с `"ru"` в списке языков (и включённым «Без папки») — без записи
+/// на диск: годится и для самопроверки новой версии Claude. Нет списка языков — версия
+/// устроена иначе: отказ. Нет флага «Без папки» — не отказ, копия собирается без него.
+pub fn locale_changes(src: &Path) -> Result<BundlePatches> {
     let mut input = File::open(src).with_context(|| src.display().to_string())?;
     let header = read_header(&mut input)?;
     let locales = bundled_locales(&header.json);
@@ -240,6 +248,7 @@ pub fn locale_changes(src: &Path) -> Result<Vec<(String, Vec<u8>)>> {
     js_files(&header.json, "", &mut files);
     let mut changes = Vec::new();
     let mut ru_added = false;
+    let mut folderless_found = false;
     for (path, offset, size) in files.into_iter().filter(|(p, ..)| p.starts_with("assets/")) {
         let mut data = vec![0u8; size as usize];
         input.seek(SeekFrom::Start(header.base + offset))?;
@@ -247,6 +256,7 @@ pub fn locale_changes(src: &Path) -> Result<Vec<(String, Vec<u8>)>> {
         let with_ru = add_ru(&data, &locales);
         ru_added |= with_ru.is_some();
         let folderless = enable_folderless(with_ru.as_deref().unwrap_or(&data));
+        folderless_found |= folderless.is_some();
         if let Some(patched) = folderless.or(with_ru) {
             changes.push((path, patched));
         }
@@ -259,7 +269,10 @@ pub fn locale_changes(src: &Path) -> Result<Vec<(String, Vec<u8>)>> {
             "no language list found in this Claude version's interface"
         )
     );
-    Ok(changes)
+    Ok(BundlePatches {
+        files: changes,
+        folderless: folderless_found,
+    })
 }
 
 /// Языки, переводы которых лежат в `i18n/` архива (`en-US`, `de-DE`, …), кроме `ru`.
@@ -796,6 +809,10 @@ mod tests {
     }
 
     fn sample_asar_with(path: &Path, list: &[u8]) {
+        sample_asar_full(path, list, b"console.log(1)");
+    }
+
+    fn sample_asar_full(path: &Path, list: &[u8], b_js: &[u8]) {
         let locales: Vec<String> = serde_json::from_slice(list).unwrap();
         let mut files: Vec<(String, Vec<u8>)> = vec![
             ("index.html".into(), b"<html></html>".to_vec()),
@@ -803,7 +820,7 @@ mod tests {
                 "assets/v1/a.js".into(),
                 [b"var zm=".as_slice(), list, b";"].concat(),
             ),
-            ("assets/v1/b.js".into(), b"console.log(1)".to_vec()),
+            ("assets/v1/b.js".into(), b_js.to_vec()),
         ];
         files.extend(
             locales
@@ -858,6 +875,26 @@ mod tests {
             })
             .collect();
         serde_json::to_vec(&map).unwrap()
+    }
+
+    #[test]
+    fn copy_reports_and_patches_folderless_gate() {
+        let dir = temp_dir("folderless");
+        let (src, dst) = (dir.join("src.asar"), dir.join("dst.asar"));
+        let gate = br#"function Ub(){return Ve("claudeai_cc_epitaxy_folderless_start_main")}"#;
+        sample_asar_full(&src, LOCALES, gate);
+        assert!(locale_changes(&src).unwrap().folderless);
+        patch_ion_dist(&src, &dst, &big_translation()).unwrap();
+        let (js, integ) = read_file(&dst, "assets/v1/b.js");
+        assert_eq!(js, br#"function Ub(){return !0}"#.to_vec());
+        assert_eq!(integ, integrity(&js));
+
+        // A Claude version without the gate: Russian still works, the flag says so.
+        sample_asar(&src);
+        let patches = locale_changes(&src).unwrap();
+        assert!(!patches.folderless);
+        assert_eq!(patches.files.len(), 1);
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
@@ -946,7 +983,9 @@ mod tests {
     fn same_as_literal_on_real_install() {
         let app = PathBuf::from(std::env::var_os("CTP_RU_APP").expect("CTP_RU_APP"));
         let asar = app.join("resources").join("ion-dist.asar");
-        let changes = locale_changes(&asar).unwrap();
+        let patches = locale_changes(&asar).unwrap();
+        assert!(patches.folderless, "folderless gate not found");
+        let changes = patches.files;
         assert!(!changes.is_empty());
         for (path, patched) in &changes {
             let (orig, _) = read_file(&asar, path);

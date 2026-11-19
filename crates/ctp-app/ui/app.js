@@ -394,7 +394,8 @@ function renderSettings() {
 function renderClaudeCheck() {
   const check = state.status?.claude;
   const items = check?.items ?? [];
-  el.claudeWarn.classList.toggle("hidden", !items.some((item) => !item.ok));
+  // An optional feature that is missing is listed, but does not light the title-bar warning.
+  el.claudeWarn.classList.toggle("hidden", !items.some((item) => !item.ok && !item.optional));
   el.claudeCheckList.replaceChildren();
   if (!check) {
     const li = document.createElement("li");
@@ -411,8 +412,10 @@ function renderClaudeCheck() {
   }
   for (const item of items) {
     const li = document.createElement("li");
-    li.className = item.ok ? "ok" : "bad";
-    li.textContent = `${item.ok ? "✓" : "✕"} ${item.text}`;
+    // A missing optional feature is neutral, not an error.
+    const kind = item.ok ? "ok" : item.optional ? "off" : "bad";
+    li.className = kind;
+    li.textContent = `${{ ok: "✓", off: "–", bad: "✕" }[kind]} ${item.text}`;
     el.claudeCheckList.append(li);
   }
 }

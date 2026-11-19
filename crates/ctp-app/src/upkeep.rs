@@ -42,6 +42,9 @@ pub struct Check {
 pub struct Item {
     pub ok: bool,
     pub text: String,
+    /// Необязательная возможность: её отсутствие показывается, но не зажигает
+    /// предупреждение в заголовке окна.
+    pub optional: bool,
 }
 
 impl Check {
@@ -49,6 +52,15 @@ impl Check {
         self.items.push(Item {
             ok,
             text: text.into(),
+            optional: false,
+        });
+    }
+
+    fn push_optional(&mut self, ok: bool, text: impl Into<String>) {
+        self.items.push(Item {
+            ok,
+            text: text.into(),
+            optional: true,
         });
     }
 }
@@ -323,7 +335,13 @@ pub fn refresh_translation(config_dir: &Path, app: &Path) -> Result<String> {
                 note = tr!(" (обновить не вышло: {exc:#})", " (update failed: {exc:#})");
             }
             Err(exc) => {
-                return Err(exc.context(tr!("перевод не скачан", "translation not downloaded")));
+                // claude.ai может закрыться проверкой Cloudflare для программ: подскажем,
+                // как положить файл вручную из браузера.
+                let target = file.display();
+                return Err(exc.context(tr!(
+                    "перевод не скачан — откройте {TRANSLATION_URL} в браузере и сохраните как {target}",
+                    "translation not downloaded; open {TRANSLATION_URL} in a browser and save it as {target}"
+                )));
             }
         }
     }
@@ -478,13 +496,16 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
             Err(exc) => check.push(false, format!("{exc:#}")),
         }
         match ruui::locale_changes(&app.join("resources").join("ion-dist.asar")) {
-            Ok(_) => check.push(
-                true,
-                tr!(
-                    "Русский язык встраивается в эту версию",
-                    "Russian can be added to this version"
-                ),
-            ),
+            Ok(patches) => {
+                check.push(
+                    true,
+                    tr!(
+                        "Русский язык встраивается в эту версию",
+                        "Russian can be added to this version"
+                    ),
+                );
+                check.push_optional(patches.folderless, folderless_line(patches.folderless));
+            }
             Err(exc) => check.push(
                 false,
                 tr!("Русский интерфейс: {exc:#}", "Russian interface: {exc:#}"),
@@ -528,6 +549,21 @@ pub fn check_into(app: &tauri::AppHandle, config: &Config, config_dir: &Path, bu
         .claude
         .lock()
         .unwrap_or_else(|p| p.into_inner()) = Some(result);
+}
+
+/// Строка самопроверки про «Без папки» в русской копии.
+fn folderless_line(found: bool) -> String {
+    if found {
+        tr!(
+            "«Без папки» для Claude Code включён",
+            "“No folder” for Claude Code is on"
+        )
+    } else {
+        tr!(
+            "«Без папки» в этой версии Claude не найден",
+            "“No folder” not found in this Claude version"
+        )
+    }
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
@@ -575,6 +611,12 @@ mod tests {
             serde_json::from_str(r#"{"a":"1","b":"2","zz":"3"}"#).unwrap();
         assert!((coverage(&en, &ru) - 0.5).abs() < 1e-9);
         assert_eq!(coverage(&HashSet::new(), &ru), 0.0);
+    }
+
+    #[test]
+    fn folderless_line_says_found_or_missing() {
+        assert!(folderless_line(true).contains("включён"));
+        assert!(folderless_line(false).contains("не найден"));
     }
 
     #[test]

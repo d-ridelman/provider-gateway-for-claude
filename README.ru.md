@@ -107,6 +107,9 @@ Get-FileHash .\Provider-Gateway-for-Claude_*_x64-setup.exe -Algorithm SHA256
 | Ключи провайдеров | Диспетчер учётных данных Windows, служба `claude-provider-gateway` |
 | Профиль Claude Desktop для приложения | `%LOCALAPPDATA%\ClaudeProviderGateway\Claude-3p` |
 | Русская копия Claude (~700 МБ, по желанию) | `%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru` |
+| Русский перевод claude.ai | `%APPDATA%\app.provider-gateway-for-claude\claude-ru.json` |
+
+Если claude.ai не отдаёт перевод (иногда он показывает программам проверку на бота), откройте `https://claude.ai/i18n/ru.json` в браузере и сохраните страницу как этот `claude-ru.json` — точный путь будет в настройках.
 
 ## Сборка из исходников
 
