@@ -1,0 +1,16 @@
+name: Idea or provider request / Идея или новый провайдер
+description: Suggest an improvement or a provider template / Предложить улучшение или шаблон провайдера
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do? / Что хотите сделать?
+      description: The task, not the solution / Задача, а не решение
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details / Подробности
+      description: For a provider — its base URL, API type and a link to its docs / Для провайдера — адрес, тип API и ссылка на документацию

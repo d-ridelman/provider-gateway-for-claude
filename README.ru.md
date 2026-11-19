@@ -10,6 +10,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/d-ridelman/provider-gateway-for-claude/releases/latest"><img src="https://img.shields.io/badge/%D1%81%D0%BA%D0%B0%D1%87%D0%B0%D1%82%D1%8C-Windows%20x64-c15f3c?style=flat-square" alt="Скачать для Windows"></a>
+  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-3d3a35?style=flat-square" alt="Windows 10 и 11">
+  <img src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Tauri%202-3d3a35?style=flat-square" alt="Rust и Tauri 2">
+  <a href="#лицензия"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3d3a35?style=flat-square" alt="Лицензия: MIT или Apache-2.0"></a>
+</p>
+
+<p align="center">
   <a href="README.md">English</a> · <b>Русский</b>
 </p>
 
@@ -67,7 +74,8 @@ Get-FileHash .\Provider-Gateway-for-Claude_*_x64-setup.exe -Algorithm SHA256
 4. **Открыть Claude** — Claude Desktop, **Claude Code** — консоль с CLI.
 
 <p align="center">
-  <img src="docs/images/settings-ru.png" width="760" alt="Настройки: язык, порт, пути к Claude, проверка совместимости, обновления">
+  <img src="docs/images/new-ru.png" width="49%" alt="Новый провайдер: шаблон, адрес, ключ и модели">
+  <img src="docs/images/settings-ru.png" width="49%" alt="Настройки: язык, порт, пути к Claude, проверка совместимости, обновления">
 </p>
 
 ### Уровни рассуждения
@@ -117,6 +125,10 @@ cargo test --workspace
 - `crates/ctp-app` — приложение для Windows (Tauri 2).
 
 Без ключа обновлений проекта (`TAURI_SIGNING_PRIVATE_KEY`) `-Installer` соберёт обычный установщик без подписей обновлений. Релизы готовит `tools/release.ps1` (подписанный установщик, `latest.json`, контрольные суммы). `tools/cloudflare-mirror` — необязательное зеркало обновлений для сетей, где GitHub медленный или недоступен.
+
+## Участие
+
+Сообщения об ошибках, шаблоны провайдеров и переводы приветствуются: см. [CONTRIBUTING.md](CONTRIBUTING.md) и [список изменений](CHANGELOG.md). Об уязвимостях сообщайте приватно, как описано в [SECURITY.md](SECURITY.md).
 
 ## Лицензия
 
