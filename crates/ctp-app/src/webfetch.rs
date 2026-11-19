@@ -43,13 +43,15 @@ fn page_text(result: &str) -> Option<String> {
 /// В тестах окна нет: создание окна тянет comctl32 v6, а у тестового exe нет манифеста
 /// приложения — он бы не запустился вовсе (STATUS_ENTRYPOINT_NOT_FOUND).
 #[cfg(test)]
-pub fn fetch_json(_url: &str) -> Result<String> {
+pub fn fetch_json(_url: &str, _show: bool) -> Result<String> {
     bail!("no built-in browser in tests")
 }
 
 /// Текст JSON по `url` глазами браузера. Блокирует: вызывать не из главного потока.
+/// `show` — можно показать окно, если проверка не прошла сама (человек рядом). Без него
+/// (фоновая подготовка) окно не появляется: не прошла за `SHOW_AFTER` — отказ.
 #[cfg(not(test))]
-pub fn fetch_json(url: &str) -> Result<String> {
+pub fn fetch_json(url: &str, show: bool) -> Result<String> {
     let app = APP.get().context(tr!(
         "встроенный браузер недоступен",
         "built-in browser is not available"
@@ -94,6 +96,15 @@ pub fn fetch_json(url: &str) -> Result<String> {
             );
         }
         if !shown && started.elapsed() > SHOW_AFTER {
+            if !show {
+                bail!(
+                    "{}",
+                    tr!(
+                        "claude.ai просит подтверждения — фоном не скачать",
+                        "claude.ai asks for confirmation; cannot download in the background"
+                    )
+                );
+            }
             let _ = window.0.show();
             let _ = window.0.set_focus();
             shown = true;

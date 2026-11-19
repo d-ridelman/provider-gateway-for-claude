@@ -89,6 +89,8 @@ pub fn run() {
             // Изолированный запуск (проверки, демо) в сеть за обновлениями не ходит.
             if !custom {
                 updates::spawn_auto_check(app.handle().clone());
+                // Claude обновился, пока программа в трее, — русская копия готовится заранее.
+                upkeep::spawn_copy_watch(app.handle().clone());
             }
             Ok(())
         })

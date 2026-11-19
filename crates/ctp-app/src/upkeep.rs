@@ -216,13 +216,13 @@ fn parse_translation(raw: &[u8]) -> Result<serde_json::Map<String, Value>> {
 /// Cloudflare ответил проверкой на бота (403) — встроенный браузер (`webfetch`),
 /// который её проходит сам. Без сети, при 404/5xx браузер не открывается: окно с
 /// ошибкой страницы висело бы зря. 19.11.2026 утром curl пропускали, к обеду нет.
-fn download_translation() -> Result<Vec<u8>> {
+fn download_translation(show_window: bool) -> Result<Vec<u8>> {
     download_with_curl().or_else(|curl| {
         if !is_bot_check(&format!("{curl:#}")) {
             return Err(curl);
         }
         tracing::info!(error = %format!("{curl:#}"), "curl refused, trying the built-in browser");
-        crate::webfetch::fetch_json(TRANSLATION_URL)
+        crate::webfetch::fetch_json(TRANSLATION_URL, show_window)
             .map(String::into_bytes)
             .map_err(|browser| {
                 // stderr curl уже начинается с «curl:».
@@ -285,13 +285,21 @@ static DOWNLOAD: std::sync::Mutex<Option<(String, std::time::Instant)>> =
     std::sync::Mutex::new(None);
 const RETRY_AFTER: Duration = Duration::from_secs(30 * 60);
 
+/// Кто просит перевод — от этого зависит, качать ли и можно ли показать окно.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fetch {
+    /// Перед «Открыть Claude»: качаем, только если перевода нет вовсе — обновление под
+    /// новую версию (до двух минут с проверкой claude.ai) кнопку не задерживает.
+    Launch,
+    /// Самопроверка при старте и после запуска: человек рядом, окно проверки можно показать.
+    Check,
+    /// Фоновая подготовка после обновления Claude: окно не показываем никогда.
+    Watch,
+}
+
 /// Свежий перевод при смене версии Claude (или если файла нет). Худший по покрытию
 /// строк этой версии не заменяет лучший. Возвращает строку для самопроверки.
-///
-/// `background` — фоновая самопроверка. Перед «Открыть Claude» (`false`) качаем, только
-/// если перевода нет вовсе: обновление под новую версию (может открыть окно проверки
-/// claude.ai и ждать до двух минут) делает фоновая проверка, а кнопка не ждёт.
-pub fn refresh_translation(config_dir: &Path, app: &Path, background: bool) -> Result<String> {
+pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result<String> {
     let version = app
         .file_name()
         .and_then(|n| n.to_str())
@@ -302,7 +310,7 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, background: bool) -> R
     // Перед «Открыть Claude» при наличии перевода качать нечего: не ждём фоновую
     // загрузку (она держит DOWNLOAD до двух минут) и не читаем 50 МБ ради покрытия.
     // Строку prepare не показывает, только пишет ошибки в журнал.
-    if !background && fs::read(&file).is_ok_and(|raw| parse_translation(&raw).is_ok()) {
+    if mode == Fetch::Launch && fs::read(&file).is_ok_and(|raw| parse_translation(&raw).is_ok()) {
         return Ok(String::new());
     }
     let mut last_failure = DOWNLOAD.lock().unwrap_or_else(|p| p.into_inner());
@@ -326,7 +334,7 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, background: bool) -> R
     let failed_recently = last_failure
         .as_ref()
         .is_some_and(|(v, at)| *v == version && at.elapsed() < RETRY_AFTER);
-    let due = current.is_none() || (background && meta.claude_version != version);
+    let due = current.is_none() || (mode != Fetch::Launch && meta.claude_version != version);
     if due && failed_recently {
         note = tr!(
             " (скачать не вышло, повтор позже)",
@@ -336,8 +344,8 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, background: bool) -> R
             anyhow::bail!("{}", not_downloaded(&file));
         }
     } else if due {
-        let downloaded =
-            download_translation().and_then(|raw| parse_translation(&raw).map(|map| (raw, map)));
+        let downloaded = download_translation(mode != Fetch::Watch)
+            .and_then(|raw| parse_translation(&raw).map(|map| (raw, map)));
         *last_failure = downloaded
             .is_err()
             .then(|| (version.clone(), std::time::Instant::now()));
@@ -397,7 +405,7 @@ pub fn prepare(config: &Config, config_dir: &Path) -> bool {
     });
     if config.russian_ui
         && let Some(app) = app_dir(&exe)
-        && let Err(exc) = refresh_translation(config_dir, &app, false)
+        && let Err(exc) = refresh_translation(config_dir, &app, Fetch::Launch)
     {
         tracing::warn!(error = %format!("{exc:#}"), "Claude translation");
     }
@@ -514,7 +522,7 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
     }
 
     if config.russian_ui {
-        match refresh_translation(config_dir, &app, true) {
+        match refresh_translation(config_dir, &app, Fetch::Check) {
             Ok(line) => check.push(true, line),
             Err(exc) => check.push(false, format!("{exc:#}")),
         }
@@ -572,6 +580,105 @@ pub fn check_into(app: &tauri::AppHandle, config: &Config, config_dir: &Path, bu
         .claude
         .lock()
         .unwrap_or_else(|p| p.into_inner()) = Some(result);
+}
+
+/// Как часто фон смотрит, не обновился ли Claude.
+const WATCH_EVERY: Duration = Duration::from_secs(10 * 60);
+/// Установщик Claude раскладывает новую версию не мгновенно: берём её папку, только если
+/// ни она, ни ключевые файлы не менялись столько времени (не собирать из недописанного).
+const SETTLE: Duration = Duration::from_secs(2 * 60);
+
+/// Claude обновился, пока программа в трее, — русская копия готовится заранее: сначала
+/// свежий перевод, потом одна сборка. К «Открыть Claude» всё готово, и копия не
+/// собирается дважды (со старым переводом при запуске и с новым — следующим запуском).
+/// Правила моделей фон не трогает: их применяет «Открыть Claude» вместе с перезапуском
+/// шлюза, иначе шлюз остался бы со старыми именами моделей, а Claude получил бы новые.
+pub fn spawn_copy_watch(app: tauri::AppHandle) {
+    use tauri::Manager;
+    std::thread::spawn(move || {
+        // Первый круг — через WATCH_EVERY: при старте копию уже готовит check_into.
+        let mut ready: Option<String> = None;
+        loop {
+            std::thread::sleep(WATCH_EVERY);
+            let (config, dir) = {
+                let shared = app.state::<crate::state::AppShared>();
+                let config = shared
+                    .config
+                    .lock()
+                    .unwrap_or_else(|p| p.into_inner())
+                    .clone();
+                (config, shared.config_dir.clone())
+            };
+            match prepare_copy(&config, &dir, ready.as_deref()) {
+                Ok(Some(version)) => {
+                    if ready.as_deref() != Some(version.as_str()) {
+                        tracing::info!(%version, "Russian copy prepared in the background");
+                    }
+                    ready = Some(version);
+                }
+                Ok(None) => {}
+                Err(exc) => {
+                    tracing::info!(error = %format!("{exc:#}"), "Russian copy not prepared yet")
+                }
+            }
+        }
+    });
+}
+
+/// Один шаг фоновой подготовки. `Ok(Some(версия))` — копия этой версии готова,
+/// `Ok(None)` — делать нечего или рано (Claude ещё ставится, перевода под версию нет).
+fn prepare_copy(config: &Config, config_dir: &Path, ready: Option<&str>) -> Result<Option<String>> {
+    if !config.russian_ui {
+        return Ok(None);
+    }
+    let Some(app) = crate::claude::detect(config).as_deref().and_then(app_dir) else {
+        return Ok(None);
+    };
+    let version = app
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default()
+        .to_string();
+    if ready == Some(version.as_str()) || !settled(&app, SETTLE) {
+        return Ok(None);
+    }
+    if let Err(exc) = refresh_translation(config_dir, &app, Fetch::Watch) {
+        tracing::info!(error = %format!("{exc:#}"), "background translation download");
+    }
+    // Только со свежим под эту версию переводом: со старым копия пересобралась бы ещё раз.
+    if !translation_is_for(config_dir, &version) {
+        return Ok(None);
+    }
+    let ru = fs::read(config_dir.join(ruui::TRANSLATION_FILE))?;
+    ruui::ensure_copy(&app, &crate::claude::copies_root()?, &ru)?;
+    Ok(Some(version))
+}
+
+/// Перевод скачан (или сверен) под эту версию Claude.
+fn translation_is_for(config_dir: &Path, version: &str) -> bool {
+    fs::read(config_dir.join(TRANSLATION_META))
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<TranslationMeta>(&raw).ok())
+        .is_some_and(|meta| meta.claude_version == version)
+}
+
+/// Папка версии и её главные файлы не менялись `quiet`: установщик Claude закончил.
+fn settled(app: &Path, quiet: Duration) -> bool {
+    let resources = app.join("resources");
+    [
+        app.to_path_buf(),
+        app.join("claude.exe"),
+        resources.join("app.asar"),
+        resources.join("ion-dist.asar"),
+    ]
+    .iter()
+    .all(|path| {
+        fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|at| at.elapsed().ok())
+            .is_some_and(|age| age >= quiet)
+    })
 }
 
 /// Перевода нет и скачать не вышло: как положить файл вручную (claude.ai бывает закрыт
@@ -644,6 +751,86 @@ mod tests {
             serde_json::from_str(r#"{"a":"1","b":"2","zz":"3"}"#).unwrap();
         assert!((coverage(&en, &ru) - 0.5).abs() < 1e-9);
         assert_eq!(coverage(&HashSet::new(), &ru), 0.0);
+    }
+
+    fn temp_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join("agents").join(format!(
+            "ctp-upkeep-{tag}-{}",
+            uuid::Uuid::new_v4().simple()
+        ));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn fresh_claude_folder_is_not_settled() {
+        let app = temp_dir("settle").join("app-9.9.9");
+        fs::create_dir_all(app.join("resources")).unwrap();
+        for file in [
+            "claude.exe",
+            "resources/app.asar",
+            "resources/ion-dist.asar",
+        ] {
+            fs::write(app.join(file), b"x").unwrap();
+        }
+        assert!(!settled(&app, Duration::from_secs(60)));
+        assert!(settled(&app, Duration::ZERO));
+        fs::remove_file(app.join("resources/app.asar")).unwrap();
+        assert!(
+            !settled(&app, Duration::ZERO),
+            "a missing file is not settled"
+        );
+        fs::remove_dir_all(app.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn copy_waits_for_a_translation_of_this_version() {
+        let dir = temp_dir("meta");
+        assert!(!translation_is_for(&dir, "app-6.1.0"));
+        fs::write(
+            dir.join(TRANSLATION_META),
+            br#"{"claudeVersion":"app-6.0.0"}"#,
+        )
+        .unwrap();
+        assert!(!translation_is_for(&dir, "app-6.1.0"));
+        fs::write(
+            dir.join(TRANSLATION_META),
+            br#"{"claudeVersion":"app-6.1.0"}"#,
+        )
+        .unwrap();
+        assert!(translation_is_for(&dir, "app-6.1.0"));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Фоновая подготовка на настоящем Claude и папке настроек (перевод под версию уже
+    /// есть — копия не пересобирается, если готова):
+    /// `CTP_CONFIG_DIR=%APPDATA%\app.provider-gateway-for-claude cargo test -p ctp-app prepare_copy_real -- --ignored`
+    #[test]
+    #[ignore]
+    fn prepare_copy_real_install() {
+        let dir = PathBuf::from(std::env::var_os("CTP_CONFIG_DIR").expect("CTP_CONFIG_DIR"));
+        let config = Config {
+            russian_ui: true,
+            ..Default::default()
+        };
+        let started = std::time::Instant::now();
+        let version = prepare_copy(&config, &dir, None).unwrap();
+        println!("{version:?} за {:?}", started.elapsed());
+        assert!(version.is_some());
+        // Уже готовая версия — следующий круг ничего не делает.
+        assert_eq!(prepare_copy(&config, &dir, version.as_deref()).unwrap(), None);
+    }
+
+    #[test]
+    fn background_does_nothing_without_russian_ui() {
+        let config = Config {
+            russian_ui: false,
+            ..Default::default()
+        };
+        assert_eq!(
+            prepare_copy(&config, Path::new("unused"), None).unwrap(),
+            None
+        );
     }
 
     #[test]
