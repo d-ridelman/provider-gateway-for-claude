@@ -107,6 +107,9 @@ There is no telemetry. Prompts and answers go only between Claude and your provi
 | Provider keys | Windows Credential Manager, service `claude-provider-gateway` |
 | Claude Desktop profile used by the app | `%LOCALAPPDATA%\ClaudeProviderGateway\Claude-3p` |
 | Russian Claude copy (~700 MB, optional) | `%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru` |
+| Russian translation of claude.ai | `%APPDATA%\app.provider-gateway-for-claude\claude-ru.json` |
+
+If claude.ai refuses the download (it sometimes shows a bot check to programs), open `https://claude.ai/i18n/ru.json` in your browser and save the page as that `claude-ru.json`; Settings shows the exact path.
 
 ## Build from source
 
