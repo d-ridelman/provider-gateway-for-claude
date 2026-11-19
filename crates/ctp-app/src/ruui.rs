@@ -5,7 +5,8 @@
 //! установленной версии, в которой:
 //! - `i18n/ru.json` — этот перевод (файл кладёт пользователь, в репозитории его нет);
 //! - в список языков бандлов добавлен `"ru"`: без этого русская Windows получает `en-US`;
-//! - хеш заголовка asar в `claude.exe` обновлён, иначе Electron не откроет архив.
+//! - хеш заголовка asar в `claude.exe` обновлён, иначе Electron не откроет архив;
+//! - в выборе папки Code включён пункт «Без папки» (см. `enable_folderless`).
 //!
 //! Подпись копии `claude.exe` после этого недействительна. Оригинал не меняется:
 //! копия лежит отдельно, файлы читаются, но не пишутся.
@@ -21,7 +22,7 @@ use std::path::{Path, PathBuf};
 /// Файл перевода в папке настроек приложения.
 pub const TRANSLATION_FILE: &str = "claude-ru.json";
 /// Меняется, когда меняется сам патч: старые копии пересобираются.
-const PATCH_REV: u32 = 1;
+const PATCH_REV: u32 = 2;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
 
@@ -238,16 +239,20 @@ pub fn locale_changes(src: &Path) -> Result<Vec<(String, Vec<u8>)>> {
     let mut files = Vec::new();
     js_files(&header.json, "", &mut files);
     let mut changes = Vec::new();
+    let mut ru_added = false;
     for (path, offset, size) in files.into_iter().filter(|(p, ..)| p.starts_with("assets/")) {
         let mut data = vec![0u8; size as usize];
         input.seek(SeekFrom::Start(header.base + offset))?;
         input.read_exact(&mut data)?;
-        if let Some(patched) = add_ru(&data, &locales) {
+        let with_ru = add_ru(&data, &locales);
+        ru_added |= with_ru.is_some();
+        let folderless = enable_folderless(with_ru.as_deref().unwrap_or(&data));
+        if let Some(patched) = folderless.or(with_ru) {
             changes.push((path, patched));
         }
     }
     ensure!(
-        !changes.is_empty(),
+        ru_added,
         "{}",
         tr!(
             "в интерфейсе этой версии Claude не найден список языков",
@@ -300,6 +305,23 @@ fn add_ru(data: &[u8], locales: &std::collections::HashSet<String>) -> Option<Ve
         out.extend_from_slice(&data[last..]);
         out
     })
+}
+
+/// «Без папки» в выборе папки Code: в режиме стороннего провайдера Claude берёт флаги из
+/// вшитого набора, и `claudeai_cc_epitaxy_folderless_start_main` там нет, хотя основной
+/// процесс временную папку создать умеет. Вызов проверки флага заменяется на `!0`.
+/// Нет такой строки (новая версия Claude) — `None`, копия собирается без этого.
+fn enable_folderless(data: &[u8]) -> Option<Vec<u8>> {
+    static GATE: std::sync::OnceLock<regex::bytes::Regex> = std::sync::OnceLock::new();
+    let gate = GATE.get_or_init(|| {
+        // Без `.` перед именем: `obj.fn("…")` заменять нельзя, останется `obj.!0`.
+        regex::bytes::Regex::new(
+            r#"(^|[^.\w$])[A-Za-z_$][\w$]*\("claudeai_cc_epitaxy_folderless_start_main"\)"#,
+        )
+        .expect("folderless gate")
+    });
+    gate.is_match(data)
+        .then(|| gate.replace_all(data, &b"${1}!0"[..]).into_owned())
 }
 
 /// Подменяет хеш заголовка `ion-dist.asar` в ресурсе целостности exe (той же длины).
@@ -836,6 +858,25 @@ mod tests {
             })
             .collect();
         serde_json::to_vec(&map).unwrap()
+    }
+
+    #[test]
+    fn folderless_gate_call_becomes_true() {
+        let src = br#"function Ub(){return Ve("claudeai_cc_epitaxy_folderless_start_main")&&!!Pe?.createScratchWorkspace}"#;
+        let out = enable_folderless(src).unwrap();
+        assert_eq!(
+            out,
+            br#"function Ub(){return !0&&!!Pe?.createScratchWorkspace}"#.to_vec()
+        );
+        // Member calls and other gates stay as they are.
+        assert!(
+            enable_folderless(br#"a.Ve("claudeai_cc_epitaxy_folderless_start_main")"#).is_none()
+        );
+        assert!(enable_folderless(br#"Ve("claudeai_cc_epitaxy_folder_browser")"#).is_none());
+        assert_eq!(
+            enable_folderless(br#"x=$e("claudeai_cc_epitaxy_folderless_start_main")"#).unwrap(),
+            b"x=!0".to_vec()
+        );
     }
 
     #[test]

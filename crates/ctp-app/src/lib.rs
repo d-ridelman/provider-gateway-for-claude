@@ -60,7 +60,6 @@ pub fn run() {
 
             let config = store::load_or_create(&dir)?;
             i18n::apply(config.language.as_deref());
-            fit_to_screen(app.handle());
             // После журнала и языка: предупреждение есть куда записать, меню — на нужном языке.
             if let Err(exc) = tray::build(app.handle()) {
                 tracing::warn!(error = %exc, "tray icon not created, closing the window will exit");
@@ -116,27 +115,6 @@ pub fn run() {
         .expect("failed to start Provider Gateway for Claude");
 }
 
-/// The default window (1200x800) is taller than the work area of small screens
-/// (1366x768, or 1080p at 150%): shrink it to fit and centre it again.
-fn fit_to_screen(app: &tauri::AppHandle) {
-    let Some(window) = app.get_webview_window("main") else {
-        return;
-    };
-    let (Ok(Some(monitor)), Ok(size)) = (window.current_monitor(), window.outer_size()) else {
-        return;
-    };
-    let area = monitor.work_area().size;
-    let (width, height) = fit(size.width, size.height, area.width, area.height);
-    if (width, height) != (size.width, size.height) {
-        let _ = window.set_size(tauri::PhysicalSize::new(width, height));
-        let _ = window.center();
-    }
-}
-
-fn fit(width: u32, height: u32, area_width: u32, area_height: u32) -> (u32, u32) {
-    (width.min(area_width), height.min(area_height))
-}
-
 fn init_logging(dir: &Path) -> tracing_appender::non_blocking::WorkerGuard {
     let appender = tracing_appender::rolling::never(dir, "gateway.log");
     let (writer, guard) = tracing_appender::non_blocking(appender);
@@ -148,14 +126,4 @@ fn init_logging(dir: &Path) -> tracing_appender::non_blocking::WorkerGuard {
         .with_ansi(false)
         .try_init();
     guard
-}
-
-#[cfg(test)]
-mod fit_tests {
-    #[test]
-    fn window_shrinks_only_where_the_screen_is_smaller() {
-        assert_eq!(super::fit(1200, 800, 1920, 1040), (1200, 800));
-        assert_eq!(super::fit(1200, 800, 1366, 728), (1200, 728));
-        assert_eq!(super::fit(1500, 1000, 1280, 680), (1280, 680));
-    }
 }
