@@ -324,7 +324,8 @@ code {
 .effort-col > small { color: var(--dim); font-size: 11px; line-height: 1.4; }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 /* Settings: two columns when the card is wide enough. */
-.settings-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+/* minmax(0, …): a long unbreakable line (the detected path) must not widen its column. */
+.settings-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 24px; }
 @container (max-width: 700px) {
   .row-ident, .row-endpoint, .row-models, .grid.two, .settings-cols { grid-template-columns: 1fr; }
 }

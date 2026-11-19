@@ -367,17 +367,11 @@ fn portable_regex(re: &str) -> bool {
 /// `i m s U`, без `\U…`, без операций над классами (`&&`, `--`, `~~`), без `\b{…}` и
 /// свойств Unicode, которых нет в таблицах Go (`\p{Emoji}`, `\p{sc=Latin}`).
 fn go_compatible(ast: &regex_syntax::ast::Ast, outer: u64) -> bool {
-    use regex_syntax::ast::{
-        AssertionKind, Ast, GroupKind, HexLiteralKind, LiteralKind, RepetitionKind, RepetitionRange,
-    };
+    use regex_syntax::ast::{AssertionKind, Ast, GroupKind, RepetitionKind, RepetitionRange};
     match ast {
         Ast::Empty(_) | Ast::Dot(_) | Ast::ClassPerl(_) => true,
         Ast::Flags(set) => go_flags(&set.flags),
-        Ast::Literal(literal) => !matches!(
-            literal.kind,
-            LiteralKind::HexFixed(HexLiteralKind::UnicodeLong)
-                | LiteralKind::HexBrace(HexLiteralKind::UnicodeLong)
-        ),
+        Ast::Literal(literal) => go_literal(literal),
         Ast::Assertion(assertion) => matches!(
             assertion.kind,
             AssertionKind::StartLine
@@ -407,13 +401,28 @@ fn go_compatible(ast: &regex_syntax::ast::Ast, outer: u64) -> bool {
         Ast::Group(group) => {
             let flags_ok = match &group.kind {
                 GroupKind::NonCapturing(flags) => go_flags(flags),
-                _ => true,
+                // Go: имя группы — только [A-Za-z0-9_].
+                GroupKind::CaptureName { name, .. } => name
+                    .name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_'),
+                GroupKind::CaptureIndex(_) => true,
             };
             flags_ok && go_compatible(&group.ast, outer)
         }
         Ast::Alternation(alt) => alt.asts.iter().all(|a| go_compatible(a, outer)),
         Ast::Concat(cat) => cat.asts.iter().all(|a| go_compatible(a, outer)),
     }
+}
+
+/// `\U0001F600` и `\U{…}` — только в Rust.
+fn go_literal(literal: &regex_syntax::ast::Literal) -> bool {
+    use regex_syntax::ast::{HexLiteralKind, LiteralKind};
+    !matches!(
+        literal.kind,
+        LiteralKind::HexFixed(HexLiteralKind::UnicodeLong)
+            | LiteralKind::HexBrace(HexLiteralKind::UnicodeLong)
+    )
 }
 
 fn go_flags(flags: &regex_syntax::ast::Flags) -> bool {
@@ -450,11 +459,16 @@ fn go_unicode_class(kind: &regex_syntax::ast::ClassUnicodeKind) -> bool {
         "Tamil",
         "Thai",
     ];
+    // Общие категории Unicode в Go (`unicode.Categories`).
+    const GO_CATEGORIES: &[&str] = &[
+        "C", "Cc", "Cf", "Co", "Cs", "L", "Ll", "Lm", "Lo", "Lt", "Lu", "M", "Mc", "Me", "Mn", "N",
+        "Nd", "Nl", "No", "P", "Pc", "Pd", "Pe", "Pf", "Pi", "Po", "Ps", "S", "Sc", "Sk", "Sm",
+        "So", "Z", "Zl", "Zp", "Zs",
+    ];
     match kind {
-        ClassUnicodeKind::OneLetter(_) => true,
+        ClassUnicodeKind::OneLetter(c) => GO_CATEGORIES.contains(&c.to_string().as_str()),
         ClassUnicodeKind::Named(name) => {
-            (name.len() <= 2 && name.chars().all(|c| c.is_ascii_alphabetic()))
-                || GO_NAMES.contains(&name.as_str())
+            GO_CATEGORIES.contains(&name.as_str()) || GO_NAMES.contains(&name.as_str())
         }
         ClassUnicodeKind::NamedValue { .. } => false,
     }
@@ -467,12 +481,8 @@ fn go_class_set(set: &regex_syntax::ast::ClassSet) -> bool {
             ClassSetItem::Unicode(class) => go_unicode_class(&class.kind),
             ClassSetItem::Bracketed(inner) => go_class_set(&inner.kind),
             ClassSetItem::Union(union) => union.items.iter().all(item),
-            ClassSetItem::Literal(literal) => !matches!(
-                literal.kind,
-                regex_syntax::ast::LiteralKind::HexFixed(
-                    regex_syntax::ast::HexLiteralKind::UnicodeLong
-                )
-            ),
+            ClassSetItem::Literal(literal) => go_literal(literal),
+            ClassSetItem::Range(range) => go_literal(&range.start) && go_literal(&range.end),
             _ => true,
         }
     }
@@ -588,6 +598,12 @@ mod tests {
             r"\b{start}x",
             r"^(?=a)a$",
             r"\U0001F600",
+            r"[\U{1F600}]",
+            r"[a-\U0001F600]",
+            r"\p{DI}",
+            r"\pX",
+            r"(?P<a.b>x)",
+            r"(?P<имя>x)",
         ] {
             assert!(!portable_regex(bad), "{bad}");
         }
