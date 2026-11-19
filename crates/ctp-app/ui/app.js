@@ -477,6 +477,12 @@ function bind() {
   $("browseClaudeBtn").addEventListener("click", () => browse(el.claudePathInput));
   $("browseCodeBtn").addEventListener("click", () => browse(el.codeDirInput));
 
+  // Enter outside a button would submit the dialog with its first button ("exit and stop
+  // the gateway" in the tray dialog). Only a focused button answers with Enter.
+  el.dialog.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && event.target.tagName !== "BUTTON") event.preventDefault();
+  });
+
   $("toastClose").addEventListener("click", hideToast);
   $("toastCopy").addEventListener("click", () => copyText(el.toastText.textContent, t("toast.copied")));
 
@@ -485,10 +491,14 @@ function bind() {
     if (event.key === "Escape") {
       if (el.toast.classList.contains("show")) hideToast();
       else if (state.logsOpen) setLogs(false);
-      else if (state.view === "settings") closeSettings();
+      else if (state.view === "settings") {
+        // Without this the same Esc would at once close the "discard changes?" dialog.
+        event.preventDefault();
+        closeSettings();
+      }
     }
-    // event.code: the physical key, so Ctrl+S also works in the Russian layout.
-    if ((event.ctrlKey || event.metaKey) && event.code === "KeyS") {
+    // key: Ctrl+S in any Latin layout; code: the same physical key in the Russian one.
+    if ((event.ctrlKey || event.metaKey) && (event.key.toLowerCase() === "s" || event.code === "KeyS")) {
       event.preventDefault();
       if (state.view === "settings") saveSettings();
       else if (!el.form.classList.contains("hidden")) el.form.requestSubmit();

@@ -601,7 +601,7 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .dialog p { margin: 0 0 16px; line-height: 1.5; font-size: 13px; white-space: pre-wrap; }
 .dialog .check { margin-bottom: 16px; font-weight: 500; }
 .dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
-.dialog-actions #dialogAlt { order: -1; margin-right: auto; }
+.dialog-actions #dialogAlt { margin-right: auto; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
