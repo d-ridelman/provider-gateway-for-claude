@@ -129,10 +129,10 @@ static LOADING: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 /// Каталог из памяти или из сети; сбой — в лог и `None`.
 pub async fn load() -> Option<Arc<Catalog>> {
     let _single = LOADING.lock().await;
-    if let Some((at, cached)) = CACHE.lock().unwrap().as_ref() {
-        if at.elapsed() < if cached.is_some() { FRESH } else { RETRY } {
-            return cached.clone();
-        }
+    if let Some((at, cached)) = CACHE.lock().unwrap().as_ref()
+        && at.elapsed() < if cached.is_some() { FRESH } else { RETRY }
+    {
+        return cached.clone();
     }
     let cached = match download().await {
         Ok(catalog) => Some(Arc::new(catalog)),
@@ -268,10 +268,10 @@ pub fn hints(catalog: &Catalog, base_url: &str, ids: &[String]) -> Hints {
     let mut models = HashMap::new();
     for (_, provider, _) in &found {
         for id in ids {
-            if !models.contains_key(id) {
-                if let Some(model) = model(provider, id) {
-                    models.insert(id.clone(), hint(model));
-                }
+            if !models.contains_key(id)
+                && let Some(model) = model(provider, id)
+            {
+                models.insert(id.clone(), hint(model));
             }
         }
     }

@@ -9,20 +9,20 @@ pub fn build(provider: &Provider, body: &Value, stream: bool) -> Value {
     request.insert("model".into(), json!(model));
     request.insert("messages".into(), Value::Array(convert_messages(body)));
 
-    if let Some(max_tokens) = body.get("max_tokens").and_then(Value::as_i64) {
-        if let Some(key) = provider.max_tokens_key(model) {
-            request.insert(key, json!(max_tokens.max(1)));
-        }
+    if let Some(max_tokens) = body.get("max_tokens").and_then(Value::as_i64)
+        && let Some(key) = provider.max_tokens_key(model)
+    {
+        request.insert(key, json!(max_tokens.max(1)));
     }
     for name in ["temperature", "top_p"] {
         if let Some(value) = body.get(name) {
             request.insert(name.into(), value.clone());
         }
     }
-    if let Some(stop) = body.get("stop_sequences").and_then(Value::as_array) {
-        if !stop.is_empty() {
-            request.insert("stop".into(), Value::Array(stop.clone()));
-        }
+    if let Some(stop) = body.get("stop_sequences").and_then(Value::as_array)
+        && !stop.is_empty()
+    {
+        request.insert("stop".into(), Value::Array(stop.clone()));
     }
 
     let tools = convert_tools(body);
@@ -111,10 +111,10 @@ fn convert_user(message: &Value, out: &mut Vec<Value>) {
     for block in blocks {
         match block.get("type").and_then(Value::as_str).unwrap_or("") {
             "text" => {
-                if let Some(text) = block.get("text").and_then(Value::as_str) {
-                    if !text.is_empty() {
-                        text_parts.push(text.to_string());
-                    }
+                if let Some(text) = block.get("text").and_then(Value::as_str)
+                    && !text.is_empty()
+                {
+                    text_parts.push(text.to_string());
                 }
             }
             "image" => {
@@ -182,10 +182,10 @@ fn convert_assistant(message: &Value, out: &mut Vec<Value>) {
     for block in blocks {
         match block.get("type").and_then(Value::as_str).unwrap_or("") {
             "text" => {
-                if let Some(text) = block.get("text").and_then(Value::as_str) {
-                    if !text.is_empty() {
-                        texts.push(text.to_string());
-                    }
+                if let Some(text) = block.get("text").and_then(Value::as_str)
+                    && !text.is_empty()
+                {
+                    texts.push(text.to_string());
                 }
             }
             "tool_use" => {
@@ -251,14 +251,12 @@ fn document_text(block: &Value) -> String {
     if let Some(text) = source
         .and_then(|source| source.get("data"))
         .and_then(Value::as_str)
-    {
-        if source
+        && source
             .and_then(|source| source.get("type"))
             .and_then(Value::as_str)
             == Some("text")
-        {
-            return text.to_string();
-        }
+    {
+        return text.to_string();
     }
     "[document]".to_string()
 }

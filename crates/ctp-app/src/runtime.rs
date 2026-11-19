@@ -148,10 +148,10 @@ async fn bind(
 /// Останавливает шлюз и возвращает новый номер эпохи.
 pub fn stop(shared: &AppShared) -> u64 {
     let epoch = shared.epoch.fetch_add(1, Ordering::SeqCst) + 1;
-    if let Some(mut runtime) = shared.runtime.lock().unwrap().take() {
-        if let Some(shutdown) = runtime.shutdown.take() {
-            let _ = shutdown.send(());
-        }
+    if let Some(mut runtime) = shared.runtime.lock().unwrap().take()
+        && let Some(shutdown) = runtime.shutdown.take()
+    {
+        let _ = shutdown.send(());
     }
     epoch
 }

@@ -13,6 +13,6 @@ Only the latest release gets security fixes. The app checks for updates on its o
 ## What the app protects
 
 - Provider API keys are stored in Windows Credential Manager, not in files.
-- The gateway listens on `127.0.0.1` only and rejects requests without the local token.
-- Provider error messages are cleaned of anything that looks like an API key before they reach Claude or the window.
+- The gateway listens on `127.0.0.1` only; model requests without the local token are rejected.
+- Errors from OpenAI-compatible providers are cleaned of anything that looks like an API key before they reach Claude or the window. Anthropic-compatible providers are passed through as they answer.
 - Updates are installed only when their signature matches the public key built into the app.

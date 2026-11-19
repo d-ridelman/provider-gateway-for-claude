@@ -9,7 +9,7 @@ Thanks for taking the time. Bug reports, provider templates and translations are
 
 ## Development
 
-Requirements: Windows 10/11 x64, Rust 1.85+ (MSVC), Node.js.
+Requirements: Windows 10/11 x64, Rust 1.90+ (MSVC), Node.js.
 
 ```powershell
 cargo test --workspace
@@ -21,6 +21,7 @@ node tools/check_i18n.js
 `crates/ctp-gateway` runs on its own as well, which is handy for debugging the translation layer:
 
 ```powershell
+$env:GATEWAY_TOKEN = "dev-token"   # clients send it as x-api-key
 cargo run -p ctp-gateway -- --providers-file providers.json
 ```
 

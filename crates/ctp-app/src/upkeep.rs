@@ -354,12 +354,11 @@ pub fn prepare(config: &Config, config_dir: &Path) -> bool {
         tracing::warn!(error = %format!("{exc:#}"), "Claude model rule");
         false
     });
-    if config.russian_ui {
-        if let Some(app) = app_dir(&exe) {
-            if let Err(exc) = refresh_translation(config_dir, &app) {
-                tracing::warn!(error = %format!("{exc:#}"), "Claude translation");
-            }
-        }
+    if config.russian_ui
+        && let Some(app) = app_dir(&exe)
+        && let Err(exc) = refresh_translation(config_dir, &app)
+    {
+        tracing::warn!(error = %format!("{exc:#}"), "Claude translation");
     }
     changed
 }

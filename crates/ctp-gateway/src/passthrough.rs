@@ -57,10 +57,10 @@ pub async fn messages(
             "POST /v1/messages passthrough"
         );
         let mut response = bytes_response(status.as_u16(), &content_type, payload);
-        if let Some(value) = retry_after {
-            if let Ok(value) = HeaderValue::from_str(&value) {
-                response.headers_mut().insert("retry-after", value);
-            }
+        if let Some(value) = retry_after
+            && let Ok(value) = HeaderValue::from_str(&value)
+        {
+            response.headers_mut().insert("retry-after", value);
         }
         return response;
     }
