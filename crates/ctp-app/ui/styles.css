@@ -315,6 +315,7 @@ code {
 .row-endpoint { grid-template-columns: 1.2fr 1fr; }
 .row-models { grid-template-columns: 1.7fr 1fr; }
 .row-roles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; margin: 6px 0 4px; }
+#detectedClaude { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
 .row-roles .field > span { font-weight: 500; }
 .effort-col { display: flex; flex-direction: column; gap: 10px; }
 /* The models label row holds a button: keep it the height of a plain label. */

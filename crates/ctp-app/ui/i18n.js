@@ -99,7 +99,7 @@ const STRINGS = {
     "settings.roleFirst": "Первая модель",
     "settings.roleAsMain": "Как основная",
     "settings.roleMissing": "нет: {model}",
-    "settings.rolesHint": "Субагенты с <code>model: opus</code> или <code>haiku</code> пойдут на эти модели, остальные — на основную. В Desktop — со следующего «Открыть Claude».",
+    "settings.rolesHint": "<code>model: opus</code>/<code>haiku</code> у субагентов — сюда, остальное — на основную.",
     "settings.russian": "Русский интерфейс Claude Desktop",
     "settings.russianHint": "Отдельная копия Claude (~700 МБ) с официальным русским переводом claude.ai. Установленный Claude не меняется; подпись копии недействительна.",
     "settings.russianFileMissing": "Перевод скачается сам при следующем старте или «Открыть Claude» (нужен интернет). Если claude.ai попросит подтвердить, что вы не робот, откроется его окно.",
@@ -115,6 +115,7 @@ const STRINGS = {
     "settings.profileNote": "Claude Desktop открывается в отдельном профиле и не трогает ваш аккаунт.",
     "settings.portInvalid": "Порт должен быть числом от 1 до 65535",
     "settings.saved": "Настройки сохранены",
+    "settings.savedRoles": "Настройки сохранены; в Claude Desktop модели ролей — со следующего «Открыть Claude»",
 
     "actions.start": "Запустить шлюз",
     "actions.restart": "Перезапустить",
@@ -278,7 +279,7 @@ const STRINGS = {
     "settings.roleFirst": "First model",
     "settings.roleAsMain": "Same as main",
     "settings.roleMissing": "gone: {model}",
-    "settings.rolesHint": "Subagents with <code>model: opus</code> or <code>haiku</code> go to these models, the rest to the main one. In Desktop from the next Open Claude.",
+    "settings.rolesHint": "Subagents with <code>model: opus</code>/<code>haiku</code> use these, the rest the main one.",
     "settings.russian": "Russian interface for Claude Desktop",
     "settings.russianHint": "A separate copy of Claude (~700 MB) with claude.ai's official Russian translation. Your installed Claude is not changed; the copy's signature is invalid.",
     "settings.russianFileMissing": "The translation downloads on the next start or Open Claude (needs internet). If claude.ai asks to confirm you are human, its window opens.",
@@ -294,6 +295,7 @@ const STRINGS = {
     "settings.profileNote": "Claude Desktop opens in a separate profile and does not touch your account.",
     "settings.portInvalid": "The port must be a number from 1 to 65535",
     "settings.saved": "Settings saved",
+    "settings.savedRoles": "Settings saved; Claude Desktop uses the role models from the next Open Claude",
 
     "actions.start": "Start gateway",
     "actions.restart": "Restart",
@@ -359,7 +361,7 @@ const STRINGS = {
     "update.confirmTitle": "Install version {version}?",
     "update.confirmText": "The app closes (the gateway stops), the installer updates it and starts it again. Providers, keys and the Claude profile are kept.",
     "update.install": "Update",
-    "models.total": "{count} models in total",
+    "models.total": "Models in total: {count}",
   },
 };
 
