@@ -1071,8 +1071,7 @@ async fn advisor_calls_are_capped_even_if_the_model_keeps_calling() {
     let last_main: Value = requests
         .iter()
         .map(|r| serde_json::from_slice::<Value>(&r.body).unwrap())
-        .filter(|b| b["model"] == "main-model")
-        .next_back()
+        .rfind(|b| b["model"] == "main-model")
         .unwrap();
     assert!(last_main.get("tools").is_none(), "{last_main}");
     assert!(last_main.get("tool_choice").is_none());
