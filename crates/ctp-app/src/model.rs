@@ -134,6 +134,17 @@ pub struct UiConfig {
     pub advisor_decided: bool,
     /// Файл настроек Claude Code, куда пишется советник.
     pub claude_settings: String,
+    /// Почему этот файл не годится для правки (битый JSON и т. п.); тогда галочки нет.
+    pub claude_settings_error: Option<String>,
+    /// Ответ на сохранение: что стало с советником (записан, выключен, не вышло).
+    pub advisor_notice: Option<Notice>,
+}
+
+/// Сообщение для окна; `warning` — не вышло то, что просили.
+#[derive(Clone, Debug, Serialize)]
+pub struct Notice {
+    pub text: String,
+    pub warning: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]

@@ -375,30 +375,42 @@ function advisorAvailable() {
   const provider = state.config.providers.find((p) => p.id === strong.provider);
   return (
     !!provider &&
-    provider.kind !== "anthropic" &&
+    (provider.kind ?? "").toLowerCase() !== "anthropic" &&
     (provider.aliases ?? []).some((row) => bareId(row.model) === bareId(strong.model))
   );
 }
 
 function renderAdvisor() {
   const c = state.config;
-  const available = advisorAvailable();
-  el.advisorInput.disabled = !available;
-  if (!advisorTouched) {
-    el.advisorInput.checked = !!c.advisorModel || (available && !c.advisorDecided);
+  // An unreadable settings file is not touched at all.
+  if (c.claudeSettingsError) {
+    el.advisorInput.disabled = true;
+    el.advisorInput.checked = false;
+    el.advisorRow.title = t("settings.advisorBroken", { path: c.claudeSettings, error: c.claudeSettingsError });
+    return;
   }
+  const available = advisorAvailable();
+  const fileOn = !!c.advisorModel;
+  // Without a strong model it can still be turned off, not on.
+  el.advisorInput.disabled = !available && !fileOn;
+  if (!advisorTouched) el.advisorInput.checked = fileOn || (available && !c.advisorDecided);
+  const now = c.advisorModel ?? t("settings.advisorOff");
   el.advisorRow.title = available
-    ? t("settings.advisorTitle", { path: c.claudeSettings, now: c.advisorModel ?? t("settings.advisorOff") })
-    : t("settings.advisorUnavailable");
+    ? t("settings.advisorTitle", { path: c.claudeSettings, now })
+    : fileOn
+      ? t("settings.advisorOnUnavailable", { path: c.claudeSettings, now })
+      : t("settings.advisorUnavailable");
 }
 
 // What to tell save_settings: a change of the shared file, or the person's first decision;
 // otherwise null, and Claude Code's settings stay untouched.
 function advisorChoice() {
-  if (el.advisorInput.disabled) return null;
+  const c = state.config;
+  if (c.claudeSettingsError || el.advisorInput.disabled) return null;
   const on = el.advisorInput.checked;
-  if (on !== !!state.config.advisorModel) return on;
-  return advisorTouched && !state.config.advisorDecided ? on : null;
+  if (on && !advisorAvailable()) return null;
+  if (on !== !!c.advisorModel) return on;
+  return advisorTouched && !c.advisorDecided ? on : null;
 }
 
 // Model roles of Claude Code: role, select id, text of the "not chosen" option.
@@ -978,7 +990,6 @@ async function saveSettings() {
   const portChanged = port !== state.config?.port;
   const rolesChanged = ROLES.some(([role, id]) => el[id].value !== roleKey(state.config?.modelRoles?.[role]));
   const wasRunning = (portChanged || rolesChanged) && (starting > 0 || !!state.status?.running);
-  const advisorBefore = state.config?.advisorModel ?? null;
   try {
     state.config = await invoke("save_settings", {
       input: {
@@ -994,14 +1005,12 @@ async function saveSettings() {
     });
     if (state.config.language !== LANG) applyLanguage(state.config.language);
     render();
-    // The shared file of Claude Code changed: say so, with its path.
+    // What happened to Claude Code's shared file, as the backend saw it.
     let saved = t(rolesChanged ? "settings.savedRoles" : "settings.saved");
-    const advisorAfter = state.config.advisorModel ?? null;
-    if (!!advisorAfter !== !!advisorBefore) {
-      const key = advisorAfter ? "settings.advisorSavedOn" : "settings.advisorSavedOff";
-      saved += "; " + t(key, { path: state.config.claudeSettings });
-    }
+    const notice = state.config.advisorNotice;
+    if (notice && !notice.warning) saved += "; " + notice.text;
     await restartIfWas(wasRunning, saved);
+    if (notice?.warning) toast(notice.text, "error");
     renderStatus();
   } catch (exc) {
     toast(formatError(exc), "error");

@@ -191,39 +191,61 @@ pub fn save_settings(
     };
     // Основная модель — модель шлюза по умолчанию (store::build_file): нужен перезапуск.
     let port_changed = port_changed || next.model_roles != config.model_roles;
-    // Советник Claude Code — его общий файл настроек; пишется до нашего конфига: не
-    // вышло — не меняется ничего. Шлюз советник не перезапускает.
-    if let Some(on) = input.advisor {
-        if on && !claude::advisor_available(&next) {
-            return Err(tr!(
-                "Советника исполняет сильная модель: выберите её на OpenAI-совместимом провайдере",
-                "The advisor runs on the strong model: pick one on an OpenAI-compatible provider"
-            ));
-        }
-        let path = crate::cc_settings::settings_path().ok_or_else(|| {
-            tr!(
-                "Не найдена домашняя папка для настроек Claude Code",
-                "Home folder for Claude Code settings not found"
-            )
-        })?;
-        crate::cc_settings::set_advisor(&path, on).map_err(|exc| {
-            tr!(
-                "Настройки Claude Code не изменены: {exc}",
-                "Claude Code settings left unchanged: {exc}"
-            )
-        })?;
-        next.advisor_decided = true;
-    }
+    // Советник Claude Code — его общий файл настроек. Не вышло — остальные настройки всё
+    // равно сохраняются, а окно говорит, что с советником. Шлюз он не перезапускает.
+    let advisor_notice = input.advisor.and_then(|on| apply_advisor(&mut next, on));
     store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
     *config = next;
     crate::i18n::apply(config.language.as_deref());
     crate::tray::relabel(&app);
-    let ui = store::ui_config(&config, &shared.config_dir);
+    let mut ui = store::ui_config(&config, &shared.config_dir);
+    ui.advisor_notice = advisor_notice;
     drop(config);
     if port_changed {
         runtime::stop(&shared);
     }
     Ok(ui)
+}
+
+/// Галочка советника → общий файл настроек Claude Code. Решение запоминается, только
+/// если запись удалась. Ответ — что сказать человеку (`None` — файл и так такой).
+fn apply_advisor(next: &mut crate::model::Config, on: bool) -> Option<crate::model::Notice> {
+    let warn = |text: String| {
+        Some(crate::model::Notice {
+            text,
+            warning: true,
+        })
+    };
+    if on && !claude::advisor_available(next) {
+        return warn(tr!(
+            "Советник не включён: его исполняет сильная модель — выберите её на OpenAI-совместимом провайдере",
+            "Advisor not turned on: it runs on the strong model — pick one on an OpenAI-compatible provider"
+        ));
+    }
+    let Some(path) = crate::cc_settings::settings_path() else {
+        return warn(tr!(
+            "Советник не изменён: не найдена домашняя папка",
+            "Advisor unchanged: home folder not found"
+        ));
+    };
+    match crate::cc_settings::set_advisor(&path, on) {
+        Ok(changed) => {
+            next.advisor_decided = true;
+            let path = path.display();
+            changed.then(|| crate::model::Notice {
+                text: if on {
+                    tr!("советник включён в {path}", "advisor turned on in {path}")
+                } else {
+                    tr!("советник выключен в {path}", "advisor turned off in {path}")
+                },
+                warning: false,
+            })
+        }
+        Err(exc) => warn(tr!(
+            "Советник не изменён: {exc}",
+            "Advisor unchanged: {exc}"
+        )),
+    }
 }
 
 /// «Скопировать команду для Claude Code»: те же переменные, что у кнопки «Claude Code».
