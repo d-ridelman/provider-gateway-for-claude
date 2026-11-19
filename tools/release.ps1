@@ -76,9 +76,11 @@ foreach ($file in Get-ChildItem $out -Filter *.exe) {
     $bytes = [IO.File]::ReadAllBytes($file.FullName)
     foreach ($enc in [Text.Encoding]::ASCII, [Text.Encoding]::Unicode) {
         $needle = $enc.GetBytes($user)
-        # The repository URL (update endpoint) may legitimately contain the owner's login.
+        # The owner's public GitHub login (update URL, copyright) may contain the user name;
+        # a local path such as Users\<name> still fails the check.
+        $owner = $Repo.Split('/')[0]
         $text = [Text.Encoding]::Latin1.GetString($bytes).Replace(
-            [Text.Encoding]::Latin1.GetString($enc.GetBytes("github.com/$Repo")), '')
+            [Text.Encoding]::Latin1.GetString($enc.GetBytes($owner)), '')
         if ($text.Contains([Text.Encoding]::Latin1.GetString($needle))) {
             throw "$($file.Name) contains the user name '$user' ($($enc.EncodingName))"
         }
