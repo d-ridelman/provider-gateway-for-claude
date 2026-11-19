@@ -109,7 +109,7 @@ There is no telemetry. Prompts and answers go only between Claude and your provi
 | Russian Claude copy (~700 MB, optional) | `%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru` |
 | Russian translation of claude.ai | `%APPDATA%\app.provider-gateway-for-claude\claude-ru.json` |
 
-claude.ai sometimes answers programs with a bot check. The app then loads the translation in its built-in browser (WebView2), which passes the check like any visitor; if claude.ai asks you to tick a box, that window appears for a moment. If it still fails, open `https://claude.ai/i18n/ru.json` in your browser and save it as that `claude-ru.json`: the compatibility check in Settings shows the exact path.
+claude.ai sometimes answers programs with a bot check. The app then loads the translation in its built-in browser (WebView2), which passes the check like any visitor; if it does not pass on its own within a few seconds (claude.ai wants a box ticked), that window appears so you can finish it. If it still fails, open `https://claude.ai/i18n/ru.json` in your browser and save it as that `claude-ru.json`: the compatibility check in Settings shows the exact path.
 
 ## Build from source
 

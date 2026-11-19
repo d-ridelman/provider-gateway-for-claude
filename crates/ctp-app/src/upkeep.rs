@@ -213,23 +213,33 @@ fn parse_translation(raw: &[u8]) -> Result<serde_json::Map<String, Value>> {
 }
 
 /// Перевод с claude.ai: сначала системный `curl.exe` (быстро, без окна), а если
-/// Cloudflare ответил проверкой на бота — встроенный браузер (`webfetch`), который её
-/// проходит сам. 19.11.2026 утром curl пропускали, к обеду закрыли и его.
+/// Cloudflare ответил проверкой на бота (403) — встроенный браузер (`webfetch`),
+/// который её проходит сам. Без сети, при 404/5xx браузер не открывается: окно с
+/// ошибкой страницы висело бы зря. 19.11.2026 утром curl пропускали, к обеду нет.
 fn download_translation() -> Result<Vec<u8>> {
     download_with_curl().or_else(|curl| {
+        if !is_bot_check(&format!("{curl:#}")) {
+            return Err(curl);
+        }
         tracing::info!(error = %format!("{curl:#}"), "curl refused, trying the built-in browser");
         crate::webfetch::fetch_json(TRANSLATION_URL)
             .map(String::into_bytes)
             .map_err(|browser| {
+                // stderr curl уже начинается с «curl:».
                 anyhow::anyhow!(
                     "{}",
                     tr!(
-                        "curl: {curl:#}; браузер: {browser:#}",
-                        "curl: {curl:#}; browser: {browser:#}"
+                        "{curl:#}; браузер: {browser:#}",
+                        "{curl:#}; browser: {browser:#}"
                     )
                 )
             })
     })
+}
+
+/// Ошибка curl — ответ 403 (так Cloudflare отвечает программам проверкой на бота).
+fn is_bot_check(curl_error: &str) -> bool {
+    curl_error.contains("returned error: 403")
 }
 
 fn download_with_curl() -> Result<Vec<u8>> {
@@ -277,7 +287,11 @@ const RETRY_AFTER: Duration = Duration::from_secs(30 * 60);
 
 /// Свежий перевод при смене версии Claude (или если файла нет). Худший по покрытию
 /// строк этой версии не заменяет лучший. Возвращает строку для самопроверки.
-pub fn refresh_translation(config_dir: &Path, app: &Path) -> Result<String> {
+///
+/// `background` — фоновая самопроверка. Перед «Открыть Claude» (`false`) качаем, только
+/// если перевода нет вовсе: обновление под новую версию (может открыть окно проверки
+/// claude.ai и ждать до двух минут) делает фоновая проверка, а кнопка не ждёт.
+pub fn refresh_translation(config_dir: &Path, app: &Path, background: bool) -> Result<String> {
     let version = app
         .file_name()
         .and_then(|n| n.to_str())
@@ -306,7 +320,8 @@ pub fn refresh_translation(config_dir: &Path, app: &Path) -> Result<String> {
     let failed_recently = last_failure
         .as_ref()
         .is_some_and(|(v, at)| *v == version && at.elapsed() < RETRY_AFTER);
-    if (current.is_none() || meta.claude_version != version) && failed_recently {
+    let due = current.is_none() || (background && meta.claude_version != version);
+    if due && failed_recently {
         note = tr!(
             " (скачать не вышло, повтор позже)",
             " (download failed, will retry later)"
@@ -314,7 +329,7 @@ pub fn refresh_translation(config_dir: &Path, app: &Path) -> Result<String> {
         if current.is_none() {
             anyhow::bail!("{}", not_downloaded(&file));
         }
-    } else if current.is_none() || meta.claude_version != version {
+    } else if due {
         let downloaded =
             download_translation().and_then(|raw| parse_translation(&raw).map(|map| (raw, map)));
         *last_failure = downloaded
@@ -376,7 +391,7 @@ pub fn prepare(config: &Config, config_dir: &Path) -> bool {
     });
     if config.russian_ui
         && let Some(app) = app_dir(&exe)
-        && let Err(exc) = refresh_translation(config_dir, &app)
+        && let Err(exc) = refresh_translation(config_dir, &app, false)
     {
         tracing::warn!(error = %format!("{exc:#}"), "Claude translation");
     }
@@ -493,7 +508,7 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
     }
 
     if config.russian_ui {
-        match refresh_translation(config_dir, &app) {
+        match refresh_translation(config_dir, &app, true) {
             Ok(line) => check.push(true, line),
             Err(exc) => check.push(false, format!("{exc:#}")),
         }
@@ -623,6 +638,20 @@ mod tests {
             serde_json::from_str(r#"{"a":"1","b":"2","zz":"3"}"#).unwrap();
         assert!((coverage(&en, &ru) - 0.5).abs() < 1e-9);
         assert_eq!(coverage(&HashSet::new(), &ru), 0.0);
+    }
+
+    #[test]
+    fn only_403_goes_to_the_browser() {
+        assert!(is_bot_check(
+            "curl: (22) The requested URL returned error: 403"
+        ));
+        assert!(!is_bot_check(
+            "curl: (22) The requested URL returned error: 404"
+        ));
+        assert!(!is_bot_check("curl: (6) Could not resolve host: claude.ai"));
+        assert!(!is_bot_check(
+            "curl: (28) Operation timed out after 30000 milliseconds"
+        ));
     }
 
     #[test]
