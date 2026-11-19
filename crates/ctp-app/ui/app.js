@@ -308,6 +308,7 @@ function renderForm() {
   renderKeyHint(provider);
 
   el.aliasBox.classList.toggle("hidden", !provider.aliases?.length);
+  $("aliasSummary").textContent = t("form.aliases", { count: provider.aliases?.length ?? 0 });
   el.aliasList.replaceChildren();
   for (const alias of provider.aliases ?? []) {
     const row = document.createElement("div");

@@ -1,0 +1,7 @@
+# Update mirror (see worker.js). Deploy: npx wrangler deploy (needs a Cloudflare API token
+# with Workers Scripts:Edit in CLOUDFLARE_API_TOKEN). Then add
+# https://<name>.<account>.workers.dev/latest.json as the FIRST updater endpoint in
+# crates/ctp-app/tauri.conf.json; GitHub stays the fallback.
+name = "provider-gateway-updates"
+main = "worker.js"
+compatibility_date = "2026-11-01"
