@@ -529,14 +529,44 @@ mod tests {
         assert_eq!(delta["usage"]["input_tokens"], 10_000);
         assert_eq!(delta["usage"]["cache_read_input_tokens"], 40_000);
 
-        // Провайдер без usage: оценка остаётся в message_start, в delta входных нет.
-        let mut quiet = StreamTranslator::new("claude-x", 123);
-        quiet.on_chunk(&json!({"choices": [{"index": 0, "delta": {"content": "hi"}, "finish_reason": "stop"}]}));
-        let events = quiet.finish();
+        // Провайдер без usage или с нулями: оценка остаётся в message_start, в delta
+        // входных нет (ноль сказал бы Claude Code, что контекст пуст).
+        for usage in [
+            Value::Null,
+            json!({"prompt_tokens": 0, "completion_tokens": 3}),
+            json!({"input_tokens": 0, "output_tokens": 3}),
+        ] {
+            let mut quiet = StreamTranslator::new("claude-x", 123);
+            let mut chunk = json!({"choices": [{"index": 0, "delta": {"content": "hi"}, "finish_reason": "stop"}]});
+            if !usage.is_null() {
+                chunk["usage"] = usage;
+            }
+            quiet.on_chunk(&chunk);
+            let events = quiet.finish();
+            let delta = events
+                .iter()
+                .find(|e| e["type"] == "message_delta")
+                .unwrap();
+            assert!(delta["usage"].get("input_tokens").is_none(), "{delta}");
+        }
+
+        // Anthropic-поля: input_tokens без кэша, кэш отдельно и не вычитается.
+        assert_eq!(
+            response::input_usage(&json!({"input_tokens": 100, "cache_read_input_tokens": 900})),
+            Some((100, Some(900)))
+        );
+        // Ноль в последнем чанке не затирает цифру из предыдущего.
+        let mut late = StreamTranslator::new("claude-x", 1);
+        late.on_chunk(&json!({"choices": [], "usage": {"prompt_tokens": 7000}}));
+        late.on_chunk(
+            &json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+                              "usage": {"prompt_tokens": 0}}),
+        );
+        let events = late.finish();
         let delta = events
             .iter()
             .find(|e| e["type"] == "message_delta")
             .unwrap();
-        assert!(delta["usage"].get("input_tokens").is_none());
+        assert_eq!(delta["usage"]["input_tokens"], 7000);
     }
 }
