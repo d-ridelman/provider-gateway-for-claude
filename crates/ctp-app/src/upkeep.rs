@@ -212,11 +212,27 @@ fn parse_translation(raw: &[u8]) -> Result<serde_json::Map<String, Value>> {
     Ok(map)
 }
 
-/// Перевод с claude.ai через системный `curl.exe`: Cloudflare пускает не всех по
-/// отпечатку TLS — reqwest и .NET получают 403, curl (Schannel) — 200 (19.11.2026).
-/// shortcut: защита Cloudflare может закрыть и curl — тогда остаётся прежний файл и
-/// ручное скачивание из браузера; переделать, если 403 станет постоянным.
+/// Перевод с claude.ai: сначала системный `curl.exe` (быстро, без окна), а если
+/// Cloudflare ответил проверкой на бота — встроенный браузер (`webfetch`), который её
+/// проходит сам. 19.11.2026 утром curl пропускали, к обеду закрыли и его.
 fn download_translation() -> Result<Vec<u8>> {
+    download_with_curl().or_else(|curl| {
+        tracing::info!(error = %format!("{curl:#}"), "curl refused, trying the built-in browser");
+        crate::webfetch::fetch_json(TRANSLATION_URL)
+            .map(String::into_bytes)
+            .map_err(|browser| {
+                anyhow::anyhow!(
+                    "{}",
+                    tr!(
+                        "curl: {curl:#}; браузер: {browser:#}",
+                        "curl: {curl:#}; browser: {browser:#}"
+                    )
+                )
+            })
+    })
+}
+
+fn download_with_curl() -> Result<Vec<u8>> {
     let curl = std::env::var_os("SystemRoot")
         .map(|root| PathBuf::from(root).join("System32").join("curl.exe"))
         .filter(|path| path.is_file())
@@ -296,13 +312,7 @@ pub fn refresh_translation(config_dir: &Path, app: &Path) -> Result<String> {
             " (download failed, will retry later)"
         );
         if current.is_none() {
-            anyhow::bail!(
-                "{}",
-                tr!(
-                    "перевод не скачан, повтор через полчаса",
-                    "translation not downloaded, retrying in half an hour"
-                )
-            );
+            anyhow::bail!("{}", not_downloaded(&file));
         }
     } else if current.is_none() || meta.claude_version != version {
         let downloaded =
@@ -334,15 +344,7 @@ pub fn refresh_translation(config_dir: &Path, app: &Path) -> Result<String> {
             Err(exc) if current.is_some() => {
                 note = tr!(" (обновить не вышло: {exc:#})", " (update failed: {exc:#})");
             }
-            Err(exc) => {
-                // claude.ai может закрыться проверкой Cloudflare для программ: подскажем,
-                // как положить файл вручную из браузера.
-                let target = file.display();
-                return Err(exc.context(tr!(
-                    "перевод не скачан — откройте {TRANSLATION_URL} в браузере и сохраните как {target}",
-                    "translation not downloaded; open {TRANSLATION_URL} in a browser and save it as {target}"
-                )));
-            }
+            Err(exc) => return Err(exc.context(not_downloaded(&file))),
         }
     }
     let map = parse_translation(&fs::read(&file)?)?;
@@ -551,12 +553,22 @@ pub fn check_into(app: &tauri::AppHandle, config: &Config, config_dir: &Path, bu
         .unwrap_or_else(|p| p.into_inner()) = Some(result);
 }
 
-/// Строка самопроверки про «Без папки» в русской копии.
+/// Перевода нет и скачать не вышло: как положить файл вручную (claude.ai бывает закрыт
+/// проверкой на бота, которую не прошёл даже встроенный браузер, или нет сети).
+fn not_downloaded(file: &Path) -> String {
+    let target = file.display();
+    tr!(
+        "перевод не скачан — откройте {TRANSLATION_URL} в браузере и сохраните как {target}",
+        "translation not downloaded; open {TRANSLATION_URL} in a browser and save it as {target}"
+    )
+}
+
+/// Строка самопроверки про «Без папки» во вкладке Code русской копии.
 fn folderless_line(found: bool) -> String {
     if found {
         tr!(
-            "«Без папки» для Claude Code включён",
-            "“No folder” for Claude Code is on"
+            "«Без папки» во вкладке Code доступен",
+            "“No folder” in the Code tab is available"
         )
     } else {
         tr!(
@@ -615,7 +627,7 @@ mod tests {
 
     #[test]
     fn folderless_line_says_found_or_missing() {
-        assert!(folderless_line(true).contains("включён"));
+        assert!(folderless_line(true).contains("доступен"));
         assert!(folderless_line(false).contains("не найден"));
     }
 

@@ -10,6 +10,7 @@ pub mod store;
 pub mod tray;
 pub mod updates;
 pub mod upkeep;
+pub mod webfetch;
 
 use crate::state::AppShared;
 use std::path::Path;
@@ -32,7 +33,9 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Крестик и Alt+F4 прячут окно, шлюз работает дальше; выход — из меню трея.
             // Без значка в трее прятать некуда — тогда закрываем как обычно.
+            // Только главное окно: служебное (webfetch) закрывается по-настоящему.
             if let tauri::WindowEvent::CloseRequested { api, .. } = event
+                && window.label() == "main"
                 && window.app_handle().tray_by_id(tray::TRAY).is_some()
             {
                 api.prevent_close();
@@ -60,6 +63,7 @@ pub fn run() {
 
             let config = store::load_or_create(&dir)?;
             i18n::apply(config.language.as_deref());
+            webfetch::init(app.handle());
             // После журнала и языка: предупреждение есть куда записать, меню — на нужном языке.
             if let Err(exc) = tray::build(app.handle()) {
                 tracing::warn!(error = %exc, "tray icon not created, closing the window will exit");
