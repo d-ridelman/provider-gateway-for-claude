@@ -317,6 +317,8 @@ code {
 .row-roles { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 10px; margin: 6px 0 4px; }
 #detectedClaude { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
 .row-roles .field > span { font-weight: 500; }
+/* Three selects in a half column: a narrower arrow gutter keeps "Первая модель" whole. */
+.row-roles select { padding-left: 10px; padding-right: 22px; background-position: right 8px center; }
 .effort-col { display: flex; flex-direction: column; gap: 10px; }
 /* The models label row holds a button: keep it the height of a plain label. */
 .field-head { min-height: 18px; }
@@ -327,7 +329,8 @@ code {
 /* minmax(0, …): a long unbreakable line (the detected path) must not widen its column. */
 .settings-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 24px; }
 @container (max-width: 700px) {
-  .row-ident, .row-endpoint, .row-models, .grid.two, .settings-cols { grid-template-columns: 1fr; }
+  .row-ident, .row-endpoint, .row-models, .grid.two { grid-template-columns: 1fr; }
+  .settings-cols { grid-template-columns: minmax(0, 1fr); }
 }
 .field > span, .field > label:not(.check), .field-label { font-size: 12px; font-weight: 600; color: var(--muted); }
 .field small { color: var(--dim); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }

@@ -574,6 +574,12 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
             Ok(line) => check.push(true, line),
             Err(exc) => check.push(false, format!("{exc:#}")),
         }
+        // Copy first: the Code tab line below reads the copy's app.asar, which a stale copy lacks.
+        let copy = build_copy.then(|| {
+            fs::read(config_dir.join(ruui::TRANSLATION_FILE))
+                .map_err(anyhow::Error::from)
+                .and_then(|ru| ruui::ensure_copy(&app, &crate::claude::copies_root()?, &ru))
+        });
         match ruui::locale_changes(&app.join("resources").join("ion-dist.asar")) {
             Ok(patches) => {
                 check.push(
@@ -595,11 +601,8 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
                 tr!("Русский интерфейс: {exc:#}", "Russian interface: {exc:#}"),
             ),
         }
-        if build_copy {
-            match fs::read(config_dir.join(ruui::TRANSLATION_FILE))
-                .map_err(anyhow::Error::from)
-                .and_then(|ru| ruui::ensure_copy(&app, &crate::claude::copies_root()?, &ru))
-            {
+        if let Some(copy) = copy {
+            match copy {
                 Ok(_) => check.push(true, tr!("Русская копия готова", "Russian copy is ready")),
                 Err(exc) => check.push(
                     false,
