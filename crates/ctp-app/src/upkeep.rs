@@ -583,7 +583,11 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
                         "Russian can be added to this version"
                     ),
                 );
-                check.push_optional(patches.folderless, folderless_line(patches.folderless));
+                let env = ruui::env_prelude_applies(&app);
+                check.push_optional(
+                    patches.folderless && env,
+                    code_tab_line(patches.folderless, env),
+                );
             }
             Err(exc) => check.push(
                 false,
@@ -779,17 +783,27 @@ fn not_downloaded(file: &Path) -> String {
 }
 
 /// Строка самопроверки про «Без папки» во вкладке Code русской копии.
-fn folderless_line(found: bool) -> String {
-    if found {
-        tr!(
-            "«Без папки» во вкладке Code доступен",
-            "“No folder” in the Code tab is available"
-        )
-    } else {
-        tr!(
-            "«Без папки» в этой версии Claude не найден",
-            "“No folder” not found in this Claude version"
-        )
+/// Одна строка самопроверки про вкладку Code русской копии: «Без папки» и обычная
+/// AppData\Local у процессов сессий (`ruui::ENV_PRELUDE`). Одна, а не две: правая колонка
+/// настроек должна помещаться без прокрутки.
+fn code_tab_line(folderless: bool, env: bool) -> String {
+    match (folderless, env) {
+        (true, true) => tr!(
+            "Вкладка Code: «Без папки», обычная AppData\\Local",
+            "Code tab: “No folder”, usual AppData\\Local"
+        ),
+        (true, false) => tr!(
+            "Вкладка Code: «Без папки»; AppData\\Local сессий — от копии",
+            "Code tab: “No folder”; sessions see the copy's AppData\\Local"
+        ),
+        (false, true) => tr!(
+            "Вкладка Code: «Без папки» в этой версии не найден",
+            "Code tab: “No folder” not found in this version"
+        ),
+        (false, false) => tr!(
+            "Вкладка Code: нет «Без папки», AppData\\Local сессий — от копии",
+            "Code tab: no “No folder”; sessions see the copy's AppData\\Local"
+        ),
     }
 }
 
@@ -997,9 +1011,11 @@ mod tests {
     }
 
     #[test]
-    fn folderless_line_says_found_or_missing() {
-        assert!(folderless_line(true).contains("доступен"));
-        assert!(folderless_line(false).contains("не найден"));
+    fn code_tab_line_names_what_is_missing() {
+        assert!(code_tab_line(true, true).contains("обычная"));
+        assert!(code_tab_line(true, false).contains("от копии"));
+        assert!(code_tab_line(false, true).contains("не найден"));
+        assert!(code_tab_line(false, false).contains("нет «Без папки»"));
     }
 
     #[test]

@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 /// Файл перевода в папке настроек приложения.
 pub const TRANSLATION_FILE: &str = "claude-ru.json";
 /// Меняется, когда меняется сам патч: старые копии пересобираются.
-const PATCH_REV: u32 = 3;
+const PATCH_REV: u32 = 4;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
 
@@ -343,12 +343,23 @@ fn enable_folderless(data: &[u8]) -> Option<Vec<u8>> {
 /// подписанные сборки не слушают) и защита установленного Claude от действий копии.
 pub const REAL_LOCALAPPDATA_VAR: &str = "CTP_REAL_LOCALAPPDATA";
 
-/// Вставка в начало главного процесса копии: процессы, которые Claude запускает (сессии
-/// Code, их Bash и PowerShell, MCP-серверы, git), получают настоящую `LOCALAPPDATA`,
-/// как у обычного Claude, а сам Claude по-прежнему видит подменённую. Подменённое
-/// значение в окружении ребёнка меняется на настоящее; заданное иначе — не трогается.
-/// `util.promisify` у `exec`/`execFile` сохраняет своё поведение ({stdout, stderr}).
-const ENV_PRELUDE: &str = r#";(()=>{try{const real=process.env.CTP_REAL_LOCALAPPDATA,over=process.env.LOCALAPPDATA;delete process.env.CTP_REAL_LOCALAPPDATA;if(!real||!over||real.toLowerCase()===over.toLowerCase())return;const cp=require("child_process"),util=require("util");const fix=(env)=>{const e=Object.assign({},env||process.env);for(const k of Object.keys(e)){if(k.toUpperCase()==="LOCALAPPDATA"&&typeof e[k]==="string"&&e[k].toLowerCase()===over.toLowerCase())e[k]=real}return e};const fixArgs=(name,a)=>{a=Array.prototype.slice.call(a);const i=a.findIndex((x,j)=>j>0&&x!==null&&typeof x==="object"&&!Array.isArray(x));if(i>0){a[i]=Object.assign({},a[i],{env:fix(a[i].env)})}else{let at=(name==="exec"||name==="execSync")?1:(Array.isArray(a[1])?2:1);a.splice(Math.min(at,a.length),0,{env:fix()})}return a};for(const name of ["spawn","spawnSync","execFile","execFileSync","exec","execSync","fork"]){const orig=cp[name];if(typeof orig!=="function")continue;const wrapped=function(){return orig.apply(this,fixArgs(name,arguments))};const custom=orig[util.promisify.custom];if(typeof custom==="function"){wrapped[util.promisify.custom]=function(){return custom.apply(this,fixArgs(name,arguments))}}Object.defineProperty(wrapped,"name",{value:name});cp[name]=wrapped}}catch(e){}})();"#;
+/// Вставка в начало главного процесса копии: процессы, которые Claude запускает через
+/// `child_process` (сессии Code с их Bash и PowerShell, их MCP-серверы, внешние
+/// MCP-команды, git), получают настоящую `LOCALAPPDATA`, как у обычного Claude, а сам
+/// Claude по-прежнему видит подменённую. Подменённое значение в окружении ребёнка
+/// меняется на настоящее, заданное иначе — не трогается; `CTP_REAL_LOCALAPPDATA` детям
+/// не передаётся, а у самого Claude остаётся (его `app.relaunch` сохранит правку).
+/// `undefined`/`null` на месте опций заменяются, а не сдвигают колбэк. `util.promisify`
+/// у `exec`/`execFile` ведёт себя как прежде ({stdout, stderr}).
+/// shortcut: процессы `utilityProcess` (MCP на встроенном Node, терминал, хост MCP
+/// режима 3p) не тронуты — некоторые из них сами ищут данные профиля через
+/// `LOCALAPPDATA`; расширить, если это начнёт мешать на деле.
+const ENV_PRELUDE: &str = r#";(()=>{try{const real=process.env.CTP_REAL_LOCALAPPDATA,over=process.env.LOCALAPPDATA;if(!real||!over||real.toLowerCase()===over.toLowerCase())return;const cp=require("child_process"),util=require("util");const fix=(env)=>{const e=Object.assign({},env||process.env);for(const k of Object.keys(e)){const u=k.toUpperCase();if(u==="CTP_REAL_LOCALAPPDATA")delete e[k];else if(u==="LOCALAPPDATA"&&typeof e[k]==="string"&&e[k].toLowerCase()===over.toLowerCase())e[k]=real}return e};const fixArgs=(name,a)=>{a=Array.prototype.slice.call(a);const i=a.findIndex((x,j)=>j>0&&x!==null&&typeof x==="object"&&!Array.isArray(x));if(i>0){a[i]=Object.assign({},a[i],{env:fix(a[i].env)})}else{const at=(name==="exec"||name==="execSync")?1:(Array.isArray(a[1])?2:1);if(at<a.length&&(a[at]===undefined||a[at]===null))a[at]={env:fix()};else a.splice(Math.min(at,a.length),0,{env:fix()})}return a};for(const name of ["spawn","spawnSync","execFile","execFileSync","exec","execSync","fork"]){const orig=cp[name];if(typeof orig!=="function")continue;const wrapped=function(){return orig.apply(this,fixArgs(name,arguments))};const custom=orig[util.promisify.custom];if(typeof custom==="function"){wrapped[util.promisify.custom]=function(){return custom.apply(this,fixArgs(name,arguments))}}Object.defineProperty(wrapped,"name",{value:name});cp[name]=wrapped}}catch(e){}})();"#;
+
+/// Можно ли встроить вставку окружения в эту версию Claude (для самопроверки).
+pub fn env_prelude_applies(app_dir: &Path) -> bool {
+    env_prelude_change(&app_dir.join("resources").join("app.asar")).is_ok()
+}
 
 /// Точка входа главного процесса из `package.json` архива `app.asar` и она же со
 /// вставкой `ENV_PRELUDE` (после `"use strict";`, если файл с него начинается).
@@ -628,19 +639,19 @@ fn build(app_dir: &Path, building: &Path, ru_json: &[u8], marker: &str) -> Resul
     // копия всё равно собирается, без этой правки; самопроверка это покажет.
     let src_app = app_dir.join("resources").join("app.asar");
     let mut skip = vec![src_exe, src_asar];
-    match env_prelude_change(&src_app).and_then(|change| {
-        rebuild(
-            &src_app,
-            &building.join("resources").join("app.asar"),
-            &[change],
-        )
-    }) {
-        Ok((old_app, new_app)) => {
-            exe = patch_exe(&exe, &old_app, &new_app)?;
+    let dst_app = building.join("resources").join("app.asar");
+    let applied = env_prelude_change(&src_app)
+        .and_then(|change| rebuild(&src_app, &dst_app, &[change]))
+        .and_then(|(old_app, new_app)| patch_exe(&exe, &old_app, &new_app));
+    match applied {
+        Ok(patched) => {
+            exe = patched;
             skip.push(src_app);
         }
         Err(exc) => {
-            tracing::warn!(error = %format!("{exc:#}"), "child environment fix not applied")
+            // Исходный app.asar скопирует copy_tree ниже: копия без правки, но целая.
+            let _ = fs::remove_file(&dst_app);
+            tracing::warn!(error = %format!("{exc:#}"), "child environment fix not applied");
         }
     }
     fs::write(building.join("claude.exe"), exe)?;
@@ -1181,8 +1192,11 @@ const out=[];
 out.push(cp.execFileSync(process.execPath,show).toString());
 out.push(cp.spawnSync(process.execPath,show,{env:Object.assign({},process.env,{LOCALAPPDATA:"custom"})}).stdout.toString());
 out.push(cp.execSync("node -e process.stdout.write(process.env.LOCALAPPDATA)").toString());
-out.push(String(process.env.LOCALAPPDATA));
-util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.stdout);out.push(r.stdout);console.log(JSON.stringify(out));});
+out.push(String(process.env.LOCALAPPDATA)+'|'+String(process.env.CTP_REAL_LOCALAPPDATA));
+// undefined/null where options go: the callback must still be called.
+cp.execFile(process.execPath,show,undefined,(e,so)=>{out.push("cb1:"+so);
+cp.exec("node -e process.stdout.write(process.env.LOCALAPPDATA)",null,(e2,so2)=>{out.push("cb2:"+so2);
+util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.stdout);out.push(r.stdout);console.log(JSON.stringify(out));});});});
 "#;
         fs::write(&script, [ENV_PRELUDE, body].concat()).unwrap();
         let output = std::process::Command::new("node")
@@ -1199,7 +1213,9 @@ util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.
                 "C:/real|undefined",
                 "custom|undefined",
                 "C:/real",
-                "C:/over",
+                "C:/over|C:/real",
+                "cb1:C:/real|undefined",
+                "cb2:C:/real",
                 "string",
                 "C:/real|undefined"
             ]
