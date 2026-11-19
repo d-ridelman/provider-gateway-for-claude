@@ -7,6 +7,10 @@ use std::collections::BTreeMap;
 pub struct ProvidersFile {
     #[serde(default)]
     pub default: Option<String>,
+    /// Модель советника (инструмент `advisor` Claude Code), если Claude Code назвал
+    /// модель, которой у шлюза нет (`claude-fable-5-2` и т. п.). Нет — советника нет.
+    #[serde(default)]
+    pub advisor: Option<String>,
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
 }

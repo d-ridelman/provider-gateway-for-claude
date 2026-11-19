@@ -2,8 +2,34 @@ use crate::state::Provider;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
-/// Anthropic Messages → OpenAI Chat Completions (тело запроса).
-pub fn build(provider: &Provider, body: &Value, stream: bool) -> Value {
+/// Имя инструмента-советника у Claude Code и у модели (функция шлюза).
+pub const ADVISOR: &str = "advisor";
+
+/// Описание функции-советника для модели: Anthropic даёт его сам на сервере, а Claude
+/// Code в запросе присылает только `{type: "advisor_20260301", model}`.
+const ADVISOR_DESCRIPTION: &str = "Consult a stronger reviewer model that sees this whole \
+conversation: the task, every tool call and result so far. It takes no parameters. Call it \
+before substantive work (before writing code or committing to an approach), when stuck or \
+seeing the same error twice, when considering a change of approach, and once before \
+declaring the task done. Give its advice serious weight.";
+
+/// Модель советника, если Claude Code объявил серверный инструмент `advisor_20260301`.
+/// `Some(None)` — объявлен без модели.
+pub fn advisor_tool(body: &Value) -> Option<Option<&str>> {
+    body.get("tools")?
+        .as_array()?
+        .iter()
+        .find(|tool| {
+            tool.get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.starts_with("advisor_"))
+        })
+        .map(|tool| tool.get("model").and_then(Value::as_str))
+}
+
+/// Anthropic Messages → OpenAI Chat Completions (тело запроса). `advisor` — шлюз сам
+/// исполнит советника, и модели объявляется функция `advisor`.
+pub fn build(provider: &Provider, body: &Value, stream: bool, advisor: bool) -> Value {
     let model = body.get("model").and_then(Value::as_str).unwrap_or("");
     let mut request = Map::new();
     request.insert("model".into(), json!(model));
@@ -25,7 +51,17 @@ pub fn build(provider: &Provider, body: &Value, stream: bool) -> Value {
         request.insert("stop".into(), Value::Array(stop.clone()));
     }
 
-    let tools = convert_tools(body);
+    let mut tools = convert_tools(body);
+    if advisor {
+        tools.push(json!({
+            "type": "function",
+            "function": {
+                "name": ADVISOR,
+                "description": ADVISOR_DESCRIPTION,
+                "parameters": {"type": "object", "properties": {}}
+            }
+        }));
+    }
     let has_tools = !tools.is_empty();
     if has_tools {
         request.insert("tools".into(), Value::Array(tools));
@@ -179,8 +215,37 @@ fn convert_assistant(message: &Value, out: &mut Vec<Value>) {
 
     let mut texts = Vec::new();
     let mut tool_calls = Vec::new();
+    // Советник (серверный инструмент) — внутри ответа ассистента: `server_tool_use`, затем
+    // `advisor_tool_result`. Для OpenAI ответ режется на границе: assistant с вызовом
+    // `advisor` → tool с советом → дальше новый assistant. Вызов без результата выпадает.
+    let mut advisor_calls: Vec<&str> = Vec::new();
     for block in blocks {
         match block.get("type").and_then(Value::as_str).unwrap_or("") {
+            "server_tool_use" if block.get("name").and_then(Value::as_str) == Some(ADVISOR) => {
+                if let Some(id) = block.get("id").and_then(Value::as_str) {
+                    advisor_calls.push(id);
+                }
+            }
+            "advisor_tool_result" => {
+                let Some(id) = block
+                    .get("tool_use_id")
+                    .and_then(Value::as_str)
+                    .filter(|id| advisor_calls.contains(id))
+                else {
+                    continue;
+                };
+                tool_calls.push(json!({
+                    "id": id,
+                    "type": "function",
+                    "function": {"name": ADVISOR, "arguments": "{}"}
+                }));
+                flush_assistant(&mut texts, &mut tool_calls, out);
+                out.push(json!({
+                    "role": "tool",
+                    "tool_call_id": id,
+                    "content": advisor_text(block.get("content").unwrap_or(&Value::Null))
+                }));
+            }
             "text" => {
                 if let Some(text) = block.get("text").and_then(Value::as_str)
                     && !text.is_empty()
@@ -211,7 +276,10 @@ fn convert_assistant(message: &Value, out: &mut Vec<Value>) {
             _ => {}
         }
     }
+    flush_assistant(&mut texts, &mut tool_calls, out);
+}
 
+fn flush_assistant(texts: &mut Vec<String>, tool_calls: &mut Vec<Value>, out: &mut Vec<Value>) {
     if !tool_calls.is_empty() {
         let content = if texts.is_empty() {
             Value::Null
@@ -221,10 +289,30 @@ fn convert_assistant(message: &Value, out: &mut Vec<Value>) {
         out.push(json!({
             "role": "assistant",
             "content": content,
-            "tool_calls": tool_calls
+            "tool_calls": std::mem::take(tool_calls)
         }));
     } else if !texts.is_empty() {
         out.push(json!({"role": "assistant", "content": texts.join("\n\n")}));
+    }
+    texts.clear();
+}
+
+/// Текст результата советника для модели (как его видела бы она у Anthropic).
+pub fn advisor_text(content: &Value) -> String {
+    match content.get("type").and_then(Value::as_str) {
+        Some("advisor_result") => content
+            .get("text")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string(),
+        Some("advisor_tool_result_error") => format!(
+            "Advisor unavailable ({})",
+            content
+                .get("error_code")
+                .and_then(Value::as_str)
+                .unwrap_or("unavailable")
+        ),
+        _ => "Advisor result is not available.".to_string(),
     }
 }
 
@@ -738,7 +826,7 @@ mod tests {
             "output_config": {"effort": "max"},
             "messages": [{"role": "user", "content": "hi"}]
         });
-        let off = build(&provider(), &body, false);
+        let off = build(&provider(), &body, false, false);
         assert!(off.get("reasoning_effort").is_none());
         assert!(off.get("output_config").is_none() && off.get("thinking").is_none());
 
@@ -746,14 +834,65 @@ mod tests {
             max_effort: Some("xhigh"),
             ..provider()
         };
-        assert_eq!(build(&on, &body, false)["reasoning_effort"], "xhigh");
+        assert_eq!(build(&on, &body, false, false)["reasoning_effort"], "xhigh");
 
         // extra_body провайдера по-прежнему главнее.
         let mut pinned = on.clone();
         pinned
             .extra_body
             .insert("reasoning_effort".into(), json!("low"));
-        assert_eq!(build(&pinned, &body, false)["reasoning_effort"], "low");
+        assert_eq!(
+            build(&pinned, &body, false, false)["reasoning_effort"],
+            "low"
+        );
+    }
+
+    #[test]
+    fn advisor_blocks_become_a_call_and_a_tool_reply() {
+        let body = json!({
+            "messages": [
+                {"role": "user", "content": "fix it"},
+                {"role": "assistant", "content": [
+                    {"type": "text", "text": "asking"},
+                    {"type": "server_tool_use", "id": "srvtoolu_1", "name": "advisor", "input": {}},
+                    {"type": "advisor_tool_result", "tool_use_id": "srvtoolu_1",
+                     "content": {"type": "advisor_result", "text": "test first"}},
+                    {"type": "text", "text": "ok, testing"},
+                    {"type": "tool_use", "id": "toolu_1", "name": "Bash", "input": {"command": "ls"}},
+                    // Вызов без результата (оборванный ответ) выпадает.
+                    {"type": "server_tool_use", "id": "srvtoolu_2", "name": "advisor", "input": {}}
+                ]},
+                {"role": "user", "content": [
+                    {"type": "tool_result", "tool_use_id": "toolu_1", "content": "a.rs"}
+                ]}
+            ]
+        });
+        let out = convert_messages(&body);
+        let roles: Vec<&str> = out.iter().filter_map(|m| m["role"].as_str()).collect();
+        assert_eq!(roles, ["user", "assistant", "tool", "assistant", "tool"]);
+        assert_eq!(out[1]["content"], "asking");
+        assert_eq!(out[1]["tool_calls"][0]["id"], "srvtoolu_1");
+        assert_eq!(out[1]["tool_calls"][0]["function"]["name"], "advisor");
+        assert_eq!(out[2]["tool_call_id"], "srvtoolu_1");
+        assert_eq!(out[2]["content"], "test first");
+        assert_eq!(out[3]["content"], "ok, testing");
+        assert_eq!(out[3]["tool_calls"].as_array().unwrap().len(), 1);
+        assert_eq!(out[3]["tool_calls"][0]["function"]["name"], "Bash");
+
+        let error = json!({"type": "advisor_tool_result_error", "error_code": "overloaded"});
+        assert_eq!(advisor_text(&error), "Advisor unavailable (overloaded)");
+
+        // Объявленный советник: функция для модели, только когда шлюз его исполнит.
+        let declared = json!({
+            "model": "m",
+            "tools": [{"type": "advisor_20260301", "name": "advisor", "model": "claude-fable-5-2"}],
+            "messages": [{"role": "user", "content": "hi"}]
+        });
+        assert_eq!(advisor_tool(&declared), Some(Some("claude-fable-5-2")));
+        let with = build(&provider(), &declared, true, true);
+        assert_eq!(with["tools"][0]["function"]["name"], "advisor");
+        let without = build(&provider(), &declared, true, false);
+        assert!(without.get("tools").is_none());
     }
 
     #[test]
@@ -774,7 +913,7 @@ mod tests {
             "tools": [{"name": "read", "description": "read a file", "input_schema": {"type": "object"}}],
             "tool_choice": {"type": "auto"}
         });
-        let out = build(&provider(), &body, false);
+        let out = build(&provider(), &body, false, false);
         assert_eq!(out["messages"][0]["role"], "system");
         assert_eq!(out["messages"][1]["content"], "hi");
         assert_eq!(out["messages"][2]["tool_calls"][0]["id"], "toolu_1");
@@ -791,7 +930,7 @@ mod tests {
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}}
             ]}]
         });
-        let out = build(&provider(), &body, false);
+        let out = build(&provider(), &body, false, false);
         let content = out["messages"][0]["content"].as_array().unwrap();
         assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,AAAA");
     }

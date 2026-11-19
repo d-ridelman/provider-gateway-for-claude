@@ -865,3 +865,263 @@ async fn session_id_and_user_agent_reach_provider() {
     let second = app(state).oneshot(post_messages(with_meta)).await.unwrap();
     assert_eq!(second.status(), StatusCode::OK);
 }
+
+/// Основная модель `main-model` и сильная `strong-model` — советник из настроек.
+fn advisor_state(base_url: &str) -> AppState {
+    let file: ProvidersFile = serde_json::from_value(json!({
+        "advisor": "claude-p-11111111",
+        "providers": [{
+            "id": "p", "type": "openai", "base_url": base_url, "api_key": "sk-upstream",
+            "models": {"claude-p-00000000": "main-model", "claude-p-11111111": "strong-model"}
+        }]
+    }))
+    .unwrap();
+    AppState::new(
+        ModelRouter::new(file).unwrap(),
+        "local-token".into(),
+        false,
+        "user:inference".into(),
+    )
+    .unwrap()
+}
+
+fn sse_body(chunks: &[Value]) -> String {
+    let mut out: String = chunks.iter().map(|c| format!("data: {c}\n\n")).collect();
+    out.push_str("data: [DONE]\n\n");
+    out
+}
+
+/// Основная модель зовёт советника: ответ первой части — текст и вызов `advisor`.
+async fn mount_main_calling_advisor(upstream: &MockServer) {
+    let first = sse_body(&[
+        json!({"choices": [{"index": 0, "delta": {"content": "Let me ask. "}, "finish_reason": null}]}),
+        json!({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "call_adv",
+            "type": "function", "function": {"name": "advisor", "arguments": "{}"}}]}, "finish_reason": null}]}),
+        json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
+               "usage": {"completion_tokens": 5}}),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("main-model"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(first, "text/event-stream"))
+        .with_priority(10)
+        .mount(upstream)
+        .await;
+    // Продолжение — с результатом советника в истории.
+    let rest = sse_body(&[
+        json!({"choices": [{"index": 0, "delta": {"content": "Done."}, "finish_reason": "stop"}],
+               "usage": {"completion_tokens": 7}}),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("main-model"))
+        .and(wiremock::matchers::body_string_contains(
+            "\"tool_call_id\":\"call_adv\"",
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(rest, "text/event-stream"))
+        .with_priority(1)
+        .mount(upstream)
+        .await;
+}
+
+fn ask_with_advisor() -> Request<Body> {
+    post_messages(json!({
+        "model": "claude-p-00000000",
+        "max_tokens": 64,
+        "stream": true,
+        // Модель Anthropic, которой у шлюза нет: советник — из настроек.
+        "tools": [{"type": "advisor_20260301", "name": "advisor", "model": "claude-fable-5-2"}],
+        "messages": [{"role": "user", "content": "fix it"}]
+    }))
+}
+
+/// Блоки ответа Claude Code по порядку: (тип, содержимое) из `content_block_start`.
+fn started_blocks(sse: &str) -> Vec<Value> {
+    sse.lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|data| serde_json::from_str::<Value>(data).ok())
+        .filter(|event| event["type"] == "content_block_start")
+        .map(|event| event["content_block"].clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn gateway_answers_the_advisor_and_continues_the_same_reply() {
+    let upstream = MockServer::start().await;
+    mount_main_calling_advisor(&upstream).await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("strong-model"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ADVICE: test first"},
+                         "finish_reason": "stop"}]
+        })))
+        .expect(1)
+        .mount(&upstream)
+        .await;
+
+    let response = app(advisor_state(&upstream.uri()))
+        .oneshot(ask_with_advisor())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text_body(response).await;
+    let blocks = started_blocks(&body);
+    let kinds: Vec<&str> = blocks.iter().filter_map(|b| b["type"].as_str()).collect();
+    assert_eq!(
+        kinds,
+        ["text", "server_tool_use", "advisor_tool_result", "text"],
+        "{body}"
+    );
+    assert_eq!(blocks[1]["name"], "advisor");
+    assert_eq!(blocks[2]["tool_use_id"], blocks[1]["id"]);
+    assert_eq!(blocks[2]["content"]["type"], "advisor_result");
+    assert_eq!(blocks[2]["content"]["text"], "ADVICE: test first");
+    assert!(body.contains("\"text\":\"Done.\""));
+    assert!(body.contains("\"stop_reason\":\"end_turn\""));
+    // Токены обоих отрезков.
+    assert!(body.contains("\"output_tokens\":12"), "{body}");
+    assert!(!body.contains("\"type\":\"tool_use\""));
+    assert_eq!(body.matches("event: message_start").count(), 1);
+
+    // Модели объявлена функция `advisor`; советник получил разговор текстом, без tools.
+    let requests = upstream.received_requests().await.unwrap();
+    let bodies: Vec<Value> = requests
+        .iter()
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect();
+    let first = bodies.iter().find(|b| b["model"] == "main-model").unwrap();
+    assert!(
+        first["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["function"]["name"] == "advisor")
+    );
+    let advice = bodies
+        .iter()
+        .find(|b| b["model"] == "strong-model")
+        .unwrap();
+    assert!(advice.get("tools").is_none());
+    assert!(advice["stream"].is_null());
+    let transcript = advice["messages"][1]["content"].as_str().unwrap();
+    assert!(transcript.contains("fix it") && transcript.contains("Let me ask."));
+    // В продолжении: ответ ассистента с вызовом и результат советника.
+    let rest = bodies
+        .iter()
+        .find(|b| b.to_string().contains("tool_call_id"))
+        .unwrap();
+    let messages = rest["messages"].as_array().unwrap();
+    let n = messages.len();
+    assert_eq!(
+        messages[n - 2]["tool_calls"][0]["function"]["name"],
+        "advisor"
+    );
+    assert_eq!(messages[n - 2]["content"], "Let me ask. ");
+    assert_eq!(messages[n - 1]["content"], "ADVICE: test first");
+}
+
+#[tokio::test]
+async fn advisor_failure_is_a_result_and_the_reply_goes_on() {
+    let upstream = MockServer::start().await;
+    mount_main_calling_advisor(&upstream).await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("strong-model"))
+        .respond_with(ResponseTemplate::new(429).set_body_json(json!({
+            "error": {"message": "slow down sk-upstream"}
+        })))
+        .mount(&upstream)
+        .await;
+
+    let response = app(advisor_state(&upstream.uri()))
+        .oneshot(ask_with_advisor())
+        .await
+        .unwrap();
+    let body = text_body(response).await;
+    let blocks = started_blocks(&body);
+    assert_eq!(blocks[2]["content"]["type"], "advisor_tool_result_error");
+    assert_eq!(blocks[2]["content"]["error_code"], "too_many_requests");
+    assert!(body.contains("\"text\":\"Done.\""));
+    assert!(!body.contains("sk-upstream"));
+}
+
+#[tokio::test]
+async fn without_an_advisor_model_the_tool_is_not_offered() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            sse_body(&[json!({"choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}]})]),
+            "text/event-stream",
+        ))
+        .mount(&upstream)
+        .await;
+    // Нет `advisor` в настройках, а Claude Code назвал модель, которой у шлюза нет.
+    let response = app(state_with(&upstream.uri(), "openai", "gpt-5.2"))
+        .oneshot(ask_with_advisor_for("claude-p-00000000"))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let sent: Value =
+        serde_json::from_slice(&upstream.received_requests().await.unwrap()[0].body).unwrap();
+    assert!(sent.get("tools").is_none(), "{sent}");
+}
+
+fn ask_with_advisor_for(model: &str) -> Request<Body> {
+    post_messages(json!({
+        "model": model,
+        "max_tokens": 64,
+        "stream": true,
+        "tools": [{"type": "advisor_20260301", "name": "advisor", "model": "claude-fable-5-2"}],
+        "messages": [{"role": "user", "content": "fix it"}]
+    }))
+}
+
+#[tokio::test]
+async fn anthropic_provider_gets_no_advisor_tool_or_blocks() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "msg_x", "type": "message", "role": "assistant", "model": "m",
+            "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
+            "stop_sequence": null, "usage": {"input_tokens": 1, "output_tokens": 1}
+        })))
+        .mount(&upstream)
+        .await;
+    let response = app(state_with(
+        &upstream.uri(),
+        "anthropic",
+        "claude-sonnet-4-5",
+    ))
+    .oneshot(post_messages(json!({
+        "model": "claude-p-00000000",
+        "max_tokens": 32,
+        "tools": [
+            {"type": "advisor_20260301", "name": "advisor", "model": "claude-fable-5-2"},
+            {"name": "Read", "input_schema": {"type": "object"}}
+        ],
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "asking"},
+                {"type": "server_tool_use", "id": "srvtoolu_1", "name": "advisor", "input": {}},
+                {"type": "advisor_tool_result", "tool_use_id": "srvtoolu_1",
+                 "content": {"type": "advisor_result", "text": "advice"}}
+            ]},
+            {"role": "user", "content": "go on"}
+        ]
+    })))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let sent: Value =
+        serde_json::from_slice(&upstream.received_requests().await.unwrap()[0].body).unwrap();
+    assert_eq!(sent["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(sent["tools"][0]["name"], "Read");
+    assert_eq!(
+        sent["messages"][1]["content"],
+        json!([{"type": "text", "text": "asking"}])
+    );
+}

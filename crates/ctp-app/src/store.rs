@@ -359,7 +359,13 @@ pub fn build_file(config: &Config) -> Result<ProvidersFile, String> {
             .first()
             .and_then(|provider| provider.models.first().map(|(alias, _)| alias.clone()))
     });
-    Ok(ProvidersFile { default, providers })
+    // Советник (advisor Claude Code) — сильная модель; не выбрана — советника нет.
+    let advisor = role_alias(config, config.model_roles.opus.as_ref());
+    Ok(ProvidersFile {
+        default,
+        advisor,
+        providers,
+    })
 }
 
 fn is_local(base_url: &str) -> bool {

@@ -225,6 +225,8 @@ pub struct ModelRouter {
     route_index: HashMap<String, usize>,
     by_model: HashMap<String, Route>,
     pub default: Option<Route>,
+    /// Модель советника из настроек (см. `ProvidersFile::advisor`).
+    pub advisor: Option<Route>,
 }
 
 impl ModelRouter {
@@ -260,17 +262,19 @@ impl ModelRouter {
             }
         }
 
+        let find = |name: &str| {
+            let name = strip_1m(name);
+            route_index
+                .get(name)
+                .map(|&index| routes[index].1.clone())
+                .or_else(|| by_model.get(name).cloned())
+        };
         let default = file
             .default
             .as_deref()
-            .and_then(|name| {
-                let name = strip_1m(name);
-                route_index
-                    .get(name)
-                    .map(|&index| routes[index].1.clone())
-                    .or_else(|| by_model.get(name).cloned())
-            })
+            .and_then(find)
             .or_else(|| routes.first().map(|(_, route)| route.clone()));
+        let advisor = file.advisor.as_deref().and_then(find);
 
         for provider in &providers {
             if provider.base_url.is_empty() {
@@ -284,19 +288,30 @@ impl ModelRouter {
             route_index,
             by_model,
             default,
+            advisor,
         })
     }
 
     /// Псевдоним, настоящий ID модели или модель по умолчанию.
     pub fn resolve(&self, requested: &str) -> Option<Route> {
+        self.resolve_exact(requested)
+            .or_else(|| self.default.clone())
+    }
+
+    /// Псевдоним или настоящий ID модели — без подстановки модели по умолчанию.
+    pub fn resolve_exact(&self, requested: &str) -> Option<Route> {
         let name = strip_1m(requested);
         if let Some(&index) = self.route_index.get(name) {
             return Some(self.routes[index].1.clone());
         }
-        if let Some(route) = self.by_model.get(name) {
-            return Some(route.clone());
-        }
-        self.default.clone()
+        self.by_model.get(name).cloned()
+    }
+
+    /// Модель советника: названная Claude Code, если она у шлюза есть, иначе из настроек.
+    pub fn advisor_for(&self, requested: Option<&str>) -> Option<Route> {
+        requested
+            .and_then(|name| self.resolve_exact(name))
+            .or_else(|| self.advisor.clone())
     }
 }
 
@@ -495,6 +510,7 @@ mod tests {
     fn routes_by_alias_model_and_default() {
         let router = ModelRouter::new(ProvidersFile {
             default: Some("claude-openai-80673633".into()),
+            advisor: Some("claude-sonnet-4-5".into()),
             providers: vec![
                 provider(
                     "openai",
@@ -516,6 +532,13 @@ mod tests {
         assert_eq!(real.provider, 1);
         let unknown = router.resolve("claude-haiku-4-5").unwrap();
         assert_eq!(unknown.model, "gpt-5.2");
+        assert!(router.resolve_exact("claude-haiku-4-5").is_none());
+
+        // Советник: своя модель шлюза — она; чужое имя (`claude-fable-5-2`) — из настроек.
+        let named = router.advisor_for(Some("claude-openai-80673633")).unwrap();
+        assert_eq!(named.model, "gpt-5.2");
+        let fallback = router.advisor_for(Some("claude-fable-5-2")).unwrap();
+        assert_eq!(fallback.model, "claude-sonnet-4-5");
     }
 
     #[test]
