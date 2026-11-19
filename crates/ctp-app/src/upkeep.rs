@@ -299,6 +299,12 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, background: bool) -> R
         .to_string();
     let file = config_dir.join(ruui::TRANSLATION_FILE);
     let meta_path = config_dir.join(TRANSLATION_META);
+    // Перед «Открыть Claude» при наличии перевода качать нечего: не ждём фоновую
+    // загрузку (она держит DOWNLOAD до двух минут) и не читаем 50 МБ ради покрытия.
+    // Строку prepare не показывает, только пишет ошибки в журнал.
+    if !background && fs::read(&file).is_ok_and(|raw| parse_translation(&raw).is_ok()) {
+        return Ok(String::new());
+    }
     let mut last_failure = DOWNLOAD.lock().unwrap_or_else(|p| p.into_inner());
     let meta: TranslationMeta = fs::read(&meta_path)
         .ok()
