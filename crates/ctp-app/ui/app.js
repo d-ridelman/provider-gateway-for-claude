@@ -410,7 +410,9 @@ function advisorChoice() {
   const on = el.advisorInput.checked;
   if (on && !advisorAvailable()) return null;
   if (on !== !!c.advisorModel) return on;
-  return advisorTouched && !c.advisorDecided ? on : null;
+  // Same as the file: nothing to write, but the first save records the decision, so a
+  // later /advisor off (it deletes the key) is not undone by the default.
+  return c.advisorDecided ? null : on;
 }
 
 // Model roles of Claude Code: role, select id, text of the "not chosen" option.
@@ -783,15 +785,16 @@ async function busy(button, label, work) {
 }
 
 // Saving a provider stops the gateway (routes change); if it was running, start it again.
-async function restartIfWas(wasRunning, done) {
+// `kind` "error": the save went through, but part of it did not (one toast says both).
+async function restartIfWas(wasRunning, done, kind = "good") {
   state.status = await invoke("status");
   if (!wasRunning) {
-    toast(done, "good");
+    toast(done, kind);
     return;
   }
   const started = await startGateway({ quiet: true });
-  if (started) toast(t("toast.restarted", { done }), "good");
-  else if (started === null) toast(done, "good"); // a later command overrode the restart
+  if (started) toast(t("toast.restarted", { done }), kind);
+  else if (started === null) toast(done, kind); // a later command overrode the restart
 }
 
 let saving = false;
@@ -1008,9 +1011,8 @@ async function saveSettings() {
     // What happened to Claude Code's shared file, as the backend saw it.
     let saved = t(rolesChanged ? "settings.savedRoles" : "settings.saved");
     const notice = state.config.advisorNotice;
-    if (notice && !notice.warning) saved += "; " + notice.text;
-    await restartIfWas(wasRunning, saved);
-    if (notice?.warning) toast(notice.text, "error");
+    if (notice) saved += "; " + notice.text;
+    await restartIfWas(wasRunning, saved, notice?.warning ? "error" : "good");
     renderStatus();
   } catch (exc) {
     toast(formatError(exc), "error");
