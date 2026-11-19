@@ -14,6 +14,7 @@
         "title": "Provider Gateway for Claude",
         "width": 1200,
         "height": 800,
+        "preventOverflow": true,
         "minWidth": 900,
         "minHeight": 620,
         "center": true,
