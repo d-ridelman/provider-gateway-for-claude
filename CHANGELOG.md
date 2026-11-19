@@ -15,7 +15,7 @@ The first public release.
 - Claude Desktop in a separate profile; the user's own Claude account and chats are not touched.
 - **Claude Code** button: a console in the project folder with `claude` already connected to the gateway.
 - Compatibility self-check against the installed Claude Desktop (model rules, config fields, translation coverage).
-- Optional Russian interface for Claude Desktop in a separate copy, with the official claude.ai translation.
+- Optional Russian interface for Claude Desktop in a separate copy, with the official claude.ai translation; the copy also offers **No folder** for Code sessions, hidden in third-party mode.
 - Interface in English and Russian, picked from the Windows display language; light and dark themes.
 - Tray: closing the window keeps the gateway running.
 - Updates from GitHub Releases, verified with the signing key built into the app.
