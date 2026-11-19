@@ -227,7 +227,8 @@ function currentProvider() {
 
 // Leaving the form with unsaved changes asks first.
 async function leaveForm() {
-  if (state.view !== "provider" || !hasSelection() || !isDirty()) return true;
+  const dirty = state.view === "settings" ? settingsDirty() : hasSelection() && isDirty();
+  if (!dirty) return true;
   const answer = await ask({
     title: t("dialog.discardTitle"),
     text: t("dialog.discardText"),
@@ -271,7 +272,8 @@ async function openSettings() {
   render();
 }
 
-function closeSettings() {
+async function closeSettings() {
+  if (!(await leaveForm())) return;
   state.view = "provider";
   render();
 }
@@ -342,6 +344,20 @@ function snapshot() {
 
 function isDirty() {
   return !el.form.classList.contains("hidden") && snapshot() !== formSnapshot;
+}
+
+// Settings fields differ from what is saved (same normalisation as saveSettings).
+function settingsDirty() {
+  const c = state.config;
+  if (!c) return false;
+  return (
+    el.languageInput.value !== (c.languagePref ?? "auto") ||
+    Number(el.portInput.value) !== c.port ||
+    el.claudePathInput.value.trim() !== (c.claudePath ?? "") ||
+    el.codeDirInput.value.trim() !== (c.codeDir ?? "") ||
+    el.russianInput.checked !== !!c.russianUi ||
+    el.autoUpdateInput.checked !== (c.autoUpdate !== false)
+  );
 }
 
 function renderNotice() {
@@ -471,7 +487,8 @@ function bind() {
       else if (state.logsOpen) setLogs(false);
       else if (state.view === "settings") closeSettings();
     }
-    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+    // event.code: the physical key, so Ctrl+S also works in the Russian layout.
+    if ((event.ctrlKey || event.metaKey) && event.code === "KeyS") {
       event.preventDefault();
       if (state.view === "settings") saveSettings();
       else if (!el.form.classList.contains("hidden")) el.form.requestSubmit();
@@ -675,6 +692,7 @@ async function saveProviderOnce() {
   const apiKey = el.keyInput.value.trim();
   const input = { provider, originalId: state.originalId, apiKey: apiKey || null, clearKey: state.clearKey };
   const wasRunning = starting > 0 || !!state.status?.running;
+  const first = !state.config?.providers?.length;
   try {
     state.config = await invoke("save_provider", { input });
     state.selectedId = provider.id.toLowerCase();
@@ -684,6 +702,7 @@ async function saveProviderOnce() {
     picker = [];
     render();
     await restartIfWas(wasRunning, t("toast.providerSaved"));
+    if (first) await autostart(); // the first provider: there is something to serve now
     renderStatus();
   } catch (exc) {
     toast(formatError(exc), "error");
