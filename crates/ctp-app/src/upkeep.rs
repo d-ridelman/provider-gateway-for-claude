@@ -278,12 +278,35 @@ fn download_with_curl() -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
+/// Неудачная попытка скачать перевод: для какой версии Claude, когда и была ли она
+/// фоновой (без окна).
+struct Failure {
+    version: String,
+    at: std::time::Instant,
+    hidden: bool,
+}
+
 /// Одно скачивание за раз (старт и «Открыть Claude» после обновления Claude видят смену
 /// версии одновременно) и пауза после неудачи: без сети кнопка не ждёт таймаута на
 /// каждом нажатии.
-static DOWNLOAD: std::sync::Mutex<Option<(String, std::time::Instant)>> =
-    std::sync::Mutex::new(None);
+static DOWNLOAD: std::sync::Mutex<Option<Failure>> = std::sync::Mutex::new(None);
 const RETRY_AFTER: Duration = Duration::from_secs(30 * 60);
+/// Фон после своей же неудачи (claude.ai просит галочку, нет сети) пробует реже: скрытое
+/// окно браузера раз в полчаса сутками в трее ни к чему.
+const WATCH_RETRY_AFTER: Duration = Duration::from_secs(3 * 60 * 60);
+
+/// Пропустить ли попытку из-за недавней неудачи. Фоновая неудача не мешает попытке при
+/// человеке: та может показать окно проверки, которое фону недоступно.
+fn skip_after_failure(failure: Option<&Failure>, version: &str, mode: Fetch) -> bool {
+    failure.is_some_and(|f| {
+        let pause = if mode == Fetch::Watch && f.hidden {
+            WATCH_RETRY_AFTER
+        } else {
+            RETRY_AFTER
+        };
+        f.version == version && (mode == Fetch::Watch || !f.hidden) && f.at.elapsed() < pause
+    })
+}
 
 /// Кто просит перевод — от этого зависит, качать ли и можно ли показать окно.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -318,24 +341,26 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result
         .ok()
         .and_then(|raw| serde_json::from_slice(&raw).ok())
         .unwrap_or_default();
-    let en: HashSet<String> = ruui::read_asar_file(
-        &app.join("resources").join("ion-dist.asar"),
-        "i18n/en-US.json",
-    )
-    .ok()
-    .and_then(|raw| serde_json::from_slice::<serde_json::Map<String, Value>>(&raw).ok())
-    .map(|m| m.into_iter().map(|(k, _)| k).collect())
-    .unwrap_or_default();
+    // Английские строки версии (50 МБ архива) — только когда нужны: сравнить покрытие
+    // или показать его в самопроверке.
+    let english = || -> HashSet<String> {
+        ruui::read_asar_file(
+            &app.join("resources").join("ion-dist.asar"),
+            "i18n/en-US.json",
+        )
+        .ok()
+        .and_then(|raw| serde_json::from_slice::<serde_json::Map<String, Value>>(&raw).ok())
+        .map(|m| m.into_iter().map(|(k, _)| k).collect())
+        .unwrap_or_default()
+    };
     let current = fs::read(&file)
         .ok()
         .and_then(|raw| parse_translation(&raw).ok());
 
     let mut note = String::new();
-    let failed_recently = last_failure
-        .as_ref()
-        .is_some_and(|(v, at)| *v == version && at.elapsed() < RETRY_AFTER);
+    let mut en: Option<HashSet<String>> = None;
     let due = current.is_none() || (mode != Fetch::Launch && meta.claude_version != version);
-    if due && failed_recently {
+    if due && skip_after_failure(last_failure.as_ref(), &version, mode) {
         note = tr!(
             " (скачать не вышло, повтор позже)",
             " (download failed, will retry later)"
@@ -345,37 +370,51 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result
         }
     } else if due {
         let downloaded = download_translation(mode != Fetch::Watch)
-            .and_then(|raw| parse_translation(&raw).map(|map| (raw, map)));
-        *last_failure = downloaded
-            .is_err()
-            .then(|| (version.clone(), std::time::Instant::now()));
-        match downloaded {
-            Ok((raw, fresh)) => {
+            .and_then(|raw| parse_translation(&raw).map(|map| (raw, map)))
+            .and_then(|(raw, fresh)| {
+                // Сохранение — часть попытки: не записалось (файл занят, диск полон) —
+                // тоже неудача с паузой, а не новое скачивание на каждом круге.
+                let en = en.insert(english());
                 let worse = current
                     .as_ref()
-                    .is_some_and(|old| coverage(&en, &fresh) + 1e-9 < coverage(&en, old));
-                if worse {
-                    note = tr!(
+                    .is_some_and(|old| coverage(en, &fresh) + 1e-9 < coverage(en, old));
+                let saved = if worse {
+                    tr!(
                         " (скачанный перевод хуже — оставлен прежний)",
                         " (downloaded translation is worse, kept the previous one)"
-                    );
+                    )
                 } else if current.as_ref() != Some(&fresh) {
                     let tmp = file.with_extension("json.download");
                     fs::write(&tmp, &raw)?;
                     fs::rename(&tmp, &file)?;
-                    note = tr!(" (обновлён)", " (updated)");
-                }
+                    tr!(" (обновлён)", " (updated)")
+                } else {
+                    String::new()
+                };
                 let meta = TranslationMeta {
-                    claude_version: version,
+                    claude_version: version.clone(),
                 };
                 fs::write(&meta_path, serde_json::to_vec(&meta)?)?;
-            }
+                Ok(saved)
+            });
+        *last_failure = downloaded.is_err().then(|| Failure {
+            version: version.clone(),
+            at: std::time::Instant::now(),
+            hidden: mode == Fetch::Watch,
+        });
+        match downloaded {
+            Ok(saved) => note = saved,
             Err(exc) if current.is_some() => {
                 note = tr!(" (обновить не вышло: {exc:#})", " (update failed: {exc:#})");
             }
             Err(exc) => return Err(exc.context(not_downloaded(&file))),
         }
     }
+    // Фону строка самопроверки не нужна — не читаем ради неё 50 МБ.
+    if mode == Fetch::Watch {
+        return Ok(String::new());
+    }
+    let en = en.unwrap_or_else(english);
     let map = parse_translation(&fs::read(&file)?)?;
     let share = coverage(&en, &map);
     Ok(if en.is_empty() {
@@ -598,6 +637,7 @@ pub fn spawn_copy_watch(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         // Первый круг — через WATCH_EVERY: при старте копию уже готовит check_into.
         let mut ready: Option<String> = None;
+        let mut build_failed: Option<(String, std::time::Instant)> = None;
         loop {
             std::thread::sleep(WATCH_EVERY);
             let (config, dir) = {
@@ -609,10 +649,17 @@ pub fn spawn_copy_watch(app: tauri::AppHandle) {
                     .clone();
                 (config, shared.config_dir.clone())
             };
-            match prepare_copy(&config, &dir, ready.as_deref()) {
+            let copies = match crate::claude::copies_root() {
+                Ok(copies) => copies,
+                Err(exc) => {
+                    tracing::info!(error = %format!("{exc:#}"), "no folder for the Russian copy");
+                    continue;
+                }
+            };
+            match prepare_copy(&config, &dir, &copies, &mut build_failed) {
                 Ok(Some(version)) => {
                     if ready.as_deref() != Some(version.as_str()) {
-                        tracing::info!(%version, "Russian copy prepared in the background");
+                        tracing::info!(%version, "Russian copy is ready");
                     }
                     ready = Some(version);
                 }
@@ -625,9 +672,21 @@ pub fn spawn_copy_watch(app: tauri::AppHandle) {
     });
 }
 
-/// Один шаг фоновой подготовки. `Ok(Some(версия))` — копия этой версии готова,
-/// `Ok(None)` — делать нечего или рано (Claude ещё ставится, перевода под версию нет).
-fn prepare_copy(config: &Config, config_dir: &Path, ready: Option<&str>) -> Result<Option<String>> {
+/// После неудачной сборки (новый Claude устроен иначе) фон не пробует её каждые 10 минут:
+/// одна попытка — до ~700 МБ записи на диск.
+const BUILD_RETRY_AFTER: Duration = Duration::from_secs(6 * 60 * 60);
+
+/// Один шаг фоновой подготовки. `Ok(Some(версия))` — копия этой версии собрана ровно с
+/// нынешним переводом; `Ok(None)` — делать нечего или рано: русский выключен, Claude
+/// ещё ставится, перевода под версию нет, копия открыта или сборка недавно не удалась.
+/// Проверка дешёвая (метка и хеш файла перевода), поэтому идёт на каждом круге: если
+/// перевод потом обновится, копия пересоберётся тоже в фоне, а не на клике.
+fn prepare_copy(
+    config: &Config,
+    config_dir: &Path,
+    copies: &Path,
+    build_failed: &mut Option<(String, std::time::Instant)>,
+) -> Result<Option<String>> {
     if !config.russian_ui {
         return Ok(None);
     }
@@ -639,7 +698,7 @@ fn prepare_copy(config: &Config, config_dir: &Path, ready: Option<&str>) -> Resu
         .and_then(|n| n.to_str())
         .unwrap_or_default()
         .to_string();
-    if ready == Some(version.as_str()) || !settled(&app, SETTLE) {
+    if !settled(&app, SETTLE) {
         return Ok(None);
     }
     if let Err(exc) = refresh_translation(config_dir, &app, Fetch::Watch) {
@@ -650,8 +709,25 @@ fn prepare_copy(config: &Config, config_dir: &Path, ready: Option<&str>) -> Resu
         return Ok(None);
     }
     let ru = fs::read(config_dir.join(ruui::TRANSLATION_FILE))?;
-    ruui::ensure_copy(&app, &crate::claude::copies_root()?, &ru)?;
-    Ok(Some(version))
+    match ruui::copy_state(&app, copies, &ru)? {
+        ruui::CopyState::Current => return Ok(Some(version)),
+        // Открытую копию Windows не даст заменить: соберём после закрытия.
+        ruui::CopyState::Open => return Ok(None),
+        ruui::CopyState::Stale => {}
+    }
+    if build_failed
+        .as_ref()
+        .is_some_and(|(v, at)| *v == version && at.elapsed() < BUILD_RETRY_AFTER)
+    {
+        return Ok(None);
+    }
+    if let Err(exc) = ruui::ensure_copy(&app, copies, &ru) {
+        *build_failed = Some((version, std::time::Instant::now()));
+        return Err(exc);
+    }
+    *build_failed = None;
+    // ensure_copy возвращает Ok и для открытой копии со старым переводом — сверяемся.
+    Ok((ruui::copy_state(&app, copies, &ru)? == ruui::CopyState::Current).then_some(version))
 }
 
 /// Перевод скачан (или сверен) под эту версию Claude.
@@ -813,15 +889,42 @@ mod tests {
             russian_ui: true,
             ..Default::default()
         };
+        let copies = crate::claude::copies_root().unwrap();
+        let mut failed = None;
         let started = std::time::Instant::now();
-        let version = prepare_copy(&config, &dir, None).unwrap();
+        let version = prepare_copy(&config, &dir, &copies, &mut failed).unwrap();
         println!("{version:?} за {:?}", started.elapsed());
         assert!(version.is_some());
-        // Уже готовая версия — следующий круг ничего не делает.
+        // Следующий круг сверяет метку и снова «готово», ничего не собирая.
+        let started = std::time::Instant::now();
         assert_eq!(
-            prepare_copy(&config, &dir, version.as_deref()).unwrap(),
-            None
+            prepare_copy(&config, &dir, &copies, &mut failed).unwrap(),
+            version
         );
+        println!("повторный круг за {:?}", started.elapsed());
+        assert!(failed.is_none());
+    }
+
+    #[test]
+    fn hidden_failure_does_not_block_a_visible_attempt() {
+        let now = std::time::Instant::now();
+        let hidden = Failure {
+            version: "app-1".into(),
+            at: now,
+            hidden: true,
+        };
+        assert!(skip_after_failure(Some(&hidden), "app-1", Fetch::Watch));
+        assert!(!skip_after_failure(Some(&hidden), "app-1", Fetch::Check));
+        assert!(!skip_after_failure(Some(&hidden), "app-1", Fetch::Launch));
+        let visible = Failure {
+            hidden: false,
+            ..hidden
+        };
+        assert!(skip_after_failure(Some(&visible), "app-1", Fetch::Check));
+        assert!(skip_after_failure(Some(&visible), "app-1", Fetch::Watch));
+        // Другая версия Claude — пауза не действует.
+        assert!(!skip_after_failure(Some(&visible), "app-2", Fetch::Check));
+        assert!(!skip_after_failure(None, "app-1", Fetch::Watch));
     }
 
     #[test]
@@ -830,8 +933,10 @@ mod tests {
             russian_ui: false,
             ..Default::default()
         };
+        let mut failed = None;
+        let unused = Path::new("unused");
         assert_eq!(
-            prepare_copy(&config, Path::new("unused"), None).unwrap(),
+            prepare_copy(&config, unused, unused, &mut failed).unwrap(),
             None
         );
     }
