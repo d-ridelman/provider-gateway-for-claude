@@ -109,7 +109,7 @@ Get-FileHash .\Provider-Gateway-for-Claude_*_x64-setup.exe -Algorithm SHA256
 | Русская копия Claude (~700 МБ, по желанию) | `%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru` |
 | Русский перевод claude.ai | `%APPDATA%\app.provider-gateway-for-claude\claude-ru.json` |
 
-Если claude.ai не отдаёт перевод (иногда он показывает программам проверку на бота), откройте `https://claude.ai/i18n/ru.json` в браузере и сохраните страницу как этот `claude-ru.json` — точный путь будет в настройках.
+claude.ai иногда отвечает программам проверкой на бота. Тогда приложение загружает перевод во встроенном браузере (WebView2), который проходит проверку, как обычный посетитель; если claude.ai попросит поставить галочку, это окно ненадолго появится. Если не вышло и так, откройте `https://claude.ai/i18n/ru.json` в браузере и сохраните как этот `claude-ru.json` — точный путь покажет проверка совместимости в настройках.
 
 ## Сборка из исходников
 
