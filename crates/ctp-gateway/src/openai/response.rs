@@ -264,18 +264,27 @@ fn usage_tokens(value: &Value, fallback_input: u64, fallback_output: u64) -> Usa
 /// Входные токены провайдера в смысле Anthropic: `input_tokens` без кэша и отдельно
 /// `cache_read_input_tokens`. У OpenAI `prompt_tokens` кэш уже включает — иначе Claude Code
 /// сложил бы его дважды и счёл контекст больше настоящего.
+/// Ноль входных — не цифра провайдера, а её отсутствие (так шлют некоторые ретрансляторы):
+/// Claude Code счёл бы контекст пустым и не сжал бы его до переполнения окна.
 pub fn input_usage(usage: &Value) -> Option<(u64, Option<u64>)> {
-    let cached = usage
-        .get("prompt_tokens_details")
-        .and_then(|details| details.get("cached_tokens"))
-        .or_else(|| usage.get("cache_read_input_tokens"))
-        .and_then(Value::as_u64)
-        .filter(|cached| *cached > 0);
-    if let Some(prompt) = usage.get("prompt_tokens").and_then(Value::as_u64) {
-        return Some((prompt.saturating_sub(cached.unwrap_or(0)), cached));
+    let positive = |value: Option<&Value>| value.and_then(Value::as_u64).filter(|n| *n > 0);
+    if let Some(prompt) = positive(usage.get("prompt_tokens")) {
+        // OpenAI: кэш — часть prompt_tokens.
+        let cached = positive(
+            usage
+                .get("prompt_tokens_details")
+                .and_then(|details| details.get("cached_tokens")),
+        )
+        .map(|cached| cached.min(prompt));
+        return Some((prompt - cached.unwrap_or(0), cached));
     }
-    let input = usage.get("input_tokens").and_then(Value::as_u64)?;
-    Some((input, cached))
+    // Anthropic: input_tokens кэш уже не включает.
+    let input = usage
+        .get("input_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let cached = positive(usage.get("cache_read_input_tokens"));
+    (input > 0 || cached.is_some()).then_some((input, cached))
 }
 
 #[cfg(test)]
@@ -294,6 +303,16 @@ mod tests {
         assert_eq!(message["stop_reason"], "end_turn");
         assert_eq!(map_stop_reason(Some("tool_calls"), false), "end_turn");
         assert_eq!(map_stop_reason(Some("tool_calls"), true), "tool_use");
+    }
+
+    #[test]
+    fn zero_provider_input_keeps_the_estimate() {
+        let value = json!({
+            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": "hi"}}],
+            "usage": {"prompt_tokens": 0, "completion_tokens": 1}
+        });
+        let message = translate(&value, "m", 4321).unwrap();
+        assert_eq!(message["usage"]["input_tokens"], 4321);
     }
 
     #[test]
