@@ -7,7 +7,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 ### Added
 
 - **Advisor through the gateway.** Claude Code's advisor (`/advisor`) is a server-side tool at Anthropic and was off through third-party providers. With a strong model chosen, the gateway now runs it: the main model calls `advisor`, the gateway asks the strong model with the conversation and continues the same reply with Anthropic's `server_tool_use` / `advisor_tool_result` blocks. Works with OpenAI-compatible providers in the Claude Code console and in the Code tab of the Russian copy of Claude Desktop. Any advisor model Claude Code names that the gateway does not know (`claude-fable-…`, `claude-opus-…`) is answered by the strong model.
-- Subagents with `model: fable` use the strong model (console and the Russian copy).
+- Subagents with `model: fable` use the strong model (in the console; in the Russian copy when the strong model is on an OpenAI-compatible provider).
 
 ### Changed
 

@@ -84,7 +84,7 @@ Set **Max reasoning level** on a provider and Claude offers a level picker for i
 
 ### Different models for subagents
 
-Claude Code asks for models by role: `sonnet`, `opus` and `haiku`. Settings → **Models for Claude Code** picks a gateway model for each: main (`sonnet`: the console session, subagents that inherit the model such as Explore and Plan, and every role left unassigned), strong (`opus`, for subagents with `model: opus`) and fast (`haiku`, for subagents with `model: haiku` and background tasks). It applies to the **Claude Code** console, the copied command and the Code tab of Claude Desktop (from the next **Open Claude**). A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session. Subagents with `model: fable` get the strong model as well (in the console and the Russian copy of Claude Desktop).
+Claude Code asks for models by role: `sonnet`, `opus` and `haiku`. Settings → **Models for Claude Code** picks a gateway model for each: main (`sonnet`: the console session, subagents that inherit the model such as Explore and Plan, and every role left unassigned), strong (`opus`, for subagents with `model: opus`) and fast (`haiku`, for subagents with `model: haiku` and background tasks). It applies to the **Claude Code** console, the copied command and the Code tab of Claude Desktop (from the next **Open Claude**). A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session. Subagents with `model: fable` get the strong model as well: in the console always, in the Russian copy of Claude Desktop when the strong model is on an OpenAI-compatible provider.
 
 ### Advisor
 
