@@ -138,7 +138,10 @@ pub fn role_aliases(config: &Config) -> RoleAliases {
 }
 
 /// Окружение Claude Code через шлюз: что убрать и что задать. Основная модель — роль
-/// `sonnet` или первая модель шлюза; `opus` и `haiku` без выбора — как основная.
+/// `sonnet` или первая модель шлюза. Алиасы `sonnet`/`opus` задаются, только если роль
+/// выбрана: иначе Claude Code шлёт свой встроенный ID, и шлюз отдаёт его настоящей
+/// модели Claude (если она есть у провайдера) или модели по умолчанию — основной
+/// (`store::build_file`). Так же ведёт себя Desktop с невыбранной ролью.
 pub fn code_env(
     status: &UiStatus,
     roles: &RoleAliases,
@@ -156,13 +159,14 @@ pub fn code_env(
             .as_ref()
             .and_then(|alias| status.models.iter().find(|m| &m.alias == alias))
     };
-    let main = pick(&roles.sonnet).unwrap_or(first);
-    let opus = pick(&roles.opus).unwrap_or(main);
+    let sonnet = pick(&roles.sonnet);
+    let main = sonnet.unwrap_or(first);
+    let opus = pick(&roles.opus);
     let haiku = pick(&roles.haiku).unwrap_or(main);
     // Имя шлюза Claude Code не знает и считает окно 1M — у модели без `[1m]` сжатие
     // разговора началось бы слишком поздно. Как в Claude Desktop: без `[1m]` — 200K.
-    // Окно одно на сессию, а субагенты ходят и в opus/haiku: 1M — только если у всех.
-    let window = if [main, opus, haiku].iter().all(|m| m.supports_1m) {
+    // По основной модели: на ней сессия и наследующие её субагенты (Explore, Plan).
+    let window = if main.supports_1m {
         "1000000"
     } else {
         "200000"
@@ -173,25 +177,35 @@ pub fn code_env(
             HOST_ENV_PREFIXES.iter().any(|p| upper.starts_with(p))
         })
         .collect();
-    let set = vec![
+    let mut set: Vec<(String, String)> = vec![
         (
             "ANTHROPIC_BASE_URL".into(),
             format!("http://127.0.0.1:{}", status.port),
         ),
         ("ANTHROPIC_AUTH_TOKEN".into(), status.token.clone()),
         ("ANTHROPIC_MODEL".into(), main.alias.clone()),
-        ("ANTHROPIC_DEFAULT_SONNET_MODEL".into(), main.alias.clone()),
-        ("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), opus.alias.clone()),
+    ];
+    if let Some(sonnet) = sonnet {
+        set.push((
+            "ANTHROPIC_DEFAULT_SONNET_MODEL".into(),
+            sonnet.alias.clone(),
+        ));
+    }
+    if let Some(opus) = opus {
+        set.push(("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), opus.alias.clone()));
+    }
+    set.extend([
+        // haiku задавалась и до ролей: фоновые мелочи — на основной, если быстрой нет.
         ("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), haiku.alias.clone()),
         // Устаревшее имя той же роли: его ещё читают старые версии Claude Code.
         ("ANTHROPIC_SMALL_FAST_MODEL".into(), haiku.alias.clone()),
         ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window.into()),
-    ];
+    ]);
     Ok((remove, set))
 }
 
 /// Команда PowerShell для своего терминала («Скопировать команду») — те же переменные,
-/// что у кнопки «Claude Code».
+/// что задаёт кнопка «Claude Code» (чужие переменные своего терминала человек видит сам).
 pub fn code_command(status: &UiStatus, roles: &RoleAliases) -> Result<String, String> {
     let (_, set) = code_env(status, roles, std::iter::empty())?;
     let mut lines: Vec<String> = set
@@ -637,13 +651,14 @@ mod tests {
         assert_eq!(get("ANTHROPIC_BASE_URL"), Some("http://127.0.0.1:17899"));
         assert_eq!(get("ANTHROPIC_AUTH_TOKEN"), Some("tok"));
         assert_eq!(get("ANTHROPIC_MODEL"), Some("claude-p-claude-p-1"));
-        // Без выбора ролей все роли — первая модель, как до появления настройки.
-        for role in ["SONNET", "OPUS", "HAIKU"] {
-            assert_eq!(
-                get(&format!("ANTHROPIC_DEFAULT_{role}_MODEL")),
-                Some("claude-p-claude-p-1")
-            );
-        }
+        // Без выбора ролей — как до появления настройки: haiku на первой модели, а
+        // sonnet/opus не задаются (встроенный ID → настоящая модель Claude или основная).
+        assert_eq!(
+            get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
+            Some("claude-p-claude-p-1")
+        );
+        assert!(get("ANTHROPIC_DEFAULT_SONNET_MODEL").is_none());
+        assert!(get("ANTHROPIC_DEFAULT_OPUS_MODEL").is_none());
         assert!(get("ANTHROPIC_API_KEY").is_none());
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000"));
         let mut big = status.clone();
@@ -811,7 +826,7 @@ mod tests {
             Some(fast.alias.clone())
         );
         assert_eq!(get("ANTHROPIC_SMALL_FAST_MODEL"), Some(fast.alias.clone()));
-        // Основная без 1M — окно 200K для всей сессии, даже если у других 1M.
+        // Окно — по основной модели (без 1M), даже если у быстрой и сильной 1M.
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000".into()));
 
         // Только opus выбран: основная и haiku — первая модель.
@@ -830,6 +845,7 @@ mod tests {
             get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
             Some(strong.alias.clone())
         );
+        assert!(get("ANTHROPIC_DEFAULT_SONNET_MODEL").is_none());
         assert_eq!(
             get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
             Some("1000000".into())

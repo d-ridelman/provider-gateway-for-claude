@@ -188,6 +188,8 @@ pub fn save_settings(
         opus: keep(input.model_roles.opus),
         haiku: keep(input.model_roles.haiku),
     };
+    // Основная модель — модель шлюза по умолчанию (store::build_file): нужен перезапуск.
+    let port_changed = port_changed || next.model_roles != config.model_roles;
     store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
     *config = next;
     crate::i18n::apply(config.language.as_deref());

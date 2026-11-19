@@ -214,6 +214,17 @@ pub fn apply_provider(
         ));
     }
     let mut next = config.clone();
+    // Переименованный провайдер уносит с собой выбранные на его модели роли.
+    if let Some(old) = original.filter(|old| *old != row.id) {
+        let roles = &mut next.model_roles;
+        for role in [&mut roles.sonnet, &mut roles.opus, &mut roles.haiku]
+            .into_iter()
+            .flatten()
+            .filter(|role| role.provider == old)
+        {
+            role.provider = row.id.clone();
+        }
+    }
     let slot = original.and_then(|o| next.providers.iter_mut().find(|p| p.id == o));
     match slot {
         Some(existing) => *existing = row,
@@ -340,9 +351,14 @@ pub fn build_file(config: &Config) -> Result<ProvidersFile, String> {
             "No providers with models"
         ));
     }
-    let default = providers
-        .first()
-        .and_then(|provider| provider.models.first().map(|(alias, _)| alias.clone()));
+    // Модель для запросов с незнакомым именем — основная (роль sonnet), иначе первая.
+    // Так невыбранные роли Claude Code (его встроенные ID opus/haiku) и в консоли, и во
+    // вкладке Code у Desktop попадают на основную модель.
+    let default = role_alias(config, config.model_roles.sonnet.as_ref()).or_else(|| {
+        providers
+            .first()
+            .and_then(|provider| provider.models.first().map(|(alias, _)| alias.clone()))
+    });
     Ok(ProvidersFile { default, providers })
 }
 
@@ -495,7 +511,20 @@ mod tests {
         assert_eq!(file.providers.len(), 1);
         assert_eq!(file.providers[0].models.len(), 2);
         assert_eq!(file.providers[0].models[1].1, "qwen3:8b");
-        assert_eq!(file.default.unwrap(), desktop_alias("openai", "gpt-5.2"));
+        assert_eq!(
+            file.default.as_deref(),
+            Some(desktop_alias("openai", "gpt-5.2").as_str())
+        );
+        // Выбрана основная модель — она и модель по умолчанию для незнакомых имён.
+        let mut with_main = config.clone();
+        with_main.model_roles.sonnet = Some(crate::model::ModelRef {
+            provider: "openai".into(),
+            model: "qwen3:8b".into(),
+        });
+        assert_eq!(
+            build_file(&with_main).unwrap().default,
+            Some(desktop_alias("openai", "qwen3:8b"))
+        );
     }
 
     #[test]
@@ -604,9 +633,19 @@ mod tests {
 
         let mut renamed = row();
         renamed.id = "openai2".into();
-        let next = apply_provider(&added, renamed, Some("openai")).unwrap();
+        let mut with_role = added.clone();
+        with_role.model_roles.opus = Some(crate::model::ModelRef {
+            provider: "openai".into(),
+            model: "gpt-5.2".into(),
+        });
+        let next = apply_provider(&with_role, renamed, Some("openai")).unwrap();
         assert_eq!(next.providers[0].id, "openai2", "позиция сохраняется");
         assert_eq!(next.providers.len(), 2);
+        assert_eq!(
+            next.model_roles.opus.as_ref().map(|r| r.provider.as_str()),
+            Some("openai2"),
+            "роль переезжает вместе с провайдером"
+        );
 
         let mut onto = row();
         onto.id = "deepseek".into();
