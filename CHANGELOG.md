@@ -2,6 +2,12 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.2.2] - 2026-11-19
+
+### Fixed
+
+- The advisor failed with "Advisor unavailable" in long sessions: the strong model was asked for its whole answer at once, and on a big conversation the connection broke while it was thinking. It is now asked with streaming, like the main model. The gateway log shows the full cause of a network error.
+
 ## [0.2.1] - 2026-11-19
 
 ### Added
@@ -48,6 +54,7 @@ The first public release.
 - Updates from GitHub Releases, verified with the signing key built into the app.
 - Provider keys in Windows Credential Manager; the gateway requires a local token.
 
+[0.2.2]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.2
 [0.2.1]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.1
 [0.2.0]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.0
 [0.1.0]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.1.0
