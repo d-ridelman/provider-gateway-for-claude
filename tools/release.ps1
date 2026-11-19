@@ -1,6 +1,8 @@
 # Prepares a release: signed NSIS installer, its updater signature and latest.json.
 #   .\tools\release.ps1 -Notes "What changed"            build into dist\release\v<version>
 #   .\tools\release.ps1 -Notes "What changed" -Publish   also create the GitHub release (gh)
+# -Notes is the short text the app shows in its update dialog (latest.json). The release
+# page uses docs\releases\v<version>.md when it exists, else the same short text.
 #
 # The updater key lives outside the repository:
 #   %USERPROFILE%\.tauri\provider-gateway-for-claude.key   (minisign private key)
@@ -87,7 +89,9 @@ Get-ChildItem $out | ForEach-Object { Write-Host "  $($_.Name)" }
 
 if ($Publish) {
     $files = Get-ChildItem $out | ForEach-Object FullName
-    & gh release create $tag @files --repo $Repo --title "Provider Gateway for Claude $version" --notes $Notes
+    $page = Join-Path $root "docs\releases\$tag.md"
+    $body = if (Test-Path $page) { @('--notes-file', $page) } else { @('--notes', $Notes) }
+    & gh release create $tag @files --repo $Repo --title "Provider Gateway for Claude $version" @body
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed ($LASTEXITCODE)" }
     Write-Host "Published: https://github.com/$Repo/releases/tag/$tag"
 }

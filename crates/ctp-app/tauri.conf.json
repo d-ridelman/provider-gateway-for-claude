@@ -12,8 +12,8 @@
     "windows": [
       {
         "title": "Provider Gateway for Claude",
-        "width": 1080,
-        "height": 760,
+        "width": 1200,
+        "height": 800,
         "minWidth": 900,
         "minHeight": 620,
         "center": true,

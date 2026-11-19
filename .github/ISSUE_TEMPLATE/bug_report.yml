@@ -1,0 +1,39 @@
+name: Bug report / Ошибка
+description: Something does not work as expected / Что-то работает не так
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please do not paste API keys or the local gateway token. / Не вставляйте API-ключи и локальный токен шлюза.
+  - type: input
+    id: version
+    attributes:
+      label: App version / Версия приложения
+      description: Settings → Updates / Настройки → Обновления
+      placeholder: "0.1.0"
+    validations:
+      required: true
+  - type: input
+    id: claude
+    attributes:
+      label: Claude Desktop / Claude Code version / Версия Claude
+      placeholder: "Claude 6.6395.0, Claude Code 2.x"
+  - type: input
+    id: provider
+    attributes:
+      label: Provider and model / Провайдер и модель
+      placeholder: "OpenRouter, deepseek/deepseek-v4"
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened / Что произошло
+      description: Steps, what you expected and what you got / Шаги, что ожидали и что получили
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log excerpt / Фрагмент журнала
+      description: Window → Log, or %APPDATA%\app.provider-gateway-for-claude\gateway.log
+      render: text

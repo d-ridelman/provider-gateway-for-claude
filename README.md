@@ -10,6 +10,13 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/d-ridelman/provider-gateway-for-claude/releases/latest"><img src="https://img.shields.io/badge/download-Windows%20x64-c15f3c?style=flat-square" alt="Download for Windows"></a>
+  <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-3d3a35?style=flat-square" alt="Windows 10 and 11">
+  <img src="https://img.shields.io/badge/built%20with-Rust%20%2B%20Tauri%202-3d3a35?style=flat-square" alt="Built with Rust and Tauri 2">
+  <a href="#license"><img src="https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-3d3a35?style=flat-square" alt="License: MIT or Apache-2.0"></a>
+</p>
+
+<p align="center">
   <b>English</b> · <a href="README.ru.md">Русский</a>
 </p>
 
@@ -67,7 +74,8 @@ A portable `.exe` is attached to each release as well. Its built-in update runs 
 4. Click **Open Claude** for Claude Desktop, or **Claude Code** for a console with the CLI.
 
 <p align="center">
-  <img src="docs/images/settings-en.png" width="760" alt="Settings: language, port, Claude paths, compatibility check, updates">
+  <img src="docs/images/new-en.png" width="49%" alt="A new provider: template, address, key and models">
+  <img src="docs/images/settings-en.png" width="49%" alt="Settings: language, port, Claude paths, compatibility check, updates">
 </p>
 
 ### Reasoning levels
@@ -117,6 +125,10 @@ The workspace has three crates:
 - `crates/ctp-app` — the Windows app (Tauri 2).
 
 Without the project's updater key (`TAURI_SIGNING_PRIVATE_KEY`), `-Installer` builds a plain installer with no update signatures. Releases are prepared with `tools/release.ps1` (signed installer, `latest.json`, checksums). `tools/cloudflare-mirror` is an optional update mirror for networks where GitHub is slow or unreachable.
+
+## Contributing
+
+Bug reports, provider templates and translations are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md) and the [changelog](CHANGELOG.md). Security issues go through private reporting, as described in [SECURITY.md](SECURITY.md).
 
 ## License
 

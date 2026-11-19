@@ -86,7 +86,9 @@ pub fn spawn_auto_check(app: tauri::AppHandle) {
                         let shared = app.state::<crate::state::AppShared>();
                         *shared.update.lock().unwrap_or_else(|p| p.into_inner()) = found;
                     }
-                    Err(exc) => tracing::info!(error = %exc, "update check failed, retry in an hour"),
+                    Err(exc) => {
+                        tracing::info!(error = %exc, "update check failed, retry in an hour")
+                    }
                 }
             }
             tokio::time::sleep(TICK).await;
