@@ -354,12 +354,12 @@ fn portable_schema(schema: &Value) -> Value {
 
 /// Регулярка, которую примет Go `regexp` (синтаксис RE2). Разбор в дерево, а не
 /// компиляция: микросекунды даже на сотнях инструментов. Дерево Rust шире Go, поэтому
-/// поверх разбора — его ограничения (`go_compatible`). `\u` Go не знает вовсе.
+/// поверх разбора — его ограничения (`go_compatible`).
+// shortcut: редкий синтаксис Go, которого нет в Rust (`\Q…\E`, `\012`, `a{,5}`), отбрасывается — так только теряется подсказка; добавить, если провайдеры начнут на него опираться.
 fn portable_regex(re: &str) -> bool {
-    !re.contains("\\u")
-        && regex_syntax::ast::parse::Parser::new()
-            .parse(re)
-            .is_ok_and(|ast| go_compatible(&ast, 1))
+    regex_syntax::ast::parse::Parser::new()
+        .parse(re)
+        .is_ok_and(|ast| go_compatible(&ast, 1))
 }
 
 /// Ограничения Go `regexp/syntax`, которых нет в Rust: повтор не больше 1000 (и
@@ -415,13 +415,13 @@ fn go_compatible(ast: &regex_syntax::ast::Ast, outer: u64) -> bool {
     }
 }
 
-/// `\U0001F600` и `\U{…}` — только в Rust.
+/// `\u0041`, `\U0001F600` и их `{…}` — только в Rust; в Go — `\x41`, `\x{1F600}`.
 fn go_literal(literal: &regex_syntax::ast::Literal) -> bool {
     use regex_syntax::ast::{HexLiteralKind, LiteralKind};
     !matches!(
         literal.kind,
-        LiteralKind::HexFixed(HexLiteralKind::UnicodeLong)
-            | LiteralKind::HexBrace(HexLiteralKind::UnicodeLong)
+        LiteralKind::HexFixed(HexLiteralKind::UnicodeShort | HexLiteralKind::UnicodeLong)
+            | LiteralKind::HexBrace(HexLiteralKind::UnicodeShort | HexLiteralKind::UnicodeLong)
     )
 }
 
@@ -436,28 +436,109 @@ fn go_flags(flags: &regex_syntax::ast::Flags) -> bool {
     })
 }
 
-/// `\pL`, `\p{Lu}` (категории) и распространённые письменности есть в Go; свойства вида
+/// `\pL`, `\p{Lu}` (категории), `\p{Any}` и письменности есть в Go; свойства вида
 /// `\p{Alphabetic}`, `\p{Emoji}` и `name=value` — только в Rust.
 fn go_unicode_class(kind: &regex_syntax::ast::ClassUnicodeKind) -> bool {
     use regex_syntax::ast::ClassUnicodeKind;
+    // Письменности Unicode 6.0 — таблицы Go с 1.0, есть у провайдера на любой версии Go.
+    // Имена с учётом регистра: без него Go понимает их только с 1.25.
     const GO_NAMES: &[&str] = &[
+        "Any",
         "Arabic",
         "Armenian",
+        "Avestan",
+        "Balinese",
+        "Bamum",
+        "Batak",
         "Bengali",
+        "Bopomofo",
+        "Brahmi",
+        "Braille",
+        "Buginese",
+        "Buhid",
+        "Canadian_Aboriginal",
+        "Carian",
+        "Cham",
+        "Cherokee",
         "Common",
+        "Coptic",
+        "Cuneiform",
+        "Cypriot",
         "Cyrillic",
+        "Deseret",
         "Devanagari",
+        "Egyptian_Hieroglyphs",
+        "Ethiopic",
         "Georgian",
+        "Glagolitic",
+        "Gothic",
         "Greek",
+        "Gujarati",
+        "Gurmukhi",
         "Han",
         "Hangul",
+        "Hanunoo",
         "Hebrew",
         "Hiragana",
+        "Imperial_Aramaic",
         "Inherited",
+        "Inscriptional_Pahlavi",
+        "Inscriptional_Parthian",
+        "Javanese",
+        "Kaithi",
+        "Kannada",
         "Katakana",
+        "Kayah_Li",
+        "Kharoshthi",
+        "Khmer",
+        "Lao",
         "Latin",
+        "Lepcha",
+        "Limbu",
+        "Linear_B",
+        "Lisu",
+        "Lycian",
+        "Lydian",
+        "Malayalam",
+        "Mandaic",
+        "Meetei_Mayek",
+        "Mongolian",
+        "Myanmar",
+        "New_Tai_Lue",
+        "Nko",
+        "Ogham",
+        "Ol_Chiki",
+        "Old_Italic",
+        "Old_Persian",
+        "Old_South_Arabian",
+        "Old_Turkic",
+        "Oriya",
+        "Osmanya",
+        "Phags_Pa",
+        "Phoenician",
+        "Rejang",
+        "Runic",
+        "Samaritan",
+        "Saurashtra",
+        "Shavian",
+        "Sinhala",
+        "Sundanese",
+        "Syloti_Nagri",
+        "Syriac",
+        "Tagalog",
+        "Tagbanwa",
+        "Tai_Le",
+        "Tai_Tham",
+        "Tai_Viet",
         "Tamil",
+        "Telugu",
+        "Thaana",
         "Thai",
+        "Tibetan",
+        "Tifinagh",
+        "Ugaritic",
+        "Vai",
+        "Yi",
     ];
     // Общие категории Unicode в Go (`unicode.Categories`).
     const GO_CATEGORIES: &[&str] = &[
@@ -578,6 +659,8 @@ mod tests {
             r"^[[:alpha:]]{1,1000}$",
             r"^(?:a+)+$",
             r"(?P<year>\d{4})",
+            r"^C:\\users\\[a-z]+$",
+            r"^[\p{Ethiopic}\p{Thaana}\p{Mongolian}\p{Any}]+$",
         ] {
             assert!(portable_regex(ok), "{ok}");
         }
@@ -604,6 +687,10 @@ mod tests {
             r"\pX",
             r"(?P<a.b>x)",
             r"(?P<имя>x)",
+            r"^\u0041$",
+            r"\u{41}",
+            r"\p{Adlam}",
+            r"\p{greek}",
         ] {
             assert!(!portable_regex(bad), "{bad}");
         }
