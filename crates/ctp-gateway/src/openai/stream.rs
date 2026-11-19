@@ -259,13 +259,20 @@ impl StreamTranslator {
         if self.done {
             return None;
         }
-        let key = *self
+        let keys: Vec<u64> = self
             .tools
             .iter()
-            .find(|(_, call)| call.name == crate::openai::request::ADVISOR)?
-            .0;
-        let call = self.tools.remove(&key)?;
-        let server_id = format!("srvtoolu_{}", Uuid::new_v4().simple());
+            .filter(|(_, call)| call.name == crate::openai::request::ADVISOR)
+            .map(|(key, _)| *key)
+            .collect();
+        let call = self.tools.remove(keys.first()?)?;
+        // Повторный вызов в том же ответе — тот же совет: лишние убираются, иначе они
+        // ушли бы в Claude Code вызовом незнакомого ему инструмента.
+        for key in &keys[1..] {
+            self.tools.remove(key);
+        }
+        // ID вернётся в истории как `tool_call_id`: у OpenAI предел — 40 символов.
+        let server_id = format!("srvtoolu_{}", &Uuid::new_v4().simple().to_string()[..24]);
         let call_id = if call.id.is_empty() {
             format!("call_{}", Uuid::new_v4().simple())
         } else {

@@ -974,6 +974,8 @@ async fn gateway_answers_the_advisor_and_continues_the_same_reply() {
         "{body}"
     );
     assert_eq!(blocks[1]["name"], "advisor");
+    // ID вернётся в истории как tool_call_id: у OpenAI предел — 40 символов.
+    assert!(blocks[1]["id"].as_str().unwrap().len() <= 40);
     assert_eq!(blocks[2]["tool_use_id"], blocks[1]["id"]);
     assert_eq!(blocks[2]["content"]["type"], "advisor_result");
     assert_eq!(blocks[2]["content"]["text"], "ADVICE: test first");
@@ -1019,6 +1021,61 @@ async fn gateway_answers_the_advisor_and_continues_the_same_reply() {
     );
     assert_eq!(messages[n - 2]["content"], "Let me ask. ");
     assert_eq!(messages[n - 1]["content"], "ADVICE: test first");
+}
+
+#[tokio::test]
+async fn advisor_calls_are_capped_even_if_the_model_keeps_calling() {
+    let upstream = MockServer::start().await;
+    // Модель зовёт советника всегда, даже после того, как функцию у неё убрали; и
+    // дважды в одном ответе — второй вызов не должен уйти в Claude Code.
+    let calling = sse_body(&[
+        json!({"choices": [{"index": 0, "delta": {"tool_calls": [
+            {"index": 0, "id": "call_a", "type": "function", "function": {"name": "advisor", "arguments": "{}"}},
+            {"index": 1, "id": "call_b", "type": "function", "function": {"name": "advisor", "arguments": "{}"}}
+        ]}, "finish_reason": null}]}),
+        json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("main-model"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(calling, "text/event-stream"))
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("strong-model"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "advice"},
+                         "finish_reason": "stop"}]
+        })))
+        .expect(3)
+        .mount(&upstream)
+        .await;
+
+    // Без других инструментов: после лимита `tools` пустеет и уходит из запроса целиком.
+    let response = app(advisor_state(&upstream.uri()))
+        .oneshot(ask_with_advisor())
+        .await
+        .unwrap();
+    let body = text_body(response).await;
+    let results: Vec<Value> = started_blocks(&body)
+        .into_iter()
+        .filter(|b| b["type"] == "advisor_tool_result")
+        .collect();
+    assert_eq!(results.len(), 4, "{body}");
+    assert_eq!(results[3]["content"]["error_code"], "max_uses_exceeded");
+    assert!(!body.contains("\"type\":\"tool_use\""), "{body}");
+    assert!(body.contains("event: message_stop"));
+
+    let requests = upstream.received_requests().await.unwrap();
+    let last_main: Value = requests
+        .iter()
+        .map(|r| serde_json::from_slice::<Value>(&r.body).unwrap())
+        .filter(|b| b["model"] == "main-model")
+        .next_back()
+        .unwrap();
+    assert!(last_main.get("tools").is_none(), "{last_main}");
+    assert!(last_main.get("tool_choice").is_none());
 }
 
 #[tokio::test]

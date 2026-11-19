@@ -308,10 +308,12 @@ impl ModelRouter {
     }
 
     /// Модель советника: названная Claude Code, если она у шлюза есть, иначе из настроек.
+    /// Только на OpenAI-совместимом провайдере: другого советника шлюз не исполняет.
     pub fn advisor_for(&self, requested: Option<&str>) -> Option<Route> {
         requested
             .and_then(|name| self.resolve_exact(name))
             .or_else(|| self.advisor.clone())
+            .filter(|route| self.providers[route.provider].kind == ProviderKind::OpenAi)
     }
 }
 
@@ -534,11 +536,16 @@ mod tests {
         assert_eq!(unknown.model, "gpt-5.2");
         assert!(router.resolve_exact("claude-haiku-4-5").is_none());
 
-        // Советник: своя модель шлюза — она; чужое имя (`claude-fable-5-2`) — из настроек.
+        // Советник: своя модель шлюза — она; чужое имя (`claude-fable-5-2`) — из настроек,
+        // но только на OpenAI-провайдере (здесь в настройках Anthropic-модель — советника нет).
         let named = router.advisor_for(Some("claude-openai-80673633")).unwrap();
         assert_eq!(named.model, "gpt-5.2");
-        let fallback = router.advisor_for(Some("claude-fable-5-2")).unwrap();
-        assert_eq!(fallback.model, "claude-sonnet-4-5");
+        assert!(router.advisor_for(Some("claude-fable-5-2")).is_none());
+        assert!(
+            router
+                .advisor_for(Some("claude-anthropic-18183586"))
+                .is_none()
+        );
     }
 
     #[test]
