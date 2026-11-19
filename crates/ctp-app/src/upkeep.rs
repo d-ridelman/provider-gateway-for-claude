@@ -385,8 +385,15 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result
                     )
                 } else if current.as_ref() != Some(&fresh) {
                     let tmp = file.with_extension("json.download");
-                    fs::write(&tmp, &raw)?;
-                    fs::rename(&tmp, &file)?;
+                    fs::write(&tmp, &raw)
+                        .and_then(|()| fs::rename(&tmp, &file))
+                        .with_context(|| {
+                            let target = file.display();
+                            tr!(
+                                "скачанный перевод не записан в {target}",
+                                "downloaded translation not saved to {target}"
+                            )
+                        })?;
                     tr!(" (обновлён)", " (updated)")
                 } else {
                     String::new()
@@ -708,18 +715,20 @@ fn prepare_copy(
     if !translation_is_for(config_dir, &version) {
         return Ok(None);
     }
+    // Пауза после неудачной сборки — раньше пробы «открыта ли копия» (переименование
+    // папки): незачем дёргать её каждые 10 минут, если собирать всё равно не будем.
+    if build_failed
+        .as_ref()
+        .is_some_and(|(v, at)| *v == version && at.elapsed() < BUILD_RETRY_AFTER)
+    {
+        return Ok(None);
+    }
     let ru = fs::read(config_dir.join(ruui::TRANSLATION_FILE))?;
     match ruui::copy_state(&app, copies, &ru)? {
         ruui::CopyState::Current => return Ok(Some(version)),
         // Открытую копию Windows не даст заменить: соберём после закрытия.
         ruui::CopyState::Open => return Ok(None),
         ruui::CopyState::Stale => {}
-    }
-    if build_failed
-        .as_ref()
-        .is_some_and(|(v, at)| *v == version && at.elapsed() < BUILD_RETRY_AFTER)
-    {
-        return Ok(None);
     }
     if let Err(exc) = ruui::ensure_copy(&app, copies, &ru) {
         *build_failed = Some((version, std::time::Instant::now()));
@@ -925,6 +934,36 @@ mod tests {
         // Другая версия Claude — пауза не действует.
         assert!(!skip_after_failure(Some(&visible), "app-2", Fetch::Check));
         assert!(!skip_after_failure(None, "app-1", Fetch::Watch));
+        // Паузы кончаются: видимая через 30 минут, фоновая для фона — через 3 часа.
+        let ago = |d: Duration| now.checked_sub(d).unwrap();
+        let old_visible = Failure {
+            at: ago(RETRY_AFTER + Duration::from_secs(1)),
+            ..visible
+        };
+        assert!(!skip_after_failure(
+            Some(&old_visible),
+            "app-1",
+            Fetch::Check
+        ));
+        let hour_old_hidden = Failure {
+            version: "app-1".into(),
+            at: ago(Duration::from_secs(60 * 60)),
+            hidden: true,
+        };
+        assert!(skip_after_failure(
+            Some(&hour_old_hidden),
+            "app-1",
+            Fetch::Watch
+        ));
+        let old_hidden = Failure {
+            at: ago(WATCH_RETRY_AFTER + Duration::from_secs(1)),
+            ..hour_old_hidden
+        };
+        assert!(!skip_after_failure(
+            Some(&old_hidden),
+            "app-1",
+            Fetch::Watch
+        ));
     }
 
     #[test]

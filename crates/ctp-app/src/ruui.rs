@@ -1156,6 +1156,13 @@ mod tests {
                 .share_mode(1) // FILE_SHARE_READ
                 .open(&exe)
                 .unwrap();
+            // Для фона: копия открыта и устарела (собрана с `other`) — Open, а при её
+            // же переводе — Current без всякой пробы.
+            assert_eq!(copy_state(&app, &cache, &ru).unwrap(), CopyState::Open);
+            assert_eq!(
+                copy_state(&app, &cache, &other).unwrap(),
+                CopyState::Current
+            );
             assert_eq!(ensure_copy(&app, &cache, &ru).unwrap(), exe);
             // «Обновлённый» Claude: тот же файл с другой отметкой времени.
             let original = fs::OpenOptions::new()
