@@ -138,7 +138,7 @@ pub fn advisor_available(config: &Config) -> bool {
         && config
             .providers
             .iter()
-            .any(|p| p.id == strong.provider && p.kind != "anthropic")
+            .any(|p| p.id == strong.provider && !p.kind.eq_ignore_ascii_case("anthropic"))
 }
 
 pub fn role_aliases(config: &Config) -> RoleAliases {

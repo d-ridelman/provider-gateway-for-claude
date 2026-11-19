@@ -278,6 +278,11 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
             labels: row.labels.clone(),
         })
         .collect();
+    let settings = crate::cc_settings::settings_path();
+    let advisor = match &settings {
+        Some(path) => crate::cc_settings::read_advisor(path),
+        None => Err(tr!("не найдена домашняя папка", "home folder not found")),
+    };
     UiConfig {
         port: config.port,
         token: config.token.clone(),
@@ -296,12 +301,13 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
         russian_file: dir.join(crate::ruui::TRANSLATION_FILE).is_file(),
         config_dir: dir.display().to_string(),
         model_roles: config.model_roles.clone(),
-        advisor_model: crate::cc_settings::settings_path()
-            .and_then(|path| crate::cc_settings::advisor_model(&path)),
+        advisor_model: advisor.as_ref().ok().cloned().flatten(),
         advisor_decided: config.advisor_decided,
-        claude_settings: crate::cc_settings::settings_path()
+        claude_settings: settings
             .map(|path| path.display().to_string())
             .unwrap_or_default(),
+        claude_settings_error: advisor.err(),
+        advisor_notice: None,
     }
 }
 

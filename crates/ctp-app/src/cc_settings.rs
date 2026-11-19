@@ -22,57 +22,81 @@ pub fn settings_path() -> Option<PathBuf> {
     }
 }
 
-/// Модель советника из настроек: непустая строка или `None` (нет ключа, пусто, файла нет).
-pub fn advisor_model(path: &Path) -> Option<String> {
-    let text = fs::read_to_string(path).ok()?;
-    let value: Value = serde_json::from_str(text.trim_start_matches(BOM)).ok()?;
-    value
+/// Модель советника из настроек: `Ok(Some)` — непустая строка, `Ok(None)` — нет ключа,
+/// пусто или файла нет, `Err` — файл есть, но не читается как объект JSON (тогда
+/// программа его не трогает и галочку не предлагает).
+pub fn read_advisor(path: &Path) -> Result<Option<String>, String> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(exc) if exc.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(exc) => return Err(exc.to_string()),
+    };
+    let value: Value = serde_json::from_str(text.trim_start_matches(BOM))
+        .map_err(|exc| format!("not valid JSON ({exc})"))?;
+    let object = value.as_object().ok_or("not a JSON object")?;
+    Ok(object
         .get(KEY)
         .and_then(Value::as_str)
         .filter(|model| !model.is_empty())
-        .map(str::to_string)
+        .map(str::to_string))
 }
 
 /// Включить (ключ `opus`, если своей модели нет) или выключить (ключа нет) советника.
 /// Свой выбор человека при включении не трогается. `true` — файл изменён.
 pub fn set_advisor(path: &Path, on: bool) -> Result<bool, String> {
-    let text = match fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(exc) if exc.kind() == std::io::ErrorKind::NotFound => {
-            if !on {
-                return Ok(false);
+    // Claude Code пишет этот файл сам: если он успел изменить его, пока мы правили,
+    // правка делается заново по свежему тексту, а не затирает его изменение.
+    for _ in 0..3 {
+        let text = match fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(exc) if exc.kind() == std::io::ErrorKind::NotFound => {
+                if !on {
+                    return Ok(false);
+                }
+                if let Some(dir) = path.parent() {
+                    fs::create_dir_all(dir).map_err(|exc| format!("{}: {exc}", dir.display()))?;
+                }
+                let text = format!("{{\n  \"{KEY}\": \"{ADVISOR_VALUE}\"\n}}\n");
+                write_file(path, &text)?;
+                return Ok(true);
             }
-            if let Some(dir) = path.parent() {
-                fs::create_dir_all(dir).map_err(|exc| format!("{}: {exc}", dir.display()))?;
-            }
-            let text = format!("{{\n  \"{KEY}\": \"{ADVISOR_VALUE}\"\n}}\n");
-            write_atomic(path, &text)?;
-            return Ok(true);
+            Err(exc) => return Err(format!("{}: {exc}", path.display())),
+        };
+        let (bom, body) = match text.strip_prefix(BOM) {
+            Some(body) => (true, body),
+            None => (false, text.as_str()),
+        };
+        let Some(edited) = edit(body, on).map_err(|why| format!("{}: {why}", path.display()))?
+        else {
+            return Ok(false);
+        };
+        let edited = if bom {
+            format!("{BOM}{edited}")
+        } else {
+            edited
+        };
+        if fs::read_to_string(path).ok().as_deref() != Some(text.as_str()) {
+            continue;
         }
-        Err(exc) => return Err(format!("{}: {exc}", path.display())),
-    };
-    let (bom, body) = match text.strip_prefix(BOM) {
-        Some(body) => (true, body),
-        None => (false, text.as_str()),
-    };
-    let Some(edited) = edit(body, on).map_err(|why| format!("{}: {why}", path.display()))? else {
-        return Ok(false);
-    };
-    // Нетронутый оригинал — один раз: следующая запись не затрёт его уже изменённым.
-    let backup = path.with_extension("json.bak");
-    if !backup.exists() {
-        fs::copy(path, &backup).map_err(|exc| format!("{}: {exc}", backup.display()))?;
+        // Нетронутый оригинал — один раз: следующая запись не затрёт его уже изменённым.
+        let backup = path.with_extension("json.bak");
+        if !backup.exists() {
+            fs::write(&backup, &text).map_err(|exc| format!("{}: {exc}", backup.display()))?;
+        }
+        write_file(path, &edited)?;
+        return Ok(true);
     }
-    let edited = if bom {
-        format!("{BOM}{edited}")
-    } else {
-        edited
-    };
-    write_atomic(path, &edited)?;
-    Ok(true)
+    Err(format!(
+        "{}: the file keeps changing, try again",
+        path.display()
+    ))
 }
 
-fn write_atomic(path: &Path, text: &str) -> Result<(), String> {
+/// Через временный файл и замену; символическая ссылка остаётся ссылкой (пишется цель).
+fn write_file(path: &Path, text: &str) -> Result<(), String> {
+    if fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return fs::write(path, text).map_err(|exc| format!("{}: {exc}", path.display()));
+    }
     let temp = path.with_extension("json.ctp-tmp");
     fs::write(&temp, text).map_err(|exc| format!("{}: {exc}", temp.display()))?;
     fs::rename(&temp, path).map_err(|exc| {
@@ -342,7 +366,7 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
-        // Пусто (`/advisor off`) — включается в том же месте.
+        // Пустая строка (так тоже бывает выключено) — включается в том же месте.
         assert_eq!(
             on("{\n  \"a\": 1,\n  \"advisorModel\": \"\",\n  \"b\": 2\n}"),
             "{\n  \"a\": 1,\n  \"advisorModel\": \"opus\",\n  \"b\": 2\n}"
@@ -374,8 +398,9 @@ mod tests {
         let path = dir.join("settings.json");
         // Нет файла: выключить — ничего, включить — создаётся.
         assert!(!set_advisor(&path, false).unwrap());
+        assert_eq!(read_advisor(&path), Ok(None));
         assert!(set_advisor(&path, true).unwrap());
-        assert_eq!(advisor_model(&path).as_deref(), Some(ADVISOR_VALUE));
+        assert_eq!(read_advisor(&path).unwrap().as_deref(), Some(ADVISOR_VALUE));
         assert!(!dir.join("settings.json.bak").exists());
 
         let original = format!("{BOM}{{\n  \"a\": 1\n}}\n");
@@ -390,10 +415,15 @@ mod tests {
             fs::read_to_string(dir.join("settings.json.bak")).unwrap(),
             original
         );
-        // Битый файл не трогается.
-        fs::write(&path, "{oops").unwrap();
-        assert!(set_advisor(&path, true).is_err());
-        assert_eq!(fs::read_to_string(&path).unwrap(), "{oops");
+        // Битый, пустой или не объект — не трогается ни включением, ни выключением, и
+        // чтение говорит, что файл не годится (галочку тогда не предлагают).
+        for broken in ["{oops", "", "[1]", "{\"a\": 1,}"] {
+            fs::write(&path, broken).unwrap();
+            assert!(read_advisor(&path).is_err(), "{broken:?}");
+            assert!(set_advisor(&path, true).is_err());
+            assert!(set_advisor(&path, false).is_err());
+            assert_eq!(fs::read_to_string(&path).unwrap(), broken);
+        }
         fs::remove_dir_all(&dir).unwrap();
     }
 }
