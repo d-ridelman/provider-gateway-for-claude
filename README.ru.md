@@ -110,7 +110,7 @@ Get-FileHash .\Provider-Gateway-for-Claude_*_x64-setup.exe -Algorithm SHA256
 
 ## Сборка из исходников
 
-Нужно: Rust 1.85+ с MSVC, Node.js (для установщика), Python 3 (по желанию, обновляет список лицензий).
+Нужно: Rust 1.90+ с MSVC, Node.js (для установщика), Python 3 (по желанию, обновляет список лицензий).
 
 ```powershell
 cargo test --workspace
@@ -121,7 +121,7 @@ cargo test --workspace
 В рабочем пространстве три крейта:
 
 - `crates/ctp-core` — конфигурация и имена моделей, общие для остальных;
-- `crates/ctp-gateway` — шлюз Anthropic Messages, работает и сам по себе (`ctp-gateway --providers-file providers.json`);
+- `crates/ctp-gateway` — шлюз Anthropic Messages, работает и сам по себе (`ctp-gateway --providers-file providers.json`, токен клиентов — в `GATEWAY_TOKEN`);
 - `crates/ctp-app` — приложение для Windows (Tauri 2).
 
 Без ключа обновлений проекта (`TAURI_SIGNING_PRIVATE_KEY`) `-Installer` соберёт обычный установщик без подписей обновлений. Релизы готовит `tools/release.ps1` (подписанный установщик, `latest.json`, контрольные суммы). `tools/cloudflare-mirror` — необязательное зеркало обновлений для сетей, где GitHub медленный или недоступен.

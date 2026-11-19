@@ -269,10 +269,10 @@ impl StreamTranslator {
 
 fn reasoning_delta(delta: &Value) -> String {
     for key in ["reasoning_content", "reasoning"] {
-        if let Some(text) = delta.get(key).and_then(Value::as_str) {
-            if !text.is_empty() {
-                return text.to_string();
-            }
+        if let Some(text) = delta.get(key).and_then(Value::as_str)
+            && !text.is_empty()
+        {
+            return text.to_string();
         }
     }
     if let Some(details) = delta.get("reasoning_details").and_then(Value::as_array) {

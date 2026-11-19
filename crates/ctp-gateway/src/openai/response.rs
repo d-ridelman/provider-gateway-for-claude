@@ -126,14 +126,14 @@ pub fn to_events(message: &Value) -> Vec<Value> {
                             "delta": {"type": "thinking_delta", "thinking": thinking}
                         }));
                     }
-                    if let Some(signature) = block.get("signature").and_then(Value::as_str) {
-                        if !signature.is_empty() {
-                            events.push(json!({
-                                "type": "content_block_delta",
-                                "index": index,
-                                "delta": {"type": "signature_delta", "signature": signature}
-                            }));
-                        }
+                    if let Some(signature) = block.get("signature").and_then(Value::as_str)
+                        && !signature.is_empty()
+                    {
+                        events.push(json!({
+                            "type": "content_block_delta",
+                            "index": index,
+                            "delta": {"type": "signature_delta", "signature": signature}
+                        }));
                     }
                     events.push(json!({"type": "content_block_stop", "index": index}));
                     index += 1;
@@ -192,10 +192,10 @@ pub fn content_text(value: Option<&Value>) -> String {
 
 pub fn reasoning_text(message: &Value) -> String {
     for key in ["reasoning_content", "reasoning"] {
-        if let Some(text) = message.get(key).and_then(Value::as_str) {
-            if !text.is_empty() {
-                return text.to_string();
-            }
+        if let Some(text) = message.get(key).and_then(Value::as_str)
+            && !text.is_empty()
+        {
+            return text.to_string();
         }
     }
     if let Some(details) = message.get("reasoning_details").and_then(Value::as_array) {

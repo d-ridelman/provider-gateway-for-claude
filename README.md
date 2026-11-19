@@ -110,7 +110,7 @@ There is no telemetry. Prompts and answers go only between Claude and your provi
 
 ## Build from source
 
-Requirements: Rust 1.85+ with the MSVC toolchain, Node.js (for the installer), Python 3 (optional, refreshes license notices).
+Requirements: Rust 1.90+ with the MSVC toolchain, Node.js (for the installer), Python 3 (optional, refreshes license notices).
 
 ```powershell
 cargo test --workspace
@@ -121,7 +121,7 @@ cargo test --workspace
 The workspace has three crates:
 
 - `crates/ctp-core` — configuration and model naming shared by the others;
-- `crates/ctp-gateway` — the Anthropic Messages gateway, also usable on its own (`ctp-gateway --providers-file providers.json`);
+- `crates/ctp-gateway` — the Anthropic Messages gateway, also usable on its own (`ctp-gateway --providers-file providers.json`, with the client token in `GATEWAY_TOKEN`);
 - `crates/ctp-app` — the Windows app (Tauri 2).
 
 Without the project's updater key (`TAURI_SIGNING_PRIVATE_KEY`), `-Installer` builds a plain installer with no update signatures. Releases are prepared with `tools/release.ps1` (signed installer, `latest.json`, checksums). `tools/cloudflare-mirror` is an optional update mirror for networks where GitHub is slow or unreachable.

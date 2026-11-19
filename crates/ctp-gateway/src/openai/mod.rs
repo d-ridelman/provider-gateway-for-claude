@@ -59,25 +59,22 @@ pub async fn messages(
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
         let text = response.text().await.unwrap_or_default();
-        if attempt == 0 {
-            if let Some(limit) = crate::util::parse_output_limit(&text) {
-                if let Some(key) = provider.max_tokens_key(upstream_model) {
-                    if let Some(current) = payload.get(key.as_str()).and_then(Value::as_u64) {
-                        if current > limit {
-                            info!(
-                                provider = %provider.id,
-                                model = %upstream_model,
-                                from = current,
-                                to = limit,
-                                "max_tokens above the model limit, retrying"
-                            );
-                            payload[key.as_str()] = json!(limit);
-                            attempt = 1;
-                            continue;
-                        }
-                    }
-                }
-            }
+        if attempt == 0
+            && let Some(limit) = crate::util::parse_output_limit(&text)
+            && let Some(key) = provider.max_tokens_key(upstream_model)
+            && let Some(current) = payload.get(key.as_str()).and_then(Value::as_u64)
+            && current > limit
+        {
+            info!(
+                provider = %provider.id,
+                model = %upstream_model,
+                from = current,
+                to = limit,
+                "max_tokens above the model limit, retrying"
+            );
+            payload[key.as_str()] = json!(limit);
+            attempt = 1;
+            continue;
         }
         warn!(
             provider = %provider.id,
@@ -86,10 +83,10 @@ pub async fn messages(
             "OpenAI upstream error"
         );
         let mut response = error::upstream_error(status, &text, &provider.api_key);
-        if let Some(value) = retry_after {
-            if let Ok(value) = HeaderValue::from_str(&value) {
-                response.headers_mut().insert("retry-after", value);
-            }
+        if let Some(value) = retry_after
+            && let Ok(value) = HeaderValue::from_str(&value)
+        {
+            response.headers_mut().insert("retry-after", value);
         }
         return response;
     };
@@ -228,10 +225,10 @@ pub(crate) fn upstream_headers(provider: &Provider, session: Option<&str>) -> He
         header::CONTENT_TYPE,
         HeaderValue::from_static("application/json"),
     );
-    if !provider.api_key.is_empty() {
-        if let Ok(value) = HeaderValue::from_str(&format!("Bearer {}", provider.api_key)) {
-            headers.insert(header::AUTHORIZATION, value);
-        }
+    if !provider.api_key.is_empty()
+        && let Ok(value) = HeaderValue::from_str(&format!("Bearer {}", provider.api_key))
+    {
+        headers.insert(header::AUTHORIZATION, value);
     }
     if let Some((name, value)) = provider.session_pair(session) {
         headers.insert(name, value);

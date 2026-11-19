@@ -738,12 +738,12 @@ pub mod registry {
         }
         // MuiCache — кэш имён программ: путь копии в имени значения, просто убираем.
         let copies_lower = copies.display().to_string().to_ascii_lowercase();
-        if let Ok(mui) = CURRENT_USER.create(MUI) {
-            if let Ok(values) = mui.values() {
-                for (name, _) in values.collect::<Vec<_>>() {
-                    if name.to_ascii_lowercase().contains(&copies_lower) {
-                        let _ = mui.remove_value(&name);
-                    }
+        if let Ok(mui) = CURRENT_USER.create(MUI)
+            && let Ok(values) = mui.values()
+        {
+            for (name, _) in values.collect::<Vec<_>>() {
+                if name.to_ascii_lowercase().contains(&copies_lower) {
+                    let _ = mui.remove_value(&name);
                 }
             }
         }
