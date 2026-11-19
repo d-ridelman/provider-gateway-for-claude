@@ -212,10 +212,11 @@ pub fn map_stop_reason(finish: Option<&str>, has_tools: bool) -> &'static str {
     if has_tools {
         return "tool_use";
     }
+    // `tool_calls` без единого вызова (советник исполнен шлюзом, вызов без имени
+    // отброшен) — не `tool_use`: Claude Code ждал бы инструмент, которого нет.
     match finish {
         Some("length") => "max_tokens",
         Some("content_filter") => "refusal",
-        Some("tool_calls") | Some("function_call") => "tool_use",
         _ => "end_turn",
     }
 }
