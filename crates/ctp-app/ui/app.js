@@ -53,6 +53,7 @@ const el = Object.fromEntries(
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
     "dialogText", "dialogOk", "dialogCancel", "dialogAlt", "dialogCheckRow", "dialogCheck", "dialogCheckText",
     "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn", "roleSonnet", "roleOpus", "roleHaiku",
+    "advisorInput", "advisorRow",
   ].map((id) => [id, $(id)]),
 );
 el.form = el.providerForm;
@@ -357,8 +358,47 @@ function settingsDirty() {
     el.codeDirInput.value.trim() !== (c.codeDir ?? "") ||
     el.russianInput.checked !== !!c.russianUi ||
     el.autoUpdateInput.checked !== (c.autoUpdate !== false) ||
+    el.advisorInput.checked !== advisorShown ||
     ROLES.some(([role, id]) => el[id].value !== roleKey(c.modelRoles?.[role]))
   );
+}
+
+// Claude Code's advisor (advisorModel in its shared settings). Available when the strong
+// role is on an OpenAI-compatible provider (as claude::advisor_available). Ticked when the
+// settings already have an advisor or, until the person decides, by default.
+let advisorTouched = false;
+let advisorShown = false;
+
+function advisorAvailable() {
+  const strong = readRole(el.roleOpus);
+  if (!strong) return false;
+  const provider = state.config.providers.find((p) => p.id === strong.provider);
+  return (
+    !!provider &&
+    provider.kind !== "anthropic" &&
+    (provider.aliases ?? []).some((row) => bareId(row.model) === bareId(strong.model))
+  );
+}
+
+function renderAdvisor() {
+  const c = state.config;
+  const available = advisorAvailable();
+  el.advisorInput.disabled = !available;
+  if (!advisorTouched) {
+    el.advisorInput.checked = !!c.advisorModel || (available && !c.advisorDecided);
+  }
+  el.advisorRow.title = available
+    ? t("settings.advisorTitle", { path: c.claudeSettings, now: c.advisorModel ?? t("settings.advisorOff") })
+    : t("settings.advisorUnavailable");
+}
+
+// What to tell save_settings: a change of the shared file, or the person's first decision;
+// otherwise null, and Claude Code's settings stay untouched.
+function advisorChoice() {
+  if (el.advisorInput.disabled) return null;
+  const on = el.advisorInput.checked;
+  if (on !== !!state.config.advisorModel) return on;
+  return advisorTouched && !state.config.advisorDecided ? on : null;
 }
 
 // Model roles of Claude Code: role, select id, text of the "not chosen" option.
@@ -424,6 +464,9 @@ function renderSettings() {
   el.claudePathInput.value = state.config.claudePath ?? "";
   el.codeDirInput.value = state.config.codeDir ?? "";
   for (const [role, id, emptyText] of ROLES) fillRole(el[id], state.config.modelRoles?.[role], emptyText);
+  advisorTouched = false;
+  renderAdvisor();
+  advisorShown = el.advisorInput.checked;
   el.tokenInput.value = state.config.token;
   el.detectedClaude.textContent = state.config.detectedClaude
     ? t("settings.found", { path: state.config.detectedClaude })
@@ -520,6 +563,10 @@ function bind() {
   $("closeLogsBtn").addEventListener("click", () => setLogs(false));
 
   $("saveSettingsBtn").addEventListener("click", saveSettings);
+  el.roleOpus.addEventListener("change", renderAdvisor);
+  el.advisorInput.addEventListener("change", () => {
+    advisorTouched = true;
+  });
   $("copyTokenBtn").addEventListener("click", () => copyText(el.tokenInput.value, t("toast.tokenCopied")));
   $("copyEnvBtn").addEventListener("click", copyEnv);
   $("openLogsFolderBtn").addEventListener("click", () => invoke("open_logs").catch((e) => toast(formatError(e), "error")));
@@ -931,6 +978,7 @@ async function saveSettings() {
   const portChanged = port !== state.config?.port;
   const rolesChanged = ROLES.some(([role, id]) => el[id].value !== roleKey(state.config?.modelRoles?.[role]));
   const wasRunning = (portChanged || rolesChanged) && (starting > 0 || !!state.status?.running);
+  const advisorBefore = state.config?.advisorModel ?? null;
   try {
     state.config = await invoke("save_settings", {
       input: {
@@ -941,11 +989,19 @@ async function saveSettings() {
         russianUi: el.russianInput.checked,
         language: el.languageInput.value,
         autoUpdate: el.autoUpdateInput.checked,
+        advisor: advisorChoice(),
       },
     });
     if (state.config.language !== LANG) applyLanguage(state.config.language);
     render();
-    await restartIfWas(wasRunning, t(rolesChanged ? "settings.savedRoles" : "settings.saved"));
+    // The shared file of Claude Code changed: say so, with its path.
+    let saved = t(rolesChanged ? "settings.savedRoles" : "settings.saved");
+    const advisorAfter = state.config.advisorModel ?? null;
+    if (!!advisorAfter !== !!advisorBefore) {
+      const key = advisorAfter ? "settings.advisorSavedOn" : "settings.advisorSavedOff";
+      saved += "; " + t(key, { path: state.config.claudeSettings });
+    }
+    await restartIfWas(wasRunning, saved);
     renderStatus();
   } catch (exc) {
     toast(formatError(exc), "error");

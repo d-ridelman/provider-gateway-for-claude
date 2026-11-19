@@ -296,6 +296,12 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
         russian_file: dir.join(crate::ruui::TRANSLATION_FILE).is_file(),
         config_dir: dir.display().to_string(),
         model_roles: config.model_roles.clone(),
+        advisor_model: crate::cc_settings::settings_path()
+            .and_then(|path| crate::cc_settings::advisor_model(&path)),
+        advisor_decided: config.advisor_decided,
+        claude_settings: crate::cc_settings::settings_path()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
     }
 }
 

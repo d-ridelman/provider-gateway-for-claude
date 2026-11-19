@@ -1,4 +1,5 @@
 pub mod catalog;
+pub mod cc_settings;
 pub mod claude;
 pub mod commands;
 pub mod i18n;

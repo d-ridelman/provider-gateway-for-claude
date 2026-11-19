@@ -229,7 +229,7 @@
           </div>
 
           <div class="field">
-            <span class="field-label" data-i18n="settings.roles"></span>
+            <span class="field-label" data-i18n="settings.roles" data-i18n-title="settings.rolesTitle"></span>
             <div class="grid row-roles">
               <label class="field">
                 <span data-i18n="settings.roleSonnet"></span>
@@ -244,7 +244,11 @@
                 <select id="roleHaiku"></select>
               </label>
             </div>
-            <small data-i18n-html="settings.rolesHint"></small>
+            <!-- One line in place of the hint: Settings still fit 1200x800 without scrolling. -->
+            <label class="check check-line" id="advisorRow">
+              <input id="advisorInput" type="checkbox">
+              <span data-i18n-html="settings.advisor"></span>
+            </label>
           </div>
 
           <div class="field">

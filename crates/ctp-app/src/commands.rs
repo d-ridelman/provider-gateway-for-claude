@@ -191,6 +191,29 @@ pub fn save_settings(
     };
     // Основная модель — модель шлюза по умолчанию (store::build_file): нужен перезапуск.
     let port_changed = port_changed || next.model_roles != config.model_roles;
+    // Советник Claude Code — его общий файл настроек; пишется до нашего конфига: не
+    // вышло — не меняется ничего. Шлюз советник не перезапускает.
+    if let Some(on) = input.advisor {
+        if on && !claude::advisor_available(&next) {
+            return Err(tr!(
+                "Советника исполняет сильная модель: выберите её на OpenAI-совместимом провайдере",
+                "The advisor runs on the strong model: pick one on an OpenAI-compatible provider"
+            ));
+        }
+        let path = crate::cc_settings::settings_path().ok_or_else(|| {
+            tr!(
+                "Не найдена домашняя папка для настроек Claude Code",
+                "Home folder for Claude Code settings not found"
+            )
+        })?;
+        crate::cc_settings::set_advisor(&path, on).map_err(|exc| {
+            tr!(
+                "Настройки Claude Code не изменены: {exc}",
+                "Claude Code settings left unchanged: {exc}"
+            )
+        })?;
+        next.advisor_decided = true;
+    }
     store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
     *config = next;
     crate::i18n::apply(config.language.as_deref());
