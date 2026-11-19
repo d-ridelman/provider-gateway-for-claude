@@ -26,7 +26,7 @@ pub fn detect(config: &Config) -> Option<PathBuf> {
         }
     }
 
-    let local = std::env::var_os("LOCALAPPDATA")?;
+    let local = local_appdata()?;
     let base = PathBuf::from(&local).join("AnthropicClaude");
     let mut versions: Vec<(Vec<u64>, PathBuf)> = Vec::new();
     if let Ok(entries) = fs::read_dir(&base) {
@@ -51,10 +51,7 @@ pub fn detect(config: &Config) -> Option<PathBuf> {
     if stub.is_file() {
         return Some(stub);
     }
-    let programs = PathBuf::from(local)
-        .join("Programs")
-        .join("claude")
-        .join("claude.exe");
+    let programs = local.join("Programs").join("claude").join("claude.exe");
     programs.is_file().then_some(programs)
 }
 
@@ -339,13 +336,13 @@ pub fn launch(
             "Claude Desktop not found. Set the path to claude.exe in the settings."
         )
     })?;
-    let local = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
+    let local = local_appdata().ok_or_else(|| {
         tr!(
-            "Не найдена переменная LOCALAPPDATA",
-            "LOCALAPPDATA variable not found"
+            "Не найдена папка AppData\\Local",
+            "AppData\\Local folder not found"
         )
     })?;
-    let base = PathBuf::from(local).join("ClaudeProviderGateway");
+    let base = local.join("ClaudeProviderGateway");
     let copies = base.join("claude-ru");
     let original = exe.clone();
     let (exe, russian, note) = if config.russian_ui {
@@ -406,6 +403,12 @@ pub fn launch(
         .env("LOCALAPPDATA", &base)
         .env("CLAUDE_USER_DATA_DIR", &profile)
         .current_dir(exe.parent().unwrap_or_else(|| Path::new(".")));
+    // Настоящая AppData\Local для процессов, которые запускает копия (ruui::ENV_PRELUDE).
+    // Из системной папки Windows, а не из окружения: приложение могли запустить из сессии
+    // Claude, у которой оно само подменено.
+    if let Some(real) = real_local_appdata(&base) {
+        command.env(crate::ruui::REAL_LOCALAPPDATA_VAR, real);
+    }
     // Снимок до запуска: копия перепишет `claude://` и COM-класс на себя (проверено вживую).
     #[cfg(windows)]
     let before = russian.then(|| crate::ruui::registry::snapshot(&copies));
@@ -441,6 +444,21 @@ pub fn launch(
     })
 }
 
+/// Настоящая папка AppData\Local (системная, SHGetKnownFolderPath): существует и не наша
+/// подменённая база — иначе `None`, и процессы копии останутся как раньше.
+fn real_local_appdata(base: &Path) -> Option<PathBuf> {
+    local_appdata().filter(|real| real.is_dir() && !same_dir(real, base))
+}
+
+fn same_dir(a: &Path, b: &Path) -> bool {
+    let norm = |p: &Path| {
+        p.to_string_lossy()
+            .trim_end_matches(['\\', '/'])
+            .to_ascii_lowercase()
+    };
+    norm(a) == norm(b)
+}
+
 #[cfg(windows)]
 type Before = crate::ruui::registry::Snapshot;
 #[cfg(not(windows))]
@@ -463,12 +481,10 @@ fn repair_for(copies: &Path, original_exe: &Path, before: Option<&Before>) {
 
 /// При старте приложения: след русской копии в реестре, оставшийся с прошлого раза.
 pub fn repair_registry(config: &Config) {
-    let Some(local) = std::env::var_os("LOCALAPPDATA") else {
+    let Some(local) = local_appdata() else {
         return;
     };
-    let copies = PathBuf::from(local)
-        .join("ClaudeProviderGateway")
-        .join("claude-ru");
+    let copies = local.join("ClaudeProviderGateway").join("claude-ru");
     if let (true, Some(original)) = (copies.is_dir(), detect(config)) {
         repair_for(&copies, &original, None);
     }
@@ -482,18 +498,22 @@ pub const EFFORT_PROFILE: &str = "claude-opus-4-8";
 
 /// Папка русских копий Claude (`%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru`).
 pub fn copies_root() -> anyhow::Result<PathBuf> {
-    let local = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
+    let local = local_appdata().ok_or_else(|| {
         anyhow::anyhow!(
             "{}",
             tr!(
-                "Не найдена переменная LOCALAPPDATA",
-                "LOCALAPPDATA variable not found"
+                "Не найдена папка AppData\\Local",
+                "AppData\\Local folder not found"
             )
         )
     })?;
-    Ok(PathBuf::from(local)
-        .join("ClaudeProviderGateway")
-        .join("claude-ru"))
+    Ok(local.join("ClaudeProviderGateway").join("claude-ru"))
+}
+
+/// AppData\Local: системная папка Windows, а не переменная окружения — та бывает
+/// подменённой, если приложение запустили из процесса старой копии Claude.
+pub fn local_appdata() -> Option<PathBuf> {
+    dirs::data_local_dir().or_else(|| std::env::var_os("LOCALAPPDATA").map(PathBuf::from))
 }
 
 /// Модели для 3p-конфига Claude. С уровнями рассуждения — `behavesAs` и `maxEffort`

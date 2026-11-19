@@ -16,6 +16,7 @@ clap.workspace = true
 eventsource-stream.workspace = true
 futures-util.workspace = true
 regex.workspace = true
+regex-syntax = "0.8"
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true

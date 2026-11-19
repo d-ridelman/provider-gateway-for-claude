@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 /// Файл перевода в папке настроек приложения.
 pub const TRANSLATION_FILE: &str = "claude-ru.json";
 /// Меняется, когда меняется сам патч: старые копии пересобираются.
-const PATCH_REV: u32 = 2;
+const PATCH_REV: u32 = 3;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
 
@@ -337,6 +337,42 @@ fn enable_folderless(data: &[u8]) -> Option<Vec<u8>> {
         .then(|| gate.replace_all(data, &b"${1}!0"[..]).into_owned())
 }
 
+/// Переменная, через которую запуск копии (`claude::launch`) сообщает настоящую папку
+/// AppData\Local. Сам Claude работает с подменённой `LOCALAPPDATA`: на ней держится его
+/// отдельный профиль 3p (корень `%LOCALAPPDATA%\Claude-3p`; `CLAUDE_USER_DATA_DIR`
+/// подписанные сборки не слушают) и защита установленного Claude от действий копии.
+pub const REAL_LOCALAPPDATA_VAR: &str = "CTP_REAL_LOCALAPPDATA";
+
+/// Вставка в начало главного процесса копии: процессы, которые Claude запускает (сессии
+/// Code, их Bash и PowerShell, MCP-серверы, git), получают настоящую `LOCALAPPDATA`,
+/// как у обычного Claude, а сам Claude по-прежнему видит подменённую. Подменённое
+/// значение в окружении ребёнка меняется на настоящее; заданное иначе — не трогается.
+/// `util.promisify` у `exec`/`execFile` сохраняет своё поведение ({stdout, stderr}).
+const ENV_PRELUDE: &str = r#";(()=>{try{const real=process.env.CTP_REAL_LOCALAPPDATA,over=process.env.LOCALAPPDATA;delete process.env.CTP_REAL_LOCALAPPDATA;if(!real||!over||real.toLowerCase()===over.toLowerCase())return;const cp=require("child_process"),util=require("util");const fix=(env)=>{const e=Object.assign({},env||process.env);for(const k of Object.keys(e)){if(k.toUpperCase()==="LOCALAPPDATA"&&typeof e[k]==="string"&&e[k].toLowerCase()===over.toLowerCase())e[k]=real}return e};const fixArgs=(name,a)=>{a=Array.prototype.slice.call(a);const i=a.findIndex((x,j)=>j>0&&x!==null&&typeof x==="object"&&!Array.isArray(x));if(i>0){a[i]=Object.assign({},a[i],{env:fix(a[i].env)})}else{let at=(name==="exec"||name==="execSync")?1:(Array.isArray(a[1])?2:1);a.splice(Math.min(at,a.length),0,{env:fix()})}return a};for(const name of ["spawn","spawnSync","execFile","execFileSync","exec","execSync","fork"]){const orig=cp[name];if(typeof orig!=="function")continue;const wrapped=function(){return orig.apply(this,fixArgs(name,arguments))};const custom=orig[util.promisify.custom];if(typeof custom==="function"){wrapped[util.promisify.custom]=function(){return custom.apply(this,fixArgs(name,arguments))}}Object.defineProperty(wrapped,"name",{value:name});cp[name]=wrapped}}catch(e){}})();"#;
+
+/// Точка входа главного процесса из `package.json` архива `app.asar` и она же со
+/// вставкой `ENV_PRELUDE` (после `"use strict";`, если файл с него начинается).
+fn env_prelude_change(app_asar: &Path) -> Result<(String, Vec<u8>)> {
+    let package: Value = serde_json::from_slice(&read_asar_file(app_asar, "package.json")?)?;
+    let main = package
+        .get("main")
+        .and_then(Value::as_str)
+        .map(|m| m.trim_start_matches("./").to_string())
+        .with_context(|| tr!("в package.json нет main", "package.json has no main"))?;
+    let entry = read_asar_file(app_asar, &main)?;
+    let strict = br#""use strict";"#;
+    let mut patched = Vec::with_capacity(entry.len() + ENV_PRELUDE.len());
+    if entry.starts_with(strict) {
+        patched.extend_from_slice(strict);
+        patched.extend_from_slice(ENV_PRELUDE.as_bytes());
+        patched.extend_from_slice(&entry[strict.len()..]);
+    } else {
+        patched.extend_from_slice(ENV_PRELUDE.as_bytes());
+        patched.extend_from_slice(&entry);
+    }
+    Ok((main, patched))
+}
+
 /// Подменяет хеш заголовка `ion-dist.asar` в ресурсе целостности exe (той же длины).
 pub fn patch_exe(exe: &[u8], old_hash: &str, new_hash: &str) -> Result<Vec<u8>> {
     let old = old_hash.as_bytes();
@@ -587,9 +623,28 @@ fn build(app_dir: &Path, building: &Path, ru_json: &[u8], marker: &str) -> Resul
         &building.join("resources").join("ion-dist.asar"),
         ru_json,
     )?;
-    let exe = patch_exe(&fs::read(&src_exe)?, &old_hash, &new_hash)?;
+    let mut exe = patch_exe(&fs::read(&src_exe)?, &old_hash, &new_hash)?;
+    // Настоящая AppData\Local для процессов копии. Не вышло (Claude устроен иначе) —
+    // копия всё равно собирается, без этой правки; самопроверка это покажет.
+    let src_app = app_dir.join("resources").join("app.asar");
+    let mut skip = vec![src_exe, src_asar];
+    match env_prelude_change(&src_app).and_then(|change| {
+        rebuild(
+            &src_app,
+            &building.join("resources").join("app.asar"),
+            &[change],
+        )
+    }) {
+        Ok((old_app, new_app)) => {
+            exe = patch_exe(&exe, &old_app, &new_app)?;
+            skip.push(src_app);
+        }
+        Err(exc) => {
+            tracing::warn!(error = %format!("{exc:#}"), "child environment fix not applied")
+        }
+    }
     fs::write(building.join("claude.exe"), exe)?;
-    copy_tree(app_dir, building, &[src_exe, src_asar])?;
+    copy_tree(app_dir, building, &skip)?;
     fs::write(building.join(MARKER), marker)?;
     Ok(())
 }
@@ -860,9 +915,14 @@ mod tests {
                 .iter()
                 .map(|l| (format!("i18n/{l}.json"), br#"{"k":"v"}"#.to_vec())),
         );
+        write_asar(path, &files);
+    }
+
+    /// Настоящий asar из файлов (путь через `/`, данные).
+    fn write_asar(path: &Path, files: &[(String, Vec<u8>)]) {
         let mut json = json!({"files": {}});
         let mut payload = Vec::new();
-        for (name, data) in &files {
+        for (name, data) in files {
             *entry_mut(&mut json, name).unwrap() = json!({
                 "size": data.len(), "offset": payload.len().to_string(), "integrity": integrity(data)
             });
@@ -1049,6 +1109,102 @@ mod tests {
         assert_eq!(patched, format!("MZ..{new}..").into_bytes());
         assert!(patch_exe(b"MZ nothing", &old, &new).is_err());
         assert!(patch_exe(format!("{old}{old}").as_bytes(), &old, &new).is_err());
+    }
+
+    fn header_hash(asar: &Path) -> String {
+        sha256_hex(&read_header(&mut File::open(asar).unwrap()).unwrap().raw)
+    }
+
+    #[test]
+    fn copy_gets_the_env_prelude_and_both_hashes() {
+        let dir = temp_dir("prelude");
+        let app = dir.join("install").join("app-9.9.9");
+        let resources = app.join("resources");
+        fs::create_dir_all(resources.join("app.asar.unpacked")).unwrap();
+        sample_asar(&resources.join("ion-dist.asar"));
+        let entry = br#""use strict";console.log(1)"#.to_vec();
+        write_asar(
+            &resources.join("app.asar"),
+            &[
+                (
+                    "package.json".into(),
+                    br#"{"main":".vite/build/index.pre.js"}"#.to_vec(),
+                ),
+                (".vite/build/index.pre.js".into(), entry),
+            ],
+        );
+        fs::write(
+            resources.join("app.asar.unpacked").join("native.node"),
+            b"bin",
+        )
+        .unwrap();
+        let ion = header_hash(&resources.join("ion-dist.asar"));
+        let app_hash = header_hash(&resources.join("app.asar"));
+        fs::write(app.join("claude.exe"), format!("MZ{ion}MZ{app_hash}MZ")).unwrap();
+
+        let cache = dir.join("cache");
+        let exe = ensure_copy(&app, &cache, &big_translation()).unwrap();
+        let copy = cache.join("app-9.9.9").join("resources");
+        let (patched, integ) = read_file(&copy.join("app.asar"), ".vite/build/index.pre.js");
+        assert!(patched.starts_with(
+            br#""use strict";;(()=>{try{const real=process.env.CTP_REAL_LOCALAPPDATA"#
+        ));
+        assert!(patched.ends_with(b"console.log(1)"));
+        assert_eq!(integ, integrity(&patched));
+        // Both asar hashes in the copy's exe are the new ones; unpacked files are copied.
+        let exe_text = String::from_utf8(fs::read(&exe).unwrap()).unwrap();
+        assert!(exe_text.contains(&header_hash(&copy.join("ion-dist.asar"))));
+        assert!(exe_text.contains(&header_hash(&copy.join("app.asar"))));
+        assert!(!exe_text.contains(&app_hash));
+        assert!(copy.join("app.asar.unpacked").join("native.node").is_file());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// The prelude itself in a real Node: children get the real folder, an explicit other
+    /// value stays, promisified execFile keeps {stdout, stderr}. Skipped without node.
+    #[test]
+    fn prelude_gives_children_the_real_folder_in_node() {
+        if std::process::Command::new("node")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            eprintln!("node not found: skipped");
+            return;
+        }
+        let dir = temp_dir("node");
+        let script = dir.join("probe.js");
+        let body = r#"
+const cp=require("child_process"),util=require("util");
+const show=["-e","process.stdout.write(String(process.env.LOCALAPPDATA)+'|'+String(process.env.CTP_REAL_LOCALAPPDATA))"];
+const out=[];
+out.push(cp.execFileSync(process.execPath,show).toString());
+out.push(cp.spawnSync(process.execPath,show,{env:Object.assign({},process.env,{LOCALAPPDATA:"custom"})}).stdout.toString());
+out.push(cp.execSync("node -e process.stdout.write(process.env.LOCALAPPDATA)").toString());
+out.push(String(process.env.LOCALAPPDATA));
+util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.stdout);out.push(r.stdout);console.log(JSON.stringify(out));});
+"#;
+        fs::write(&script, [ENV_PRELUDE, body].concat()).unwrap();
+        let output = std::process::Command::new("node")
+            .arg(&script)
+            .env("LOCALAPPDATA", "C:/over")
+            .env(REAL_LOCALAPPDATA_VAR, "C:/real")
+            .output()
+            .unwrap();
+        let got: Vec<String> = serde_json::from_slice(&output.stdout)
+            .unwrap_or_else(|_| panic!("{}", String::from_utf8_lossy(&output.stderr)));
+        assert_eq!(
+            got,
+            [
+                "C:/real|undefined",
+                "custom|undefined",
+                "C:/real",
+                "C:/over",
+                "string",
+                "C:/real|undefined"
+            ]
+        );
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

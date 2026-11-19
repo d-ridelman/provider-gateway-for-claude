@@ -306,28 +306,50 @@ fn convert_tools(body: &Value) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// Схема инструмента без `pattern`, которые не скомпилирует движок вида RE2. Провайдеры
-/// на Go (OpenCode и др.) проверяют схемы им и отвергают весь запрос (400 «is not a
-/// regex») из-за одного инструмента MCP, например с `^[^\uD800-\uDFFF]*$` (суррогаты)
-/// или с просмотром вперёд из JS. Шаблон — лишь подсказка модели: входные данные всё
-/// равно проверяет сам инструмент. Удаляются только строковые `pattern`: свойство с
-/// именем `pattern` внутри `properties` — объект-схема, его не трогаем.
+/// Схема инструмента без регулярок, которые не примет движок вида RE2 (Go `regexp`).
+/// Провайдеры проверяют ими схемы и отвергают весь запрос (400 «is not a regex») из-за
+/// одного инструмента MCP: например, `^[^\uD800-\uDFFF]*$` (суррогаты) или шаблоны из
+/// JS с `\uXXXX` и просмотром вперёд. Шаблон — лишь подсказка модели: входные данные
+/// всё равно проверяет сам инструмент. Чистятся строковые `pattern` и ключи
+/// `patternProperties`; в данные (`default`, `enum`, `examples`, `const`) не заходим —
+/// там `pattern` может быть просто полем значения.
 fn portable_schema(schema: &Value) -> Value {
     match schema {
         Value::Object(map) => Value::Object(
             map.iter()
                 .filter(|(key, value)| {
                     !(key.as_str() == "pattern"
-                        && value
-                            .as_str()
-                            .is_some_and(|re| regex::Regex::new(re).is_err()))
+                        && value.as_str().is_some_and(|re| !portable_regex(re)))
                 })
-                .map(|(key, value)| (key.clone(), portable_schema(value)))
+                .map(|(key, value)| {
+                    let value = match key.as_str() {
+                        "default" | "enum" | "examples" | "example" | "const" => value.clone(),
+                        "patternProperties" => match value {
+                            Value::Object(props) => Value::Object(
+                                props
+                                    .iter()
+                                    .filter(|(re, _)| portable_regex(re))
+                                    .map(|(re, sub)| (re.clone(), portable_schema(sub)))
+                                    .collect(),
+                            ),
+                            other => portable_schema(other),
+                        },
+                        _ => portable_schema(value),
+                    };
+                    (key.clone(), value)
+                })
                 .collect(),
         ),
         Value::Array(items) => Value::Array(items.iter().map(portable_schema).collect()),
         other => other.clone(),
     }
+}
+
+/// Регулярка, которую примет движок вида RE2. Разбор, а не компиляция: микросекунды
+/// даже на сотнях инструментов и без отказа из-за лимита размера автомата. `\u`
+/// Go не знает вовсе (в отличие от Rust), поэтому такие шаблоны тоже непереносимы.
+fn portable_regex(re: &str) -> bool {
+    !re.contains("\\u") && regex_syntax::Parser::new().parse(re).is_ok()
 }
 
 fn convert_tool_choice(value: Option<&Value>, has_tools: bool) -> (Option<Value>, Option<bool>) {
@@ -374,7 +396,16 @@ mod tests {
                 "list": {"type": "array", "items": {"anyOf": [
                     {"type": "string", "pattern": r"^[^\uD800-\uDFFF]*$"},
                     {"type": "integer"}
-                ]}}
+                ]}},
+                // JS-style \u escapes: Go's regexp rejects them although Rust accepts.
+                "ascii": {"type": "string", "pattern": r"^[\u0000-\u007F]*$"},
+                "word": {"type": "string", "pattern": r"^\w{1,500}$"},
+                // Data, not schema: left as is.
+                "obj": {"type": "object", "default": {"pattern": "(?=x)"}},
+                "map": {"type": "object", "patternProperties": {
+                    "^[a-z]+$": {"type": "string"},
+                    "^(?!x).*$": {"type": "string"}
+                }}
             }
         });
         let body = json!({"tools": [{"name": "t", "description": "d", "input_schema": schema}]});
@@ -386,6 +417,15 @@ mod tests {
         assert_eq!(props["pattern"]["type"], "string");
         assert!(props["list"]["items"]["anyOf"][0].get("pattern").is_none());
         assert_eq!(props["session"]["type"], "string");
+        assert!(props["ascii"].get("pattern").is_none());
+        assert_eq!(
+            props["word"]["pattern"], r"^\w{1,500}$",
+            "big but valid stays"
+        );
+        assert_eq!(props["obj"]["default"]["pattern"], "(?=x)");
+        let pattern_props = props["map"]["patternProperties"].as_object().unwrap();
+        assert!(pattern_props.contains_key("^[a-z]+$"));
+        assert!(!pattern_props.contains_key("^(?!x).*$"));
     }
 
     fn provider() -> Provider {
