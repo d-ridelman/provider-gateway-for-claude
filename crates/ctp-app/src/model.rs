@@ -20,6 +20,9 @@ pub struct Config {
     /// Папка, в которой открывается Claude Code CLI; `None` — домашняя.
     #[serde(default)]
     pub code_dir: Option<String>,
+    /// Язык интерфейса: `ru`, `en` или `auto`/нет — язык Windows.
+    #[serde(default)]
+    pub language: Option<String>,
 }
 
 impl Default for Config {
@@ -31,6 +34,7 @@ impl Default for Config {
             claude_path: None,
             russian_ui: false,
             code_dir: None,
+            language: None,
         }
     }
 }
@@ -79,6 +83,10 @@ pub struct UiConfig {
     pub russian_file: bool,
     pub config_dir: String,
     pub code_dir: Option<String>,
+    /// Язык окна сейчас: `ru` или `en`.
+    pub language: String,
+    /// Выбор пользователя: `auto`, `ru` или `en`.
+    pub language_pref: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -169,4 +177,6 @@ pub struct SettingsInput {
     pub russian_ui: bool,
     #[serde(default)]
     pub code_dir: Option<String>,
+    #[serde(default)]
+    pub language: Option<String>,
 }

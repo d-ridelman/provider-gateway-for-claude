@@ -145,6 +145,7 @@ pub fn delete_provider(shared: State<'_, AppShared>, id: String) -> Result<UiCon
 
 #[tauri::command]
 pub fn save_settings(
+    app: tauri::AppHandle,
     shared: State<'_, AppShared>,
     input: SettingsInput,
 ) -> Result<UiConfig, String> {
@@ -154,6 +155,8 @@ pub fn save_settings(
         input.port
     };
     let mut config = shared.config.lock().unwrap();
+    // Маршруты шлюза зависят только от порта: остальные настройки его не останавливают.
+    let port_changed = config.port != port;
     config.port = port;
     config.claude_path = input
         .claude_path
@@ -164,10 +167,18 @@ pub fn save_settings(
         .code_dir
         .map(|dir| dir.trim().to_string())
         .filter(|dir| !dir.is_empty());
+    config.language = input
+        .language
+        .map(|lang| lang.trim().to_string())
+        .filter(|lang| lang == "ru" || lang == "en");
+    crate::i18n::apply(config.language.as_deref());
+    crate::tray::relabel(&app);
     store::save(&shared.config_dir, &config).map_err(|exc| exc.to_string())?;
     let ui = store::ui_config(&config, &shared.config_dir);
     drop(config);
-    runtime::stop(&shared);
+    if port_changed {
+        runtime::stop(&shared);
+    }
     Ok(ui)
 }
 
@@ -266,4 +277,27 @@ pub fn win_toggle_maximize(window: tauri::Window) -> Result<(), String> {
 #[tauri::command]
 pub fn win_close(window: tauri::Window) -> Result<(), String> {
     window.close().map_err(|exc| exc.to_string())
+}
+
+/// Выбор папки системным диалогом; `None` — отменили.
+#[tauri::command]
+pub async fn pick_folder(app: tauri::AppHandle, start: Option<String>) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let mut dialog = app.dialog().file();
+    if let Some(start) = start.filter(|s| std::path::Path::new(s).is_dir()) {
+        dialog = dialog.set_directory(start);
+    }
+    // blocking_* нельзя в главном потоке; async-команда идёт в пуле Tauri.
+    tauri::async_runtime::spawn_blocking(move || dialog.blocking_pick_folder())
+        .await
+        .ok()
+        .flatten()
+        .and_then(|path| path.into_path().ok())
+        .map(|path| path.display().to_string())
+}
+
+/// Полный выход (как «Выход» в трее): шлюз останавливается вместе с программой.
+#[tauri::command]
+pub fn app_exit(app: tauri::AppHandle) {
+    app.exit(0);
 }

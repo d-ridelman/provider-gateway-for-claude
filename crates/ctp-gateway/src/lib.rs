@@ -78,4 +78,3 @@ fn read_providers(path: &Path) -> anyhow::Result<ProvidersFile> {
         .with_context(|| format!("providers file: {}", path.display()))?;
     serde_json::from_str(&raw).with_context(|| format!("providers file: {}", path.display()))
 }
-

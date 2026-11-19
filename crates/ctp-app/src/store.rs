@@ -246,6 +246,11 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
         providers,
         russian_ui: config.russian_ui,
         code_dir: config.code_dir.clone(),
+        language: crate::i18n::current().to_string(),
+        language_pref: config
+            .language
+            .clone()
+            .unwrap_or_else(|| "auto".to_string()),
         russian_file: dir.join(crate::ruui::TRANSLATION_FILE).is_file(),
         config_dir: dir.display().to_string(),
     }
