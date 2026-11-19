@@ -428,6 +428,8 @@ function renderSettings() {
   el.detectedClaude.textContent = state.config.detectedClaude
     ? t("settings.found", { path: state.config.detectedClaude })
     : t("settings.notFound");
+  // One line with an ellipsis (a long user name would wrap it); the full path on hover.
+  el.detectedClaude.title = state.config.detectedClaude ?? "";
   el.russianInput.checked = !!state.config.russianUi;
   // Whether the translation is fine is said by the self-check below; here only "not yet".
   el.russianFileHint.textContent = state.config.russianFile ? "" : t("settings.russianFileMissing");
@@ -943,7 +945,7 @@ async function saveSettings() {
     });
     if (state.config.language !== LANG) applyLanguage(state.config.language);
     render();
-    await restartIfWas(wasRunning, t("settings.saved"));
+    await restartIfWas(wasRunning, t(rolesChanged ? "settings.savedRoles" : "settings.saved"));
     renderStatus();
   } catch (exc) {
     toast(formatError(exc), "error");
