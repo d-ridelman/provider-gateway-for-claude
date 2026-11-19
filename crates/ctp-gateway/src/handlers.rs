@@ -334,6 +334,7 @@ fn strip_advisor(body: &mut Value) {
         .flatten()
     {
         if let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) {
+            let before = content.len();
             content.retain(|block| {
                 let kind = block.get("type").and_then(Value::as_str);
                 !(kind == Some("advisor_tool_result")
@@ -341,6 +342,10 @@ fn strip_advisor(body: &mut Value) {
                         && block.get("name").and_then(Value::as_str)
                             == Some(openai::request::ADVISOR))
             });
+            // Пустое содержимое Anthropic отвергает (400).
+            if content.is_empty() && before > 0 {
+                content.push(json!({"type": "text", "text": "…"}));
+            }
         }
     }
 }

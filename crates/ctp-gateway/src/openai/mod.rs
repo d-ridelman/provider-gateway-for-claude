@@ -308,13 +308,20 @@ pub async fn messages(
             if !call.text.is_empty() {
                 seen.push(json!({"role": "assistant", "content": call.text}));
             }
+            // Сверх лимита сильную модель не спрашиваем, даже если модель зовёт советника
+            // уже без объявленной функции (имя она видит в истории).
+            let over = advisor_calls >= advisor::MAX_CALLS;
             let consult = advisor::consult(&state, route, &seen, session.as_deref());
             tokio::pin!(consult);
-            let result = loop {
-                tokio::select! {
-                    result = &mut consult => break result,
-                    _ = ticker.tick() => {
-                        yield Ok::<Bytes, Infallible>(sse::frame(&json!({"type": "ping"})));
+            let result = if over {
+                Err("max_uses_exceeded")
+            } else {
+                loop {
+                    tokio::select! {
+                        result = &mut consult => break result,
+                        _ = ticker.tick() => {
+                            yield Ok::<Bytes, Infallible>(sse::frame(&json!({"type": "ping"})));
+                        }
                     }
                 }
             };
@@ -329,7 +336,8 @@ pub async fn messages(
             advisor_calls += 1;
             // Вместе с советником модель вызвала и инструменты Claude Code: их вызовы
             // уходят ему, ответ кончается — продолжит модель уже с их результатами.
-            if call.others {
+            // Сверх лимита ответ тоже кончается: иначе модель могла бы звать его без конца.
+            if call.others || over {
                 break;
             }
 
@@ -351,6 +359,14 @@ pub async fn messages(
                 tools.retain(|tool| {
                     tool.pointer("/function/name").and_then(Value::as_str) != Some(request::ADVISOR)
                 });
+                // Пустой `tools` OpenAI отвергает (400) — без инструментов поля не нужны.
+                if tools.is_empty()
+                    && let Some(fields) = payload.as_object_mut()
+                {
+                    for key in ["tools", "tool_choice", "parallel_tool_calls"] {
+                        fields.remove(key);
+                    }
+                }
             }
             translator.next_segment();
             match send(&state.clients.stream, &provider, &headers, &upstream_model, &mut payload).await {
