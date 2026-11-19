@@ -34,15 +34,16 @@ if (Get-Command python -ErrorAction SilentlyContinue) {
 if ($Installer) {
     # Updater artifacts need the project's signing key (tools\release.ps1 loads it).
     # Without it, build a plain installer instead of failing.
+    $extra = @()
     if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
         Write-Warning 'TAURI_SIGNING_PRIVATE_KEY is not set: building without updater signatures.'
-        $env:TAURI_CONFIG = '{"bundle":{"createUpdaterArtifacts":false}}'
+        $extra = @('--config', 'tauri.unsigned.conf.json')
     }
     Push-Location (Join-Path $root 'crates\ctp-app')
     try {
-        & npx --yes @tauri-apps/cli@2.12.6 build --bundles nsis
+        & npx --yes @tauri-apps/cli@2.12.6 build --bundles nsis @extra
         if ($LASTEXITCODE -ne 0) { throw "tauri build failed ($LASTEXITCODE)" }
-    } finally { Pop-Location; Remove-Item Env:TAURI_CONFIG -ErrorAction SilentlyContinue }
+    } finally { Pop-Location }
 } else {
     Push-Location $root
     try {

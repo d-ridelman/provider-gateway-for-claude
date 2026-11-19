@@ -136,8 +136,11 @@ pub async fn test_provider(input: ProbeInput) -> Result<String, String> {
 #[tauri::command]
 pub fn delete_provider(shared: State<'_, AppShared>, id: String) -> Result<UiConfig, String> {
     let mut config = shared.config.lock().unwrap();
-    config.providers.retain(|provider| provider.id != id);
-    store::save(&shared.config_dir, &config).map_err(|exc| exc.to_string())?;
+    let mut next = config.clone();
+    next.providers.retain(|provider| provider.id != id);
+    // Disk first: if the write fails, memory and the key stay as they were.
+    store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
+    *config = next;
     store::delete_key(&id);
     let ui = store::ui_config(&config, &shared.config_dir);
     drop(config);
