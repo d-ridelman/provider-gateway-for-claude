@@ -1108,6 +1108,36 @@ async fn streamed_advice_is_collected_without_the_reasoning() {
 }
 
 #[tokio::test]
+async fn advice_cut_off_mid_stream_is_not_passed_as_whole() {
+    let upstream = MockServer::start().await;
+    mount_main_calling_advisor(&upstream).await;
+    // Ни `[DONE]`, ни `finish_reason`: провайдер закрыл поток на полуслове.
+    let cut = format!(
+        "data: {}\n\n",
+        json!({"choices": [{"index": 0, "delta": {"content": "Test fir"}, "finish_reason": null}]})
+    );
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("strong-model"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(cut, "text/event-stream"))
+        .mount(&upstream)
+        .await;
+
+    let response = app(advisor_state(&upstream.uri()))
+        .oneshot(ask_with_advisor())
+        .await
+        .unwrap();
+    let body = text_body(response).await;
+    let blocks = started_blocks(&body);
+    assert_eq!(
+        blocks[2]["content"]["type"], "advisor_tool_result_error",
+        "{body}"
+    );
+    assert_eq!(blocks[2]["content"]["error_code"], "unavailable");
+    assert!(body.contains("\"text\":\"Done.\""));
+}
+
+#[tokio::test]
 async fn advisor_failure_is_a_result_and_the_reply_goes_on() {
     let upstream = MockServer::start().await;
     mount_main_calling_advisor(&upstream).await;
