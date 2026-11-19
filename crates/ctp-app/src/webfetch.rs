@@ -21,6 +21,9 @@ const LABEL: &str = "webfetch";
 /// Прошла ли проверка сама — видно за пару секунд; дольше — показываем окно.
 const SHOW_AFTER: Duration = Duration::from_secs(8);
 const TIMEOUT: Duration = Duration::from_secs(120);
+/// Без окна (фон) ждём дольше, чем до показа окна: медленная загрузка 6 МБ не должна
+/// сойти за проверку, которая просит галочку.
+const HIDDEN_LIMIT: Duration = Duration::from_secs(30);
 
 /// Страница с JSON (после проверки) — её текст, иначе `null`: проверка ещё идёт.
 const SCRIPT: &str = "(() => { if (document.contentType !== 'application/json') return null; \
@@ -49,7 +52,7 @@ pub fn fetch_json(_url: &str, _show: bool) -> Result<String> {
 
 /// Текст JSON по `url` глазами браузера. Блокирует: вызывать не из главного потока.
 /// `show` — можно показать окно, если проверка не прошла сама (человек рядом). Без него
-/// (фоновая подготовка) окно не появляется: не прошла за `SHOW_AFTER` — отказ.
+/// (фоновая подготовка) окно не появляется: не прошла за `HIDDEN_LIMIT` — отказ.
 #[cfg(not(test))]
 pub fn fetch_json(url: &str, show: bool) -> Result<String> {
     let app = APP.get().context(tr!(
@@ -95,16 +98,16 @@ pub fn fetch_json(url: &str, show: bool) -> Result<String> {
                 )
             );
         }
-        if !shown && started.elapsed() > SHOW_AFTER {
-            if !show {
-                bail!(
-                    "{}",
-                    tr!(
-                        "claude.ai просит подтверждения — фоном не скачать",
-                        "claude.ai asks for confirmation; cannot download in the background"
-                    )
-                );
-            }
+        if !show && started.elapsed() > HIDDEN_LIMIT {
+            bail!(
+                "{}",
+                tr!(
+                    "claude.ai просит подтверждения — фоном не скачать",
+                    "claude.ai asks for confirmation; cannot download in the background"
+                )
+            );
+        }
+        if show && !shown && started.elapsed() > SHOW_AFTER {
             let _ = window.0.show();
             let _ = window.0.set_focus();
             shown = true;

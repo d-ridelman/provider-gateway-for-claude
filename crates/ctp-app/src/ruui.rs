@@ -384,27 +384,7 @@ fn copy_tree(src: &Path, dst: &Path, skip: &[PathBuf]) -> Result<()> {
 /// Готовая русская копия версии `app_dir` в `cache_root`; собирается, если её нет
 /// или изменились исходники, перевод или патч. Возвращает путь к её `claude.exe`.
 pub fn ensure_copy(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<PathBuf> {
-    let version = app_dir
-        .file_name()
-        .and_then(|n| n.to_str())
-        .filter(|n| n.starts_with("app-"))
-        .with_context(|| {
-            tr!(
-                "Claude найден не в папке версии app-…",
-                "Claude is not in an app-… version folder"
-            )
-        })?
-        .to_string();
-    let src_exe = app_dir.join("claude.exe");
-    let src_asar = app_dir.join("resources").join("ion-dist.asar");
-    let marker = json!({
-        "rev": PATCH_REV,
-        "exe": stamp(&src_exe)?,
-        "asar": stamp(&src_asar)?,
-        "ru": sha256_hex(ru_json),
-    })
-    .to_string();
-
+    let (version, marker) = copy_marker(app_dir, ru_json)?;
     let target = cache_root.join(&version);
     let ready = target.join("claude.exe");
     // Две сборки разом удаляли бы файлы друг у друга. Вторая ждёт первую (фоновую
@@ -458,6 +438,59 @@ pub fn ensure_copy(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<
 }
 
 static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Версия (`app-…`) и метка копии: исходники, патч и перевод. Совпала метка — копия годна.
+fn copy_marker(app_dir: &Path, ru_json: &[u8]) -> Result<(String, String)> {
+    let version = app_dir
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|n| n.starts_with("app-"))
+        .with_context(|| {
+            tr!(
+                "Claude найден не в папке версии app-…",
+                "Claude is not in an app-… version folder"
+            )
+        })?
+        .to_string();
+    let marker = json!({
+        "rev": PATCH_REV,
+        "exe": stamp(&app_dir.join("claude.exe"))?,
+        "asar": stamp(&app_dir.join("resources").join("ion-dist.asar"))?,
+        "ru": sha256_hex(ru_json),
+    })
+    .to_string();
+    Ok((version, marker))
+}
+
+/// Что с копией этой версии при этом переводе — без сборки.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum CopyState {
+    /// Собрана ровно из этих исходников с этим переводом.
+    Current,
+    /// Устарела, но открыта: Windows не даст её заменить, ждём закрытия.
+    Open,
+    /// Нет или устарела — можно собирать.
+    Stale,
+}
+
+/// Состояние копии; под `BUILD`, чтобы не смотреть на копию посреди чужой сборки.
+pub fn copy_state(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<CopyState> {
+    let (version, marker) = copy_marker(app_dir, ru_json)?;
+    let target = cache_root.join(&version);
+    let ready = target.join("claude.exe");
+    let _build = BUILD
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    Ok(
+        if fs::read_to_string(target.join(MARKER)).is_ok_and(|m| m == marker) && ready.is_file() {
+            CopyState::Current
+        } else if ready.is_file() && is_open(&target, cache_root) {
+            CopyState::Open
+        } else {
+            CopyState::Stale
+        },
+    )
+}
 
 /// Запущена ли копия: Windows не даёт переименовать папку с открытым exe. Проба —
 /// переименование туда и сразу обратно.
@@ -1034,7 +1067,9 @@ mod tests {
 
         let cache = dir.join("cache");
         let ru = big_translation();
+        assert_eq!(copy_state(&app, &cache, &ru).unwrap(), CopyState::Stale);
         let exe = ensure_copy(&app, &cache, &ru).unwrap();
+        assert_eq!(copy_state(&app, &cache, &ru).unwrap(), CopyState::Current);
         assert_eq!(exe, cache.join("app-9.9.9").join("claude.exe"));
         assert!(
             cache
@@ -1075,7 +1110,14 @@ mod tests {
         fs::create_dir_all(cache.join("app-1.0.0")).unwrap();
         let mut other = ru.clone();
         other.splice(1..1, b"\"extra\":\"x\",".iter().copied());
+        // Закрытая устаревшая копия — Stale (не Open), пробой не повреждена.
+        assert_eq!(copy_state(&app, &cache, &other).unwrap(), CopyState::Stale);
+        assert!(exe.is_file());
         ensure_copy(&app, &cache, &other).unwrap();
+        assert_eq!(
+            copy_state(&app, &cache, &other).unwrap(),
+            CopyState::Current
+        );
         assert!(!cache.join("app-1.0.0").exists());
         assert!(!cache.join("app-9.9.9.building").exists());
         let names = |cache: &Path| -> Vec<String> {
