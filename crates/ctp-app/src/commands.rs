@@ -173,6 +173,7 @@ pub fn save_settings(
         .language
         .map(|lang| lang.trim().to_string())
         .filter(|lang| lang == "ru" || lang == "en");
+    config.auto_update = input.auto_update;
     crate::i18n::apply(config.language.as_deref());
     crate::tray::relabel(&app);
     store::save(&shared.config_dir, &config).map_err(|exc| exc.to_string())?;
@@ -296,6 +297,23 @@ pub async fn pick_folder(app: tauri::AppHandle, start: Option<String>) -> Option
         .flatten()
         .and_then(|path| path.into_path().ok())
         .map(|path| path.display().to_string())
+}
+
+/// «Проверить обновления»: результат запоминается для статуса окна.
+#[tauri::command]
+pub async fn check_update(
+    app: tauri::AppHandle,
+    shared: State<'_, AppShared>,
+) -> Result<Option<crate::updates::UpdateInfo>, String> {
+    let found = crate::updates::check(&app).await?;
+    *shared.update.lock().unwrap() = found.clone();
+    Ok(found)
+}
+
+/// Скачивает, проверяет подпись, ставит и перезапускает программу.
+#[tauri::command]
+pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    crate::updates::install(&app).await
 }
 
 /// Полный выход (как «Выход» в трее): шлюз останавливается вместе с программой.

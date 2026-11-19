@@ -543,6 +543,7 @@ mod tests {
             models: vec![info("claude-p-1", None, true)],
             log_path: String::new(),
             claude: None,
+            update: None,
         };
         let inherited = [
             "ANTHROPIC_API_KEY",
@@ -608,6 +609,7 @@ mod tests {
             }],
             log_path: String::new(),
             claude: None,
+            update: None,
         };
         let config = Config {
             code_dir: Some(var("CTP_CODE_DIR")),

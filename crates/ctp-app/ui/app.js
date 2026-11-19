@@ -13,11 +13,12 @@ const state = {
   logsOpen: false,
 };
 
+// A new provider starts empty: examples live in placeholders, not in the values.
 const draft = {
-  id: "openai",
-  name: "OpenAI",
+  id: "",
+  name: "",
   kind: "openai",
-  baseUrl: "https://api.openai.com/v1",
+  baseUrl: "",
   models: [],
   hasKey: false,
   needsKey: true,
@@ -51,6 +52,7 @@ const el = Object.fromEntries(
     "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
     "dialogText", "dialogOk", "dialogCancel", "dialogAlt", "dialogCheckRow", "dialogCheck", "dialogCheckText",
+    "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn",
   ].map((id) => [id, $(id)]),
 );
 el.form = el.providerForm;
@@ -155,20 +157,18 @@ function renderStatus() {
   const ready = running && !!status?.models?.length;
   el.launchBtn.disabled = launching || !ready;
   if (!launchingCode) el.launchCodeBtn.disabled = !ready;
-  el.modelCount.textContent = modelWord(status?.models?.length ?? 0);
+  el.modelCount.textContent = t("models.total", { count: status?.models?.length ?? 0 });
+  const update = status?.update;
+  el.updateBtn.classList.toggle("hidden", !update);
+  if (update && !installingUpdate) el.updateBtn.textContent = t("update.button", { version: update.version });
   renderClaudeCheck();
 }
 
 function renderProviders() {
   el.providerList.replaceChildren();
   const providers = state.config?.providers ?? [];
-  if (!providers.length) {
-    const empty = document.createElement("div");
-    empty.className = "muted small sidebar-empty";
-    empty.textContent = t("sidebar.none");
-    el.providerList.append(empty);
-    return;
-  }
+  // No providers: the main area already says so and offers "Add provider".
+  if (!providers.length) return;
   for (const provider of providers) {
     const item = document.createElement("button");
     item.type = "button";
@@ -280,9 +280,10 @@ function renderForm() {
   const provider = currentProvider();
   if (!provider) return;
   el.formTitle.textContent = state.isNew ? t("form.newTitle") : provider.name || provider.id;
-  el.formSubtitle.textContent = state.isNew ? t("form.newSubtitle") : provider.baseUrl;
-  el.formKindBadge.textContent = provider.kind;
-  el.formKindBadge.className = `badge ${provider.kind === "anthropic" ? "warn" : ""}`;
+  // The URL and the type are in the fields right below; the subtitle only explains a new form.
+  el.formSubtitle.textContent = state.isNew ? t("form.newSubtitle") : "";
+  el.formSubtitle.classList.toggle("hidden", !state.isNew);
+  el.formKindBadge.classList.add("hidden");
   el.formKeyBadge.textContent = t(provider.hasKey ? "form.keySaved" : provider.needsKey ? "form.keyNotSet" : "form.keyNotNeeded");
   el.formKeyBadge.className = `badge soft ${provider.hasKey ? "good" : ""}`;
 
@@ -365,7 +366,11 @@ function renderSettings() {
     ? t("settings.found", { path: state.config.detectedClaude })
     : t("settings.notFound");
   el.russianInput.checked = !!state.config.russianUi;
-  el.russianFileHint.textContent = t(state.config.russianFile ? "settings.russianFileFound" : "settings.russianFileMissing");
+  // Whether the translation is fine is said by the self-check below; here only "not yet".
+  el.russianFileHint.textContent = state.config.russianFile ? "" : t("settings.russianFileMissing");
+  el.russianFileHint.classList.toggle("hidden", !!state.config.russianFile);
+  el.versionText.textContent = t("update.current", { version: state.config.version });
+  el.autoUpdateInput.checked = state.config.autoUpdate !== false;
 }
 
 // Self-check of the installed Claude: the list in Settings and a badge in the title bar.
@@ -450,6 +455,8 @@ function bind() {
   $("copyTokenBtn").addEventListener("click", () => copyText(el.tokenInput.value, t("toast.tokenCopied")));
   $("copyEnvBtn").addEventListener("click", copyEnv);
   $("openLogsFolderBtn").addEventListener("click", () => invoke("open_logs").catch((e) => toast(formatError(e), "error")));
+  el.updateBtn.addEventListener("click", installUpdate);
+  el.checkUpdateBtn.addEventListener("click", checkUpdate);
   $("browseClaudeBtn").addEventListener("click", () => browse(el.claudePathInput));
   $("browseCodeBtn").addEventListener("click", () => browse(el.codeDirInput));
 
@@ -787,6 +794,45 @@ async function launchClaudeCode() {
   }
 }
 
+async function checkUpdate() {
+  await busy(el.checkUpdateBtn, t("update.checking"), async () => {
+    try {
+      const found = await invoke("check_update");
+      state.status = { ...state.status, update: found };
+      renderStatus();
+      toast(found ? t("update.found", { version: found.version }) : t("update.none"), "good");
+    } catch (exc) {
+      toast(formatError(exc), "error");
+    }
+  });
+}
+
+let installingUpdate = false;
+
+async function installUpdate() {
+  const update = state.status?.update;
+  if (!update || installingUpdate) return;
+  const answer = await ask({
+    title: t("update.confirmTitle", { version: update.version }),
+    text: update.notes ? `${t("update.confirmText")}\n\n${update.notes}` : t("update.confirmText"),
+    ok: t("update.install"),
+    cancel: t("dialog.cancel"),
+  });
+  if (answer.value !== "ok") return;
+  installingUpdate = true;
+  el.updateBtn.disabled = true;
+  el.updateBtn.textContent = t("update.installing");
+  try {
+    await invoke("install_update"); // on success the app restarts and this never returns
+  } catch (exc) {
+    toast(formatError(exc), "error");
+  } finally {
+    installingUpdate = false;
+    el.updateBtn.disabled = false;
+    renderStatus();
+  }
+}
+
 async function browse(input) {
   const picked = await invoke("pick_folder", { start: input.value.trim() || null }).catch(() => null);
   if (picked) input.value = picked;
@@ -810,6 +856,7 @@ async function saveSettings() {
         codeDir: el.codeDirInput.value.trim() || null,
         russianUi: el.russianInput.checked,
         language: el.languageInput.value,
+        autoUpdate: el.autoUpdateInput.checked,
       },
     });
     if (state.config.language !== LANG) applyLanguage(state.config.language);
@@ -879,7 +926,7 @@ async function closeToTray() {
       title: t("dialog.trayTitle"),
       text: t("dialog.trayText"),
       ok: t("dialog.trayOk"),
-      cancel: t("dialog.cancel"),
+      cancel: t("dialog.trayCancel"),
       alt: t("dialog.exit"),
       check: t("dialog.trayDontAsk"),
     });

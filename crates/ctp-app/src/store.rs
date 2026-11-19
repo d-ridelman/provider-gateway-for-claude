@@ -280,6 +280,8 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
             .language
             .clone()
             .unwrap_or_else(|| "auto".to_string()),
+        auto_update: config.auto_update,
+        version: env!("CARGO_PKG_VERSION").to_string(),
         russian_file: dir.join(crate::ruui::TRANSLATION_FILE).is_file(),
         config_dir: dir.display().to_string(),
     }

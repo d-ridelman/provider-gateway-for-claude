@@ -13,6 +13,8 @@ pub struct AppShared {
     pub epoch: AtomicU64,
     /// Последняя самопроверка установленного Claude (`upkeep::check`).
     pub claude: Mutex<Option<crate::upkeep::Check>>,
+    /// Найденная более новая версия (`updates::spawn_auto_check` или «Проверить»).
+    pub update: Mutex<Option<crate::updates::UpdateInfo>>,
 }
 
 impl AppShared {
@@ -23,6 +25,7 @@ impl AppShared {
             runtime: Mutex::new(None),
             epoch: AtomicU64::new(0),
             claude: Mutex::new(None),
+            update: Mutex::new(None),
         }
     }
 }

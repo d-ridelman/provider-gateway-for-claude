@@ -159,6 +159,7 @@ pub fn stop(shared: &AppShared) -> u64 {
 pub fn status(shared: &AppShared) -> UiStatus {
     let config = { shared.config.lock().unwrap().clone() };
     let claude = shared.claude.lock().unwrap().clone();
+    let update = shared.update.lock().unwrap().clone();
     let mut runtime = shared.runtime.lock().unwrap();
     if runtime
         .as_ref()
@@ -174,6 +175,7 @@ pub fn status(shared: &AppShared) -> UiStatus {
             models: runtime.models.clone(),
             log_path: shared.config_dir.join("gateway.log").display().to_string(),
             claude,
+            update,
         },
         None => UiStatus {
             running: false,
@@ -182,6 +184,7 @@ pub fn status(shared: &AppShared) -> UiStatus {
             models: Vec::new(),
             log_path: shared.config_dir.join("gateway.log").display().to_string(),
             claude,
+            update,
         },
     }
 }

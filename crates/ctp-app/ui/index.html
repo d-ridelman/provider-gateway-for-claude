@@ -24,7 +24,8 @@
         </div>
       </div>
       <div class="titlebar-right">
-        <button type="button" id="claudeWarn" class="badge warn hidden" data-i18n="claudeWarn.label" data-i18n-title="claudeWarn.title"></button>
+        <button type="button" id="updateBtn" class="update-btn hidden" data-i18n-title="update.title"></button>
+        <button type="button" id="claudeWarn" class="warn-btn hidden" data-i18n="claudeWarn.label" data-i18n-title="claudeWarn.title"></button>
         <div class="status" role="status" aria-live="polite" data-i18n-title="status.title">
           <span id="statusDot" class="dot" aria-hidden="true"></span>
           <span id="statusText"></span>
@@ -242,6 +243,17 @@
           </div>
 
           <div class="field">
+            <span class="field-label" data-i18n="update.section"></span>
+            <p id="versionText" class="muted small no-margin"></p>
+            <label class="check">
+              <input id="autoUpdateInput" type="checkbox">
+              <span data-i18n="update.auto"></span>
+            </label>
+            <small data-i18n="update.autoHint"></small>
+            <div><button type="button" id="checkUpdateBtn" class="ghost small" data-i18n="update.check"></button></div>
+          </div>
+
+          <div class="field">
             <label for="tokenInput" data-i18n="settings.token"></label>
             <div class="key-row">
               <input id="tokenInput" class="mono" readonly>
@@ -262,9 +274,9 @@
 
     <footer class="actions">
       <div class="actions-left">
-        <button type="button" id="startBtn" class="primary"></button>
+        <button type="button" id="startBtn"></button>
         <button type="button" id="stopBtn" class="ghost" data-i18n="actions.stop"></button>
-        <button type="button" id="launchBtn" class="accent" disabled data-i18n="actions.openClaude" data-i18n-title="actions.openClaudeTitle"></button>
+        <button type="button" id="launchBtn" class="primary" disabled data-i18n="actions.openClaude" data-i18n-title="actions.openClaudeTitle"></button>
         <button type="button" id="launchCodeBtn" class="ghost" disabled data-i18n="actions.code" data-i18n-title="actions.codeTitle"></button>
       </div>
       <div class="actions-right">

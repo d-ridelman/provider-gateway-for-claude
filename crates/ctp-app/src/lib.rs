@@ -8,6 +8,7 @@ pub mod ruui;
 pub mod state;
 pub mod store;
 pub mod tray;
+pub mod updates;
 pub mod upkeep;
 
 use crate::state::AppShared;
@@ -16,7 +17,9 @@ use tauri::Manager;
 use tracing_subscriber::EnvFilter;
 
 pub fn run() {
-    let mut builder = tauri::Builder::default().plugin(tauri_plugin_dialog::init());
+    let mut builder = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build());
     // Окно прячется в трей, и повторный запуск ярлыка поднял бы второй шлюз на том же
     // порту и конфиге — вместо этого показываем первый. Изолированный запуск
     // (CLAUDE_GATEWAY_HOME) не должен уходить в рабочий экземпляр пользователя.
@@ -79,6 +82,10 @@ pub fn run() {
                 // Изолированный запуск (CLAUDE_GATEWAY_HOME) фоном копию не собирает.
                 upkeep::check_into(&handle, &for_repair, &check_dir, !custom);
             });
+            // Изолированный запуск (проверки, демо) в сеть за обновлениями не ходит.
+            if !custom {
+                updates::spawn_auto_check(app.handle().clone());
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -98,6 +105,8 @@ pub fn run() {
             commands::copy_text,
             commands::pick_folder,
             commands::app_exit,
+            commands::check_update,
+            commands::install_update,
             commands::win_minimize,
             commands::win_toggle_maximize,
             commands::win_close,

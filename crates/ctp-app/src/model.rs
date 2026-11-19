@@ -23,6 +23,13 @@ pub struct Config {
     /// Язык интерфейса: `ru`, `en` или `auto`/нет — язык Windows.
     #[serde(default)]
     pub language: Option<String>,
+    /// Проверять обновления на GitHub при старте и раз в сутки.
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -35,6 +42,7 @@ impl Default for Config {
             russian_ui: false,
             code_dir: None,
             language: None,
+            auto_update: true,
         }
     }
 }
@@ -87,6 +95,9 @@ pub struct UiConfig {
     pub language: String,
     /// Выбор пользователя: `auto`, `ru` или `en`.
     pub language_pref: String,
+    pub auto_update: bool,
+    /// Версия этой сборки (`Cargo.toml`).
+    pub version: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -124,6 +135,8 @@ pub struct UiStatus {
     pub log_path: String,
     /// Самопроверка установленного Claude; `None` — ещё идёт.
     pub claude: Option<crate::upkeep::Check>,
+    /// Доступная новая версия программы.
+    pub update: Option<crate::updates::UpdateInfo>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -186,4 +199,6 @@ pub struct SettingsInput {
     pub code_dir: Option<String>,
     #[serde(default)]
     pub language: Option<String>,
+    #[serde(default = "default_true")]
+    pub auto_update: bool,
 }
