@@ -818,7 +818,10 @@ mod tests {
         println!("{version:?} за {:?}", started.elapsed());
         assert!(version.is_some());
         // Уже готовая версия — следующий круг ничего не делает.
-        assert_eq!(prepare_copy(&config, &dir, version.as_deref()).unwrap(), None);
+        assert_eq!(
+            prepare_copy(&config, &dir, version.as_deref()).unwrap(),
+            None
+        );
     }
 
     #[test]
