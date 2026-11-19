@@ -605,7 +605,14 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .dialog p { margin: 0 0 16px; line-height: 1.5; font-size: 13px; white-space: pre-wrap; }
 .dialog .check { margin-bottom: 16px; font-weight: 500; }
 .dialog-actions { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
+.dialog-actions button { white-space: nowrap; }
 .dialog-actions #dialogAlt { margin-right: auto; }
+/* Three answers (the tray dialog): room for one even row — the third on the left, the
+   two usual ones on the right. In a very narrow window the third takes its own row. */
+.dialog:has(#dialogAlt:not(.hidden)) { width: min(560px, calc(100vw - 40px)); }
+@media (max-width: 600px) {
+  .dialog-actions #dialogAlt { flex-basis: 100%; margin-right: 0; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; animation: none !important; }
