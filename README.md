@@ -41,7 +41,7 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 - **Test connection** sends one real request through the gateway and shows the answer.
 - **Keys stay in Windows Credential Manager**, never in files. The gateway listens on `127.0.0.1` only and requires a local token.
 - **Keeps working after Claude updates**: the app reads Claude's model rules from the installed version, checks its config fields and tells you in Settings if something no longer matches.
-- **Russian interface for Claude Desktop** (optional): a separate patched copy of Claude with claude.ai's own Russian translation. The copy also brings back **No folder** in the Code folder picker, which third-party mode hides. Your installed Claude is not modified.
+- **Russian interface for Claude Desktop** (optional): a separate patched copy of Claude with claude.ai's own Russian translation. The copy also brings back **No folder** in the Code folder picker, which third-party mode hides. When Claude updates, the app prepares the new copy in the background, so **Open Claude** does not wait. Your installed Claude is not modified.
 - **Lives in the tray** while you work; the gateway keeps running when the window is closed.
 - **Updates itself** from GitHub Releases; every update is verified against a signing key built into the app.
 - English and Russian interface, following the Windows display language; light and dark theme follow Windows too.
