@@ -335,6 +335,8 @@ impl StreamTranslator {
     pub fn next_segment(&mut self) {
         self.prior_output_tokens += self.segment_tokens();
         self.output_tokens = None;
+        // Размер запроса — только того отрезка, что сообщит его сам (иначе — оценка).
+        self.provider_input = None;
         self.output_chars = 0;
         self.segment_text.clear();
         self.finish_reason = None;

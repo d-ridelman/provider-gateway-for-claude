@@ -81,11 +81,22 @@ fn without_media(value: &Value, media: &mut u64) -> Value {
                 };
                 if let Some(tokens) = counted {
                     *media += tokens;
-                    let mut block = map.clone();
-                    let mut source = source.clone();
-                    source.insert("data".into(), Value::String(String::new()));
-                    block.insert("source".into(), Value::Object(source));
-                    return Value::Object(block);
+                    // Копия без самих данных (base64 бывает мегабайтами).
+                    let source: serde_json::Map<String, Value> = source
+                        .iter()
+                        .map(|(key, item)| match key.as_str() {
+                            "data" => (key.clone(), Value::String(String::new())),
+                            _ => (key.clone(), item.clone()),
+                        })
+                        .collect();
+                    return Value::Object(
+                        map.iter()
+                            .map(|(key, item)| match key.as_str() {
+                                "source" => (key.clone(), Value::Object(source.clone())),
+                                _ => (key.clone(), without_media(item, media)),
+                            })
+                            .collect(),
+                    );
                 }
             }
             Value::Object(
@@ -126,7 +137,7 @@ fn pdf_tokens(data: &str) -> u64 {
     let mut i = 0;
     while let Some(at) = bytes[i..].windows(5).position(|w| w == b"/Type") {
         let mut j = i + at + 5;
-        while bytes.get(j) == Some(&b' ') {
+        while bytes.get(j).is_some_and(u8::is_ascii_whitespace) {
             j += 1;
         }
         if bytes[j..].starts_with(b"/Page") && bytes.get(j + 5) != Some(&b's') {
@@ -163,6 +174,10 @@ fn image_size(b: &[u8]) -> Option<(u32, u32)> {
         loop {
             if *b.get(i)? != 0xFF {
                 return None;
+            }
+            // Байты-заполнители 0xFF перед маркером.
+            while *b.get(i + 1)? == 0xFF {
+                i += 1;
             }
             let marker = *b.get(i + 1)?;
             if (0xC0..=0xCF).contains(&marker) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
@@ -290,7 +305,8 @@ mod tests {
 
         // JPEG: APP0, потом SOF0 с высотой и шириной.
         let mut jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x00, 0x00];
-        jpeg.extend([0xFF, 0xC0, 0x00, 0x11, 0x08]);
+        // Заполнитель 0xFF перед маркером кадра.
+        jpeg.extend([0xFF, 0xFF, 0xC0, 0x00, 0x11, 0x08]);
         jpeg.extend(768u16.to_be_bytes());
         jpeg.extend(1024u16.to_be_bytes());
         assert_eq!(image_size(&jpeg), Some((1024, 768)));
@@ -307,7 +323,7 @@ mod tests {
     #[test]
     fn pdf_counts_pages() {
         let pdf = b"%PDF-1.4 1 0 obj << /Type /Pages /Kids [2 0 R 3 0 R] >> \
-                    2 0 obj << /Type /Page >> 3 0 obj <</Type/Page>>";
+                    2 0 obj << /Type\n/Page >> 3 0 obj <</Type/Page>>";
         let doc = json!({"type": "document", "source": {"type": "base64",
             "media_type": "application/pdf", "data": base64(pdf)}});
         let tokens = count_json_tokens(&doc);
