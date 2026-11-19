@@ -939,7 +939,7 @@ mod tests {
     }
 
     /// Новый поиск списка языков на настоящем Claude даёт те же байты, что прежняя
-    /// замена строки (иначе у пользователя зря пересоберётся копия):
+    /// замена строки (плюс патч «Без папки» поверх неё):
     /// `CTP_RU_APP=<…\app-x> cargo test -p ctp-app same_as_literal -- --ignored`
     #[test]
     #[ignore]
@@ -950,11 +950,9 @@ mod tests {
         assert!(!changes.is_empty());
         for (path, patched) in &changes {
             let (orig, _) = read_file(&asar, path);
-            assert_eq!(
-                replace_all(&orig, LOCALES, LOCALES_RU).as_deref(),
-                Some(patched.as_slice()),
-                "{path}"
-            );
+            let literal = replace_all(&orig, LOCALES, LOCALES_RU);
+            let expected = enable_folderless(literal.as_deref().unwrap_or(&orig)).or(literal);
+            assert_eq!(expected.as_deref(), Some(patched.as_slice()), "{path}");
         }
         println!("{} бандлов совпали", changes.len());
     }
