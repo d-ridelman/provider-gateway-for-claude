@@ -159,24 +159,27 @@ pub fn save_settings(
     let mut config = shared.config.lock().unwrap();
     // Маршруты шлюза зависят только от порта: остальные настройки его не останавливают.
     let port_changed = config.port != port;
-    config.port = port;
-    config.claude_path = input
+    // Сначала на диск, потом в память: при ошибке записи всё остаётся как было.
+    let mut next = config.clone();
+    next.port = port;
+    next.claude_path = input
         .claude_path
         .map(|path| path.trim().to_string())
         .filter(|path| !path.is_empty());
-    config.russian_ui = input.russian_ui;
-    config.code_dir = input
+    next.russian_ui = input.russian_ui;
+    next.code_dir = input
         .code_dir
         .map(|dir| dir.trim().to_string())
         .filter(|dir| !dir.is_empty());
-    config.language = input
+    next.language = input
         .language
         .map(|lang| lang.trim().to_string())
         .filter(|lang| lang == "ru" || lang == "en");
-    config.auto_update = input.auto_update;
+    next.auto_update = input.auto_update;
+    store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
+    *config = next;
     crate::i18n::apply(config.language.as_deref());
     crate::tray::relabel(&app);
-    store::save(&shared.config_dir, &config).map_err(|exc| exc.to_string())?;
     let ui = store::ui_config(&config, &shared.config_dir);
     drop(config);
     if port_changed {

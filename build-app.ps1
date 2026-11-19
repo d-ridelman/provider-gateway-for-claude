@@ -32,11 +32,17 @@ if (Get-Command python -ErrorAction SilentlyContinue) {
 }
 
 if ($Installer) {
+    # Updater artifacts need the project's signing key (tools\release.ps1 loads it).
+    # Without it, build a plain installer instead of failing.
+    if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+        Write-Warning 'TAURI_SIGNING_PRIVATE_KEY is not set: building without updater signatures.'
+        $env:TAURI_CONFIG = '{"bundle":{"createUpdaterArtifacts":false}}'
+    }
     Push-Location (Join-Path $root 'crates\ctp-app')
     try {
         & npx --yes @tauri-apps/cli@2.12.6 build --bundles nsis
         if ($LASTEXITCODE -ne 0) { throw "tauri build failed ($LASTEXITCODE)" }
-    } finally { Pop-Location }
+    } finally { Pop-Location; Remove-Item Env:TAURI_CONFIG -ErrorAction SilentlyContinue }
 } else {
     Push-Location $root
     try {
@@ -48,7 +54,9 @@ if ($Installer) {
 $dist = Join-Path $root 'dist'
 New-Item -ItemType Directory -Force -Path $dist | Out-Null
 $exe = Join-Path $dist 'Provider Gateway for Claude.exe'
-Copy-Item (Join-Path $root 'target\release\ctp-app.exe') $exe -Force
+# tauri build names the binary after mainBinaryName; plain cargo keeps the crate name.
+$built = if ($Installer) { 'provider-gateway.exe' } else { 'ctp-app.exe' }
+Copy-Item (Join-Path $root "target\release\$built") $exe -Force
 Write-Host "Portable: $exe ($([math]::Round((Get-Item $exe).Length / 1MB, 1)) MB)"
 
 if ($Installer) {

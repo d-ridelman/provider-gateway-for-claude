@@ -16,7 +16,6 @@ const STRINGS = {
 
     "sidebar.providers": "Провайдеры",
     "sidebar.add": "Добавить провайдера",
-    "sidebar.none": "Провайдеров пока нет",
     "sidebar.settings": "Настройки",
     "provider.keySet": "ключ сохранён",
     "provider.keyMissing": "ключа нет",
@@ -95,7 +94,6 @@ const STRINGS = {
     "settings.codeDirHint": "Здесь кнопка «Claude Code» открывает консоль с <code>claude</code>, подключённым к шлюзу.",
     "settings.russian": "Русский интерфейс Claude Desktop",
     "settings.russianHint": "Отдельная копия Claude (~700 МБ) с официальным русским переводом claude.ai. Установленный Claude не меняется; подпись копии недействительна.",
-    "settings.russianFileFound": "Файл перевода найден; при обновлении Claude он скачивается заново.",
     "settings.russianFileMissing": "Перевод скачается сам при следующем старте или «Открыть Claude» (нужен интернет).",
     "settings.check": "Совместимость с установленным Claude",
     "settings.checkHint": "Проверяется при старте и перед «Открыть Claude» — после обновления Claude всё подстраивается само.",
@@ -189,7 +187,6 @@ const STRINGS = {
 
     "sidebar.providers": "Providers",
     "sidebar.add": "Add provider",
-    "sidebar.none": "No providers yet",
     "sidebar.settings": "Settings",
     "provider.keySet": "key saved",
     "provider.keyMissing": "no key",
@@ -268,7 +265,6 @@ const STRINGS = {
     "settings.codeDirHint": "The Claude Code button opens a console here with <code>claude</code> connected to the gateway.",
     "settings.russian": "Russian interface for Claude Desktop",
     "settings.russianHint": "A separate copy of Claude (~700 MB) with claude.ai's official Russian translation. Your installed Claude is not changed; the copy's signature is invalid.",
-    "settings.russianFileFound": "The translation file is present; it is downloaded again when Claude updates.",
     "settings.russianFileMissing": "The translation downloads on the next start or Open Claude (needs internet).",
     "settings.check": "Compatibility with your installed Claude",
     "settings.checkHint": "Checked at start and before Open Claude — the app adapts to Claude updates on its own.",

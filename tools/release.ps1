@@ -20,7 +20,8 @@ $conf = Get-Content (Join-Path $root 'crates\ctp-app\tauri.conf.json') -Raw | Co
 if ($conf.version -ne $version) { throw "tauri.conf.json version $($conf.version) != Cargo.toml $version" }
 $tag = "v$version"
 
-if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
+$ownKey = -not $env:TAURI_SIGNING_PRIVATE_KEY
+if ($ownKey) {
     $keyDir = Join-Path $env:USERPROFILE '.tauri'
     $env:TAURI_SIGNING_PRIVATE_KEY = Get-Content (Join-Path $keyDir 'provider-gateway-for-claude.key') -Raw
     $secure = Get-Content (Join-Path $keyDir 'provider-gateway-for-claude.pass') | ConvertTo-SecureString
@@ -30,7 +31,10 @@ if (-not $env:TAURI_SIGNING_PRIVATE_KEY) {
 try {
     & (Join-Path $root 'build-app.ps1') -Installer
 } finally {
-    Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+    # Drop only what this script loaded; a key the caller set stays theirs.
+    if ($ownKey) {
+        Remove-Item Env:TAURI_SIGNING_PRIVATE_KEY, Env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD -ErrorAction SilentlyContinue
+    }
 }
 
 $bundle = Join-Path $root 'target\release\bundle\nsis'
@@ -41,7 +45,7 @@ if (-not (Test-Path $sig)) { throw "updater signature not found: $sig (is create
 
 $out = Join-Path $root "dist\release\$tag"
 New-Item -ItemType Directory -Force $out | Out-Null
-# A dot-free asset name keeps the download URL simple.
+# A space-free asset name keeps the download URL simple.
 $assetName = "Provider-Gateway-for-Claude_${version}_x64-setup.exe"
 Copy-Item $setup.FullName (Join-Path $out $assetName) -Force
 Copy-Item $sig (Join-Path $out "$assetName.sig") -Force
@@ -70,7 +74,9 @@ foreach ($file in Get-ChildItem $out -Filter *.exe) {
     $bytes = [IO.File]::ReadAllBytes($file.FullName)
     foreach ($enc in [Text.Encoding]::ASCII, [Text.Encoding]::Unicode) {
         $needle = $enc.GetBytes($user)
-        $text = [Text.Encoding]::Latin1.GetString($bytes)
+        # The repository URL (update endpoint) may legitimately contain the owner's login.
+        $text = [Text.Encoding]::Latin1.GetString($bytes).Replace(
+            [Text.Encoding]::Latin1.GetString($enc.GetBytes("github.com/$Repo")), '')
         if ($text.Contains([Text.Encoding]::Latin1.GetString($needle))) {
             throw "$($file.Name) contains the user name '$user' ($($enc.EncodingName))"
         }

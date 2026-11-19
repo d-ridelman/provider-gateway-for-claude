@@ -57,7 +57,7 @@ The installer is not code-signed yet, so Windows SmartScreen may warn about an u
 Get-FileHash .\Provider-Gateway-for-Claude_*_x64-setup.exe -Algorithm SHA256
 ```
 
-A portable `.exe` is attached to each release as well.
+A portable `.exe` is attached to each release as well. Its built-in update runs the installer, so after updating you get the installed app; the portable file itself stays as it was.
 
 ## Quick start
 
@@ -116,7 +116,7 @@ The workspace has three crates:
 - `crates/ctp-gateway` — the Anthropic Messages gateway, also usable on its own (`ctp-gateway --providers-file providers.json`);
 - `crates/ctp-app` — the Windows app (Tauri 2).
 
-Releases are prepared with `tools/release.ps1` (signed installer, `latest.json`, checksums). `tools/cloudflare-mirror` is an optional update mirror for networks where GitHub is slow or unreachable.
+Without the project's updater key (`TAURI_SIGNING_PRIVATE_KEY`), `-Installer` builds a plain installer with no update signatures. Releases are prepared with `tools/release.ps1` (signed installer, `latest.json`, checksums). `tools/cloudflare-mirror` is an optional update mirror for networks where GitHub is slow or unreachable.
 
 ## License
 
