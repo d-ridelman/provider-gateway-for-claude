@@ -22,13 +22,18 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src ipc: http://ipc.localhost"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "icon": ["icons/icon.ico"],
+    "resources": {
+      "../../LICENSE-MIT": "LICENSE-MIT.txt",
+      "../../LICENSE-APACHE": "LICENSE-APACHE.txt",
+      "../../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
+    },
     "publisher": "Provider Gateway for Claude contributors",
     "copyright": "Provider Gateway for Claude contributors. MIT OR Apache-2.0.",
     "shortDescription": "Local Anthropic Messages gateway for Claude Desktop and Claude Code",

@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Claude Provider Gateway</title>
+  <title>Provider Gateway for Claude</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,32 +12,34 @@
       <div class="titlebar-brand" data-tauri-drag-region>
         <div class="mark" aria-hidden="true">
           <svg viewBox="0 0 32 32" fill="none">
-            <path d="M16 3v26M3 16h26M6.8 6.8l18.4 18.4M25.2 6.8 6.8 25.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
-            <circle cx="16" cy="16" r="4.2" fill="currentColor"/>
+            <path d="M9 18a7 7 0 0 1 14 0" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+            <path d="M9 18h14" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"/>
+            <circle cx="8" cy="18" r="3.4" fill="currentColor"/>
+            <circle cx="24" cy="18" r="3.4" fill="currentColor"/>
           </svg>
         </div>
         <div class="brand-text" data-tauri-drag-region>
-          <span class="titlebar-title">Claude Provider Gateway</span>
-          <span class="titlebar-sub">Anthropic Messages → ваши модели</span>
+          <span class="titlebar-title">Provider Gateway for Claude</span>
+          <span class="titlebar-sub" data-i18n="app.subtitle"></span>
         </div>
       </div>
       <div class="titlebar-right">
-        <button type="button" id="claudeWarn" class="badge warn hidden" title="Проверка установленного Claude нашла проблему — подробности в настройках">Claude: проверьте настройки</button>
-        <div class="status" title="Состояние локального шлюза">
-          <span id="statusDot" class="dot"></span>
-          <span id="statusText">Остановлен</span>
-          <span class="status-sep"></span>
+        <button type="button" id="claudeWarn" class="badge warn hidden" data-i18n="claudeWarn.label" data-i18n-title="claudeWarn.title"></button>
+        <div class="status" role="status" aria-live="polite" data-i18n-title="status.title">
+          <span id="statusDot" class="dot" aria-hidden="true"></span>
+          <span id="statusText"></span>
+          <span class="status-sep" aria-hidden="true"></span>
           <span id="portLabel" class="mono">127.0.0.1:17899</span>
         </div>
         <div class="window-controls">
-          <button id="winMin" class="win-btn" title="Свернуть" aria-label="Свернуть">
-            <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5h7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <button type="button" id="winMin" class="win-btn" data-i18n-title="win.minimize" data-i18n-aria="win.minimize">
+            <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M2.5 6.5h7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
           </button>
-          <button id="winMax" class="win-btn" title="Развернуть" aria-label="Развернуть">
-            <svg viewBox="0 0 12 12" fill="none"><rect x="2.8" y="2.8" width="6.4" height="6.4" rx="1" stroke="currentColor" stroke-width="1.1"/></svg>
+          <button type="button" id="winMax" class="win-btn" data-i18n-title="win.maximize" data-i18n-aria="win.maximize">
+            <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><rect x="2.8" y="2.8" width="6.4" height="6.4" rx="1" stroke="currentColor" stroke-width="1.1"/></svg>
           </button>
-          <button id="winClose" class="win-btn close" title="Свернуть в трей (шлюз продолжит работать)" aria-label="Свернуть в трей">
-            <svg viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3 3 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          <button type="button" id="winClose" class="win-btn close" data-i18n-title="win.toTray" data-i18n-aria="win.toTray">
+            <svg viewBox="0 0 12 12" fill="none" aria-hidden="true"><path d="M3 3l6 6M9 3 3 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
           </button>
         </div>
       </div>
@@ -46,224 +48,267 @@
     <main class="shell">
       <aside class="sidebar">
         <div class="sidebar-head">
-          <span>Провайдеры</span>
-          <button id="addBtn" class="icon-btn" title="Добавить провайдера">+</button>
+          <h1 class="sidebar-title" data-i18n="sidebar.providers"></h1>
+          <button type="button" id="addBtn" class="icon-btn" data-i18n-title="sidebar.add" data-i18n-aria="sidebar.add">+</button>
         </div>
-        <div id="providerList" class="provider-list"></div>
+        <nav id="providerList" class="provider-list" data-i18n-aria="sidebar.providers"></nav>
         <div class="sidebar-foot">
-          <button id="settingsBtn" class="ghost wide">Настройки</button>
+          <button type="button" id="settingsBtn" class="ghost wide" data-i18n="sidebar.settings"></button>
         </div>
       </aside>
 
       <section class="content">
         <div id="empty" class="empty">
-          <div class="empty-mark">＋</div>
-          <h2>Пока пусто</h2>
-          <p>Добавьте провайдера: OpenAI, OpenRouter, DeepSeek, Gemini, Ollama или любой OpenAI-совместимый сервис.</p>
-          <button id="emptyAdd" class="primary">Добавить провайдера</button>
+          <div class="empty-mark" aria-hidden="true">
+            <svg viewBox="0 0 32 32" fill="none">
+              <path d="M9 18a7 7 0 0 1 14 0M9 18h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/>
+              <circle cx="8" cy="18" r="3" fill="currentColor"/><circle cx="24" cy="18" r="3" fill="currentColor"/>
+            </svg>
+          </div>
+          <h2 data-i18n="empty.title"></h2>
+          <p data-i18n="empty.text"></p>
+          <button type="button" id="emptyAdd" class="primary" data-i18n="empty.add"></button>
         </div>
 
-        <form id="providerForm" class="card hidden" autocomplete="off">
+        <form id="providerForm" class="card hidden" autocomplete="off" novalidate>
           <div class="card-head">
-            <div>
-              <h2 id="formTitle">Провайдер</h2>
-              <p id="formSubtitle" class="muted">Ключ хранится в Windows Credential Manager</p>
+            <div class="card-head-text">
+              <h2 id="formTitle"></h2>
+              <p id="formSubtitle" class="muted"></p>
             </div>
             <div class="badges">
-              <span id="formKindBadge" class="badge">openai</span>
-              <span id="formKeyBadge" class="badge soft">ключ не задан</span>
+              <span id="formKindBadge" class="badge"></span>
+              <span id="formKeyBadge" class="badge soft"></span>
             </div>
           </div>
 
           <label id="presetField" class="field hidden">
-            <span>Шаблон</span>
+            <span data-i18n="form.preset"></span>
             <select id="presetInput">
-              <option value="">— заполнить вручную —</option>
+              <option value="" data-i18n="form.presetManual"></option>
             </select>
-            <small>Заполнит ID, тип и Base URL; ключ и модели — ваши.</small>
+            <small data-i18n="form.presetHint"></small>
           </label>
 
           <div class="grid two">
             <label class="field">
-              <span>ID</span>
-              <input id="idInput" name="id" placeholder="openai" spellcheck="false">
-              <small>латиница, цифры, дефис; попадает в имя модели</small>
+              <span data-i18n="form.id"></span>
+              <input id="idInput" name="id" placeholder="openai" spellcheck="false" required>
+              <small data-i18n="form.idHint"></small>
             </label>
             <label class="field">
-              <span>Название</span>
+              <span data-i18n="form.name"></span>
               <input id="nameInput" name="name" placeholder="OpenAI">
             </label>
           </div>
 
           <div class="grid two">
             <label class="field">
-              <span>Тип API</span>
+              <span data-i18n="form.kind"></span>
               <select id="kindInput">
-                <option value="openai">OpenAI-совместимый</option>
-                <option value="anthropic">Anthropic Messages</option>
+                <option value="openai" data-i18n="form.kindOpenai"></option>
+                <option value="anthropic" data-i18n="form.kindAnthropic"></option>
               </select>
             </label>
             <label class="field">
-              <span>Base URL</span>
-              <input id="baseInput" name="baseUrl" placeholder="https://api.openai.com/v1" spellcheck="false">
+              <span data-i18n="form.baseUrl"></span>
+              <input id="baseInput" name="baseUrl" type="url" placeholder="https://api.openai.com/v1" spellcheck="false" required>
             </label>
           </div>
 
-          <label class="field">
-            <span>API-ключ</span>
+          <div class="field">
+            <label for="keyInput" data-i18n="form.apiKey"></label>
             <div class="key-row">
-              <input id="keyInput" type="password" placeholder="вставьте ключ" autocomplete="new-password">
-              <button type="button" id="clearKeyBtn" class="ghost danger hidden">Удалить ключ</button>
+              <input id="keyInput" type="password" autocomplete="new-password" spellcheck="false">
+              <button type="button" id="clearKeyBtn" class="ghost danger hidden" data-i18n="form.clearKey"></button>
             </div>
-            <small id="keyHint">Для localhost ключ можно не заполнять.</small>
-          </label>
+            <small id="keyHint"></small>
+          </div>
 
           <div class="field">
             <div class="field-head">
-              <label for="modelsInput">Модели</label>
-              <button type="button" id="fetchModelsBtn" class="ghost small">Загрузить с провайдера</button>
+              <label for="modelsInput" data-i18n="form.models"></label>
+              <button type="button" id="fetchModelsBtn" class="ghost small" data-i18n="form.fetchModels"></button>
             </div>
-            <textarea id="modelsInput" rows="6" spellcheck="false" placeholder="gpt-5.2&#10;claude-sonnet-4-5&#10;qwen3:8b"></textarea>
-            <small>Одна модель на строку. Суффикс <code>[1m]</code> включает 1M-контекст. Первая модель — по умолчанию для фоновых запросов Claude.</small>
+            <textarea id="modelsInput" rows="5" spellcheck="false" placeholder="gpt-5.2&#10;deepseek-v4.1-flash[1m]&#10;qwen3:8b"></textarea>
+            <small data-i18n-html="form.modelsHint"></small>
           </div>
 
           <div id="pickerBox" class="picker hidden">
             <div class="picker-head">
-              <input id="pickerFilter" placeholder="фильтр" spellcheck="false">
+              <input id="pickerFilter" type="search" spellcheck="false" data-i18n-placeholder="picker.filter" data-i18n-aria="picker.filter">
               <span id="pickerCount" class="muted small"></span>
-              <button type="button" id="pickerClose" class="icon-btn" title="Скрыть">×</button>
+              <button type="button" id="pickerClose" class="icon-btn" data-i18n-title="picker.hide" data-i18n-aria="picker.hide">×</button>
             </div>
             <div id="pickerList" class="picker-list"></div>
           </div>
 
           <div class="grid two">
             <label class="field">
-              <span>Макс. уровень рассуждения</span>
+              <span data-i18n="form.maxEffort"></span>
               <select id="maxEffortInput">
-                <option value="">выключено</option>
+                <option value="" data-i18n="form.effortOff"></option>
                 <option value="low">low</option>
                 <option value="medium">medium</option>
                 <option value="high">high</option>
                 <option value="xhigh">xhigh</option>
                 <option value="max">max</option>
               </select>
-              <small>Включено — в Claude появится выбор уровня, шлюз передаст его провайдеру не выше этого (OpenAI — <code>reasoning_effort</code>, Anthropic — <code>output_config.effort</code>). Включайте, если провайдер его понимает: у OpenAI, например, нет <code>xhigh</code> и <code>max</code>.</small>
+              <small data-i18n-html="form.maxEffortHint"></small>
             </label>
             <label class="field">
-              <span>Уровень по умолчанию</span>
+              <span data-i18n="form.defaultEffort"></span>
               <select id="defaultEffortInput">
-                <option value="">как решит провайдер</option>
+                <option value="" data-i18n="form.effortProvider"></option>
                 <option value="low">low</option>
                 <option value="medium">medium</option>
                 <option value="high">high</option>
                 <option value="xhigh">xhigh</option>
                 <option value="max">max</option>
               </select>
-              <small>Если Claude уровень не прислал (например, Claude Code в терминале без <code>--effort</code>).</small>
+              <small data-i18n-html="form.defaultEffortHint"></small>
             </label>
           </div>
 
           <div id="aliasBox" class="alias-box hidden">
-            <div class="alias-title">Псевдонимы для Claude</div>
+            <div class="alias-title" data-i18n="form.aliases"></div>
             <div id="aliasList" class="alias-list"></div>
           </div>
 
           <div class="form-actions">
-            <button type="submit" class="primary">Сохранить</button>
-            <button type="button" id="testBtn" class="ghost" title="Короткий настоящий запрос к первой модели через шлюз">Проверить</button>
-            <button type="button" id="deleteBtn" class="ghost danger">Удалить</button>
-            <span id="formNotice" class="notice"></span>
+            <button type="submit" id="saveBtn" class="primary" data-i18n="form.save"></button>
+            <button type="button" id="testBtn" class="ghost" data-i18n="form.test" data-i18n-title="form.testTitle"></button>
+            <button type="button" id="deleteBtn" class="ghost danger" data-i18n="form.delete"></button>
+            <span id="formNotice" class="notice" aria-live="polite"></span>
           </div>
         </form>
 
         <div id="settingsPanel" class="card hidden">
           <div class="card-head">
-            <div>
-              <h2>Настройки</h2>
-              <p class="muted">Порт, путь к Claude и локальный токен</p>
+            <div class="card-head-text">
+              <h2 data-i18n="settings.title"></h2>
+              <p class="muted" data-i18n="settings.subtitle"></p>
             </div>
-            <button id="closeSettings" class="ghost">Закрыть</button>
+            <button type="button" id="closeSettings" class="ghost" data-i18n="settings.close"></button>
           </div>
 
           <div class="grid two">
             <label class="field">
-              <span>Порт шлюза</span>
-              <input id="portInput" type="number" min="1" max="65535" placeholder="17899">
-              <small>Слушает только 127.0.0.1</small>
+              <span data-i18n="settings.language"></span>
+              <select id="languageInput">
+                <option value="auto" data-i18n="settings.langAuto"></option>
+                <option value="ru">Русский</option>
+                <option value="en">English</option>
+              </select>
             </label>
             <label class="field">
-              <span>claude.exe</span>
-              <input id="claudePathInput" placeholder="определяется автоматически" spellcheck="false">
-              <small id="detectedClaude">Claude Desktop не найден</small>
+              <span data-i18n="settings.port"></span>
+              <input id="portInput" type="number" min="1" max="65535" placeholder="17899">
+              <small data-i18n="settings.portHint"></small>
             </label>
           </div>
 
-          <label class="field">
-            <span>Папка для Claude Code</span>
-            <input id="codeDirInput" placeholder="домашняя папка" spellcheck="false">
-            <small>Где кнопка «Claude Code» открывает консоль с <code>claude</code>, подключённым к этому шлюзу.</small>
-          </label>
+          <div class="field">
+            <label for="claudePathInput" data-i18n="settings.claudePath"></label>
+            <div class="key-row">
+              <input id="claudePathInput" spellcheck="false" data-i18n-placeholder="settings.claudePathPlaceholder">
+              <button type="button" id="browseClaudeBtn" class="ghost" data-i18n="settings.browse"></button>
+            </div>
+            <small id="detectedClaude"></small>
+          </div>
+
+          <div class="field">
+            <label for="codeDirInput" data-i18n="settings.codeDir"></label>
+            <div class="key-row">
+              <input id="codeDirInput" spellcheck="false" data-i18n-placeholder="settings.codeDirPlaceholder">
+              <button type="button" id="browseCodeBtn" class="ghost" data-i18n="settings.browse"></button>
+            </div>
+            <small data-i18n-html="settings.codeDirHint"></small>
+          </div>
 
           <div class="field">
             <label class="check">
               <input id="russianInput" type="checkbox">
-              <span>Русский интерфейс Claude</span>
+              <span data-i18n="settings.russian"></span>
             </label>
-            <small>Запускает отдельную копию Claude (~700 МБ в <code>%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru</code>) с официальным русским переводом claude.ai. Подпись копии недействительна; установленный Claude не меняется. Если копию собрать нельзя, откроется обычный Claude.</small>
+            <small data-i18n-html="settings.russianHint"></small>
             <small id="russianFileHint"></small>
           </div>
 
           <div class="field">
-            <span>Совместимость с установленным Claude</span>
-            <ul id="claudeCheckList" class="check-list"></ul>
-            <small>Проверяется при старте и перед «Открыть Claude»: после обновления Claude приложение само берёт из него правила моделей, обновляет перевод и заранее собирает русскую копию.</small>
+            <span class="field-label" data-i18n="settings.check"></span>
+            <ul id="claudeCheckList" class="check-list" aria-live="polite"></ul>
+            <small data-i18n="settings.checkHint"></small>
           </div>
 
-          <label class="field">
-            <span>Локальный токен</span>
+          <div class="field">
+            <label for="tokenInput" data-i18n="settings.token"></label>
             <div class="key-row">
               <input id="tokenInput" class="mono" readonly>
-              <button type="button" id="copyTokenBtn" class="ghost">Копировать</button>
+              <button type="button" id="copyTokenBtn" class="ghost" data-i18n="settings.copy"></button>
             </div>
-            <small>Этот токен шлюз ждёт в <code>x-api-key</code>; ключи провайдеров хранятся отдельно.</small>
-          </label>
+            <small data-i18n-html="settings.tokenHint"></small>
+          </div>
 
           <div class="form-actions">
-            <button type="button" id="saveSettingsBtn" class="primary">Сохранить настройки</button>
-            <button type="button" id="copyEnvBtn" class="ghost">Скопировать env для Claude Code</button>
-            <button type="button" id="openLogsFolderBtn" class="ghost">Папка с логами</button>
+            <button type="button" id="saveSettingsBtn" class="primary" data-i18n="settings.save"></button>
+            <button type="button" id="copyEnvBtn" class="ghost" data-i18n="settings.copyEnv"></button>
+            <button type="button" id="openLogsFolderBtn" class="ghost" data-i18n="settings.logsFolder"></button>
           </div>
-          <p class="muted small">Claude Desktop запускается в отдельном профиле <code>%LOCALAPPDATA%\ClaudeProviderGateway\Claude-3p</code> и не трогает ваши аккаунты.</p>
+          <p class="muted small" data-i18n-html="settings.profileNote"></p>
         </div>
       </section>
     </main>
 
     <footer class="actions">
       <div class="actions-left">
-        <button id="startBtn" class="primary">Запустить шлюз</button>
-        <button id="stopBtn" class="ghost">Остановить</button>
-        <button id="launchBtn" class="accent" disabled>Открыть Claude</button>
-        <button id="launchCodeBtn" class="ghost" disabled title="Claude Code CLI в новом окне консоли через этот шлюз">Claude Code</button>
+        <button type="button" id="startBtn" class="primary"></button>
+        <button type="button" id="stopBtn" class="ghost" data-i18n="actions.stop"></button>
+        <button type="button" id="launchBtn" class="accent" disabled data-i18n="actions.openClaude" data-i18n-title="actions.openClaudeTitle"></button>
+        <button type="button" id="launchCodeBtn" class="ghost" disabled data-i18n="actions.code" data-i18n-title="actions.codeTitle"></button>
       </div>
       <div class="actions-right">
-        <span id="modelCount" class="muted">0 моделей</span>
-        <button id="logsBtn" class="ghost">Журнал</button>
+        <span id="modelCount" class="muted"></span>
+        <button type="button" id="logsBtn" class="ghost" aria-expanded="false" aria-controls="logPanel" data-i18n="actions.logs"></button>
       </div>
     </footer>
 
-    <section id="logPanel" class="logs hidden">
+    <section id="logPanel" class="logs hidden" data-i18n-aria="logs.title">
       <div class="logs-head">
-        <span>Журнал шлюза</span>
+        <span data-i18n="logs.title"></span>
         <div>
-          <button id="refreshLogsBtn" class="ghost small">Обновить</button>
-          <button id="closeLogsBtn" class="icon-btn" title="Закрыть">×</button>
+          <button type="button" id="refreshLogsBtn" class="ghost small" data-i18n="logs.refresh"></button>
+          <button type="button" id="closeLogsBtn" class="icon-btn" data-i18n-title="logs.close" data-i18n-aria="logs.close">×</button>
         </div>
       </div>
-      <pre id="logText">Логов пока нет</pre>
+      <pre id="logText"></pre>
     </section>
 
-    <div id="toast" class="toast"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite">
+      <span id="toastText" class="toast-text"></span>
+      <button type="button" id="toastCopy" class="toast-btn" data-i18n-title="toast.copy" data-i18n-aria="toast.copy">
+        <svg viewBox="0 0 16 16" fill="none" aria-hidden="true"><rect x="5" y="5" width="8" height="9" rx="1.5" stroke="currentColor" stroke-width="1.3"/><path d="M3.5 10.5V3.5A1.5 1.5 0 0 1 5 2h6" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+      </button>
+      <button type="button" id="toastClose" class="toast-btn" data-i18n-title="toast.close" data-i18n-aria="toast.close">×</button>
+    </div>
+
+    <dialog id="dialog" class="dialog" aria-labelledby="dialogTitle" aria-describedby="dialogText">
+      <form method="dialog">
+        <h2 id="dialogTitle"></h2>
+        <p id="dialogText" class="muted"></p>
+        <label id="dialogCheckRow" class="check hidden">
+          <input id="dialogCheck" type="checkbox">
+          <span id="dialogCheckText"></span>
+        </label>
+        <div class="dialog-actions">
+          <button type="submit" value="alt" id="dialogAlt" class="ghost hidden"></button>
+          <button type="submit" value="cancel" id="dialogCancel" class="ghost"></button>
+          <button type="submit" value="ok" id="dialogOk" class="primary"></button>
+        </div>
+      </form>
+    </dialog>
   </div>
+  <script src="i18n.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

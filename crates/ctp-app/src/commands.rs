@@ -205,7 +205,7 @@ pub fn status(shared: State<'_, AppShared>) -> UiStatus {
 pub async fn launch_claude(
     app: tauri::AppHandle,
     shared: State<'_, AppShared>,
-) -> Result<String, String> {
+) -> Result<crate::model::LaunchResult, String> {
     let config = shared.config.lock().unwrap().clone();
     let dir = shared.config_dir.clone();
     // Программа живёт в трее сутками: Claude мог обновиться с прошлой проверки.

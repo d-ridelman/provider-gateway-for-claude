@@ -141,6 +141,13 @@ pub struct ModelInfo {
     pub label: Option<String>,
 }
 
+/// Итог «Открыть Claude»: текст и признак, что вышло не то, что просили.
+#[derive(Clone, Debug, Serialize)]
+pub struct LaunchResult {
+    pub message: String,
+    pub warning: bool,
+}
+
 /// Ответ «Загрузить модели»: ID от провайдера и подсказки каталога OpenCode.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -261,7 +261,11 @@ pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String>
     ))
 }
 
-pub fn launch(config: &Config, status: &UiStatus, config_dir: &Path) -> Result<String, String> {
+pub fn launch(
+    config: &Config,
+    status: &UiStatus,
+    config_dir: &Path,
+) -> Result<crate::model::LaunchResult, String> {
     if !status.running {
         return Err(tr!("Сначала запустите шлюз", "Start the gateway first"));
     }
@@ -369,10 +373,14 @@ pub fn launch(config: &Config, status: &UiStatus, config_dir: &Path) -> Result<S
         });
     }
     let profile = profile.display();
-    Ok(tr!(
-        "Claude запущен (PID {pid}). Профиль: {profile}.{note}",
-        "Claude started (PID {pid}). Profile: {profile}.{note}"
-    ))
+    Ok(crate::model::LaunchResult {
+        message: tr!(
+            "Claude запущен (PID {pid}). Профиль: {profile}.{note}",
+            "Claude started (PID {pid}). Profile: {profile}.{note}"
+        ),
+        // Русский просили, а открылся обычный Claude — окно покажет это как ошибку.
+        warning: config.russian_ui && !russian,
+    })
 }
 
 #[cfg(windows)]

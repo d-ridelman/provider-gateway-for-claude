@@ -20,6 +20,17 @@ $maps = @(
 )
 $env:RUSTFLAGS = (@($env:RUSTFLAGS) + $maps | Where-Object { $_ }) -join ' '
 
+# License notices of the linked crates go into the installer; refresh them when Python is here.
+if (Get-Command python -ErrorAction SilentlyContinue) {
+    Push-Location $root
+    try {
+        & python -I tools\third_party_notices.py THIRD-PARTY-NOTICES.txt
+        if ($LASTEXITCODE -ne 0) { throw "third_party_notices.py failed ($LASTEXITCODE)" }
+    } finally { Pop-Location }
+} else {
+    Write-Warning 'Python not found: THIRD-PARTY-NOTICES.txt is not refreshed.'
+}
+
 if ($Installer) {
     Push-Location (Join-Path $root 'crates\ctp-app')
     try {

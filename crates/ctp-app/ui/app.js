@@ -1,6 +1,6 @@
-const invoke =
-  window.__TAURI__?.core?.invoke ??
-  window.__TAURI__?.invoke;
+"use strict";
+
+const invoke = window.__TAURI__?.core?.invoke ?? window.__TAURI__?.invoke;
 
 const state = {
   config: null,
@@ -24,111 +24,89 @@ const draft = {
   aliases: [],
 };
 
-// Пресеты из списка must-have провайдеров v1 (docs/rewrite-rust-tauri.md).
+// Templates: id, name, type and URL; the label is shown in the interface language.
 const PRESETS = [
-  { label: "OpenAI", id: "openai", name: "OpenAI", kind: "openai", baseUrl: "https://api.openai.com/v1" },
-  { label: "OpenRouter", id: "openrouter", name: "OpenRouter", kind: "openai", baseUrl: "https://openrouter.ai/api/v1" },
-  { label: "OpenCode Go (подписка)", id: "opencode-go", name: "OpenCode Go", kind: "openai", baseUrl: "https://opencode.ai/inference/go/openai/v1" },
-  { label: "OpenCode Go — Claude, Qwen, MiniMax (Anthropic API)", id: "opencode-go-anthropic", name: "OpenCode Go (Anthropic)", kind: "anthropic", baseUrl: "https://opencode.ai/inference/go/anthropic" },
-  { label: "OpenCode Zen (оплата по факту)", id: "opencode", name: "OpenCode Zen", kind: "openai", baseUrl: "https://opencode.ai/inference/openai/v1" },
-  { label: "DeepSeek", id: "deepseek", name: "DeepSeek", kind: "openai", baseUrl: "https://api.deepseek.com/v1" },
-  { label: "Google Gemini", id: "gemini", name: "Gemini", kind: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
-  { label: "Anthropic API", id: "anthropic", name: "Anthropic", kind: "anthropic", baseUrl: "https://api.anthropic.com" },
-  { label: "Ollama (этот компьютер)", id: "ollama", name: "Ollama", kind: "openai", baseUrl: "http://127.0.0.1:11434/v1" },
-  { label: "llama.cpp server (этот компьютер)", id: "llamacpp", name: "llama.cpp", kind: "openai", baseUrl: "http://127.0.0.1:8080/v1" },
-  { label: "LM Studio (этот компьютер)", id: "lmstudio", name: "LM Studio", kind: "openai", baseUrl: "http://127.0.0.1:1234/v1" },
+  { label: { ru: "OpenAI", en: "OpenAI" }, id: "openai", name: "OpenAI", kind: "openai", baseUrl: "https://api.openai.com/v1" },
+  { label: { ru: "OpenRouter", en: "OpenRouter" }, id: "openrouter", name: "OpenRouter", kind: "openai", baseUrl: "https://openrouter.ai/api/v1" },
+  { label: { ru: "OpenCode Go (подписка)", en: "OpenCode Go (subscription)" }, id: "opencode-go", name: "OpenCode Go", kind: "openai", baseUrl: "https://opencode.ai/inference/go/openai/v1" },
+  { label: { ru: "OpenCode Go — Claude, Qwen, MiniMax (Anthropic API)", en: "OpenCode Go — Claude, Qwen, MiniMax (Anthropic API)" }, id: "opencode-go-anthropic", name: "OpenCode Go (Anthropic)", kind: "anthropic", baseUrl: "https://opencode.ai/inference/go/anthropic" },
+  { label: { ru: "OpenCode Zen (оплата по факту)", en: "OpenCode Zen (pay as you go)" }, id: "opencode", name: "OpenCode Zen", kind: "openai", baseUrl: "https://opencode.ai/inference/openai/v1" },
+  { label: { ru: "DeepSeek", en: "DeepSeek" }, id: "deepseek", name: "DeepSeek", kind: "openai", baseUrl: "https://api.deepseek.com/v1" },
+  { label: { ru: "Google Gemini", en: "Google Gemini" }, id: "gemini", name: "Gemini", kind: "openai", baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai" },
+  { label: { ru: "Anthropic API", en: "Anthropic API" }, id: "anthropic", name: "Anthropic", kind: "anthropic", baseUrl: "https://api.anthropic.com" },
+  { label: { ru: "Ollama (этот компьютер)", en: "Ollama (this computer)" }, id: "ollama", name: "Ollama", kind: "openai", baseUrl: "http://127.0.0.1:11434/v1" },
+  { label: { ru: "llama.cpp server (этот компьютер)", en: "llama.cpp server (this computer)" }, id: "llamacpp", name: "llama.cpp", kind: "openai", baseUrl: "http://127.0.0.1:8080/v1" },
+  { label: { ru: "LM Studio (этот компьютер)", en: "LM Studio (this computer)" }, id: "lmstudio", name: "LM Studio", kind: "openai", baseUrl: "http://127.0.0.1:1234/v1" },
 ];
 
 const $ = (id) => document.getElementById(id);
-const el = {
-  statusDot: $("statusDot"),
-  statusText: $("statusText"),
-  portLabel: $("portLabel"),
-  providerList: $("providerList"),
-  empty: $("empty"),
-  form: $("providerForm"),
-  formTitle: $("formTitle"),
-  formSubtitle: $("formSubtitle"),
-  formKindBadge: $("formKindBadge"),
-  formKeyBadge: $("formKeyBadge"),
-  idInput: $("idInput"),
-  nameInput: $("nameInput"),
-  kindInput: $("kindInput"),
-  baseInput: $("baseInput"),
-  keyInput: $("keyInput"),
-  keyHint: $("keyHint"),
-  clearKeyBtn: $("clearKeyBtn"),
-  modelsInput: $("modelsInput"),
-  maxEffortInput: $("maxEffortInput"),
-  defaultEffortInput: $("defaultEffortInput"),
-  aliasBox: $("aliasBox"),
-  aliasList: $("aliasList"),
-  deleteBtn: $("deleteBtn"),
-  formNotice: $("formNotice"),
-  settingsPanel: $("settingsPanel"),
-  portInput: $("portInput"),
-  claudePathInput: $("claudePathInput"),
-  codeDirInput: $("codeDirInput"),
-  launchCodeBtn: $("launchCodeBtn"),
-  detectedClaude: $("detectedClaude"),
-  tokenInput: $("tokenInput"),
-  russianInput: $("russianInput"),
-  russianFileHint: $("russianFileHint"),
-  claudeWarn: $("claudeWarn"),
-  claudeCheckList: $("claudeCheckList"),
-  startBtn: $("startBtn"),
-  stopBtn: $("stopBtn"),
-  launchBtn: $("launchBtn"),
-  modelCount: $("modelCount"),
-  logPanel: $("logPanel"),
-  logText: $("logText"),
-  toast: $("toast"),
-  presetField: $("presetField"),
-  presetInput: $("presetInput"),
-  fetchModelsBtn: $("fetchModelsBtn"),
-  testBtn: $("testBtn"),
-  pickerBox: $("pickerBox"),
-  pickerFilter: $("pickerFilter"),
-  pickerCount: $("pickerCount"),
-  pickerList: $("pickerList"),
-};
+const el = Object.fromEntries(
+  [
+    "statusDot", "statusText", "portLabel", "providerList", "empty", "providerForm", "formTitle",
+    "formSubtitle", "formKindBadge", "formKeyBadge", "idInput", "nameInput", "kindInput", "baseInput",
+    "keyInput", "keyHint", "clearKeyBtn", "modelsInput", "maxEffortInput", "defaultEffortInput",
+    "aliasBox", "aliasList", "deleteBtn", "formNotice", "settingsPanel", "portInput", "languageInput",
+    "claudePathInput", "codeDirInput", "launchCodeBtn", "detectedClaude", "tokenInput", "russianInput",
+    "russianFileHint", "claudeWarn", "claudeCheckList", "startBtn", "stopBtn", "launchBtn", "modelCount",
+    "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
+    "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
+    "dialogText", "dialogOk", "dialogCancel", "dialogAlt", "dialogCheckRow", "dialogCheck", "dialogCheckText",
+  ].map((id) => [id, $(id)]),
+);
+el.form = el.providerForm;
 
-// Список моделей, полученный с провайдера; живёт, пока открыт тот же провайдер.
+// Models loaded from the provider; live while the same provider is open.
 let picker = [];
-// Подсказки каталога OpenCode к последнему списку моделей: { source, models: { id: hint } }.
+// OpenCode catalog hints for the last model list: { source, models: { id: hint } }.
 let catalog = { source: null, models: {} };
-// Имена моделей для меню Claude (ID → «DeepSeek V4 Pro») в открытой форме.
+// Model names for Claude's menu (ID → "DeepSeek V4 Pro") in the open form.
 let labels = {};
-// Растёт при смене открытого провайдера: поздний ответ «Загрузить» не попадёт в чужую форму.
+// Grows when another provider opens: a late "Load models" answer won't reach a foreign form.
 let formEpoch = 0;
+// The form as rendered: compared with the current one to spot unsaved changes.
+let formSnapshot = "";
 
-function boot() {
+async function boot() {
   if (!invoke) {
-    toast("Tauri API не найден. Запустите приложение через ctp-app.exe.", "error");
+    applyI18n();
+    toast(t("toast.noTauri"), "error");
     return;
   }
-  for (const [index, preset] of PRESETS.entries()) {
-    const option = document.createElement("option");
-    option.value = String(index);
-    option.textContent = preset.label;
-    el.presetInput.append(option);
-  }
   bind();
-  refresh().then(autostart);
+  await refresh();
+  autostart();
   setInterval(pollStatus, 3000);
   setInterval(() => {
     if (state.logsOpen) refreshLogs();
   }, 2500);
 }
 
+function fillPresets() {
+  el.presetInput.replaceChildren(el.presetInput.options[0]);
+  for (const [index, preset] of PRESETS.entries()) {
+    const option = document.createElement("option");
+    option.value = String(index);
+    option.textContent = preset.label[LANG] ?? preset.label.en;
+    el.presetInput.append(option);
+  }
+}
+
+// Language from the app: re-label everything that is static.
+function applyLanguage(lang) {
+  setLanguage(lang);
+  applyI18n();
+  fillPresets();
+}
+
 async function refresh() {
   try {
-    const [config, status] = await Promise.all([
-      invoke("get_config"),
-      invoke("status"),
-    ]);
+    const [config, status] = await Promise.all([invoke("get_config"), invoke("status")]);
     state.config = config;
     state.status = status;
+    if (LANG !== config.language || !document.body.dataset.ready) {
+      applyLanguage(config.language);
+      document.body.dataset.ready = "1";
+    }
     if (state.selectedId && !state.isNew) {
       if (!config.providers.some((p) => p.id === state.selectedId)) {
         state.selectedId = config.providers[0]?.id ?? null;
@@ -144,7 +122,7 @@ async function refresh() {
   }
 }
 
-// Окно открывают, чтобы пользоваться шлюзом: поднимаем его сразу, если есть что раздавать.
+// The window is opened to use the gateway: start it right away if there is anything to serve.
 async function autostart() {
   if (state.config?.providers?.length && !state.status?.running) {
     await startGateway({ quiet: true });
@@ -153,11 +131,10 @@ async function autostart() {
 
 async function pollStatus() {
   try {
-    const status = await invoke("status");
-    state.status = status;
+    state.status = await invoke("status");
     renderStatus();
   } catch {
-    /* приложение закрывается — молчим */
+    /* the app is closing */
   }
 }
 
@@ -171,12 +148,13 @@ function renderStatus() {
   const status = state.status;
   const running = !!status?.running;
   el.statusDot.classList.toggle("on", running);
-  el.statusText.textContent = running ? "Работает" : "Остановлен";
+  el.statusText.textContent = t(running ? "status.running" : "status.stopped");
   el.portLabel.textContent = `127.0.0.1:${status?.port ?? state.config?.port ?? "—"}`;
-  el.startBtn.textContent = running ? "Перезапустить" : "Запустить шлюз";
+  el.startBtn.textContent = t(running ? "actions.restart" : "actions.start");
   el.stopBtn.disabled = !running;
-  el.launchBtn.disabled = launching || !running || !status?.models?.length;
-  el.launchCodeBtn.disabled = !running || !status?.models?.length;
+  const ready = running && !!status?.models?.length;
+  el.launchBtn.disabled = launching || !ready;
+  if (!launchingCode) el.launchCodeBtn.disabled = !ready;
   el.modelCount.textContent = modelWord(status?.models?.length ?? 0);
   renderClaudeCheck();
 }
@@ -186,19 +164,21 @@ function renderProviders() {
   const providers = state.config?.providers ?? [];
   if (!providers.length) {
     const empty = document.createElement("div");
-    empty.className = "muted small";
-    empty.style.padding = "8px 6px";
-    empty.textContent = "Нет провайдеров";
+    empty.className = "muted small sidebar-empty";
+    empty.textContent = t("sidebar.none");
     el.providerList.append(empty);
     return;
   }
   for (const provider of providers) {
-    const item = document.createElement("div");
+    const item = document.createElement("button");
+    item.type = "button";
     item.className = "provider-item";
-    if (!state.isNew && provider.id === state.selectedId) item.classList.add("active");
+    const active = state.view === "provider" && !state.isNew && provider.id === state.selectedId;
+    item.classList.toggle("active", active);
+    if (active) item.setAttribute("aria-current", "true");
     item.addEventListener("click", () => selectProvider(provider.id));
 
-    const row = document.createElement("div");
+    const row = document.createElement("span");
     row.className = "row";
     const name = document.createElement("b");
     name.textContent = provider.name || provider.id;
@@ -207,13 +187,13 @@ function renderProviders() {
     kind.textContent = provider.kind;
     row.append(name, kind);
 
-    const url = document.createElement("div");
+    const url = document.createElement("span");
     url.className = "url";
     url.textContent = provider.baseUrl;
 
-    const meta = document.createElement("div");
+    const meta = document.createElement("span");
     meta.className = "meta";
-    const key = provider.hasKey ? "ключ есть" : provider.needsKey ? "ключа нет" : "без ключа";
+    const key = t(provider.hasKey ? "provider.keySet" : provider.needsKey ? "provider.keyMissing" : "provider.keyless");
     meta.textContent = `${modelWord(provider.models.length)} · ${key}`;
 
     item.append(row, url, meta);
@@ -223,6 +203,9 @@ function renderProviders() {
 
 function renderMain() {
   const settings = state.view === "settings";
+  const settingsBtn = $("settingsBtn");
+  if (settings) settingsBtn.setAttribute("aria-current", "page");
+  else settingsBtn.removeAttribute("aria-current");
   el.settingsPanel.classList.toggle("hidden", !settings);
   el.form.classList.toggle("hidden", settings || !hasSelection());
   el.empty.classList.toggle("hidden", settings || hasSelection());
@@ -242,7 +225,22 @@ function currentProvider() {
   return state.config?.providers.find((p) => p.id === state.selectedId) ?? null;
 }
 
-function selectProvider(id) {
+// Leaving the form with unsaved changes asks first.
+async function leaveForm() {
+  if (state.view !== "provider" || !hasSelection() || !isDirty()) return true;
+  const answer = await ask({
+    title: t("dialog.discardTitle"),
+    text: t("dialog.discardText"),
+    ok: t("dialog.discard"),
+    cancel: t("dialog.keep"),
+    danger: true,
+  });
+  return answer.value === "ok";
+}
+
+async function selectProvider(id) {
+  if (state.view === "provider" && !state.isNew && id === state.selectedId) return;
+  if (!(await leaveForm())) return;
   state.view = "provider";
   state.selectedId = id;
   state.isNew = false;
@@ -253,7 +251,8 @@ function selectProvider(id) {
   render();
 }
 
-function newProvider() {
+async function newProvider() {
+  if (!(await leaveForm())) return;
   state.view = "provider";
   state.selectedId = "__new__";
   state.isNew = true;
@@ -262,18 +261,29 @@ function newProvider() {
   picker = [];
   formEpoch += 1;
   render();
+  el.presetInput.focus();
+}
+
+async function openSettings() {
+  if (state.view === "settings") return;
+  if (!(await leaveForm())) return;
+  state.view = "settings";
+  render();
+}
+
+function closeSettings() {
+  state.view = "provider";
+  render();
 }
 
 function renderForm() {
   const provider = currentProvider();
   if (!provider) return;
-  el.formTitle.textContent = state.isNew ? "Новый провайдер" : provider.name || provider.id;
-  el.formSubtitle.textContent = state.isNew
-    ? "Ключ хранится в Windows Credential Manager, в JSON не пишется"
-    : provider.baseUrl;
+  el.formTitle.textContent = state.isNew ? t("form.newTitle") : provider.name || provider.id;
+  el.formSubtitle.textContent = state.isNew ? t("form.newSubtitle") : provider.baseUrl;
   el.formKindBadge.textContent = provider.kind;
   el.formKindBadge.className = `badge ${provider.kind === "anthropic" ? "warn" : ""}`;
-  el.formKeyBadge.textContent = provider.hasKey ? "ключ сохранён" : provider.needsKey ? "ключ не задан" : "ключ не нужен";
+  el.formKeyBadge.textContent = t(provider.hasKey ? "form.keySaved" : provider.needsKey ? "form.keyNotSet" : "form.keyNotNeeded");
   el.formKeyBadge.className = `badge soft ${provider.hasKey ? "good" : ""}`;
 
   el.presetField.classList.toggle("hidden", !state.isNew);
@@ -291,15 +301,10 @@ function renderForm() {
   syncEffort();
 
   el.keyInput.value = "";
-  el.keyInput.placeholder = provider.hasKey ? "•••••••• (сохранён, оставьте пустым)" : "вставьте ключ";
+  el.keyInput.placeholder = t(provider.hasKey ? "form.keyPlaceholderSaved" : "form.keyPlaceholder");
   el.clearKeyBtn.classList.toggle("hidden", !provider.hasKey || state.isNew);
   el.deleteBtn.classList.toggle("hidden", state.isNew);
-  el.keyHint.textContent = provider.needsKey
-    ? provider.hasKey
-      ? "Ключ сохранён. Чтобы заменить — введите новый."
-      : "Ключ не задан: провайдер может ответить 401."
-    : "Для localhost ключ можно не заполнять.";
-  if (state.clearKey) el.keyHint.textContent = "Ключ будет удалён при сохранении.";
+  renderKeyHint(provider);
 
   el.aliasBox.classList.toggle("hidden", !provider.aliases?.length);
   el.aliasList.replaceChildren();
@@ -318,27 +323,52 @@ function renderForm() {
     row.append(from, arrow, to);
     el.aliasList.append(row);
   }
-  el.formNotice.textContent = provider.aliases?.length
-    ? `${modelWord(provider.aliases.length)} · псевдонимы готовы`
-    : "Псевдонимы появятся после сохранения";
+  formSnapshot = snapshot();
+  renderNotice();
+}
+
+function renderKeyHint(provider = currentProvider()) {
+  if (!provider) return;
+  el.keyHint.textContent = state.clearKey
+    ? t("form.keyHintClear")
+    : t(provider.needsKey ? (provider.hasKey ? "form.keyHintSaved" : "form.keyHintMissing") : "form.keyHintLocal");
+}
+
+function snapshot() {
+  return JSON.stringify([formProvider(), el.keyInput.value.trim(), state.clearKey]);
+}
+
+function isDirty() {
+  return !el.form.classList.contains("hidden") && snapshot() !== formSnapshot;
+}
+
+function renderNotice() {
+  const provider = currentProvider();
+  if (!provider) return;
+  const dirty = isDirty();
+  el.formNotice.classList.toggle("dirty", dirty);
+  el.formNotice.textContent = dirty
+    ? t("form.unsaved")
+    : provider.aliases?.length
+      ? t("form.aliasesReady", { models: modelWord(provider.aliases.length) })
+      : t("form.aliasesLater");
 }
 
 function renderSettings() {
   if (!state.config) return;
+  el.languageInput.value = state.config.languagePref ?? "auto";
   el.portInput.value = state.config.port;
   el.claudePathInput.value = state.config.claudePath ?? "";
   el.codeDirInput.value = state.config.codeDir ?? "";
   el.tokenInput.value = state.config.token;
   el.detectedClaude.textContent = state.config.detectedClaude
-    ? `найден: ${state.config.detectedClaude}`
-    : "Claude Desktop не найден — укажите путь вручную";
+    ? t("settings.found", { path: state.config.detectedClaude })
+    : t("settings.notFound");
   el.russianInput.checked = !!state.config.russianUi;
-  el.russianFileHint.textContent = state.config.russianFile
-    ? "Файл перевода claude-ru.json найден; при обновлении Claude он скачивается заново."
-    : "Перевод claude.ai скачается сам при следующем старте или «Открыть Claude» (нужен интернет).";
+  el.russianFileHint.textContent = t(state.config.russianFile ? "settings.russianFileFound" : "settings.russianFileMissing");
 }
 
-// Самопроверка установленного Claude: список в настройках и пометка в шапке.
+// Self-check of the installed Claude: the list in Settings and a badge in the title bar.
 function renderClaudeCheck() {
   const check = state.status?.claude;
   const items = check?.items ?? [];
@@ -347,7 +377,7 @@ function renderClaudeCheck() {
   if (!check) {
     const li = document.createElement("li");
     li.className = "muted";
-    li.textContent = "Проверяется…";
+    li.textContent = t("settings.checking");
     el.claudeCheckList.append(li);
     return;
   }
@@ -368,31 +398,24 @@ function renderClaudeCheck() {
 function bind() {
   $("winMin").addEventListener("click", () => invoke("win_minimize").catch(() => {}));
   $("winMax").addEventListener("click", () => invoke("win_toggle_maximize").catch(() => {}));
-  $("winClose").addEventListener("click", () => invoke("win_close").catch(() => {}));
+  $("winClose").addEventListener("click", closeToTray);
 
-  el.claudeWarn.addEventListener("click", () => {
-    state.view = "settings";
-    render();
-  });
+  el.claudeWarn.addEventListener("click", openSettings);
   $("addBtn").addEventListener("click", newProvider);
   $("emptyAdd").addEventListener("click", newProvider);
-  $("settingsBtn").addEventListener("click", () => {
-    state.view = "settings";
-    render();
-  });
-  $("closeSettings").addEventListener("click", () => {
-    state.view = "provider";
-    render();
-  });
+  $("settingsBtn").addEventListener("click", openSettings);
+  $("closeSettings").addEventListener("click", closeSettings);
 
   el.form.addEventListener("submit", saveProvider);
+  el.form.addEventListener("input", renderNotice);
+  el.form.addEventListener("change", renderNotice);
   el.presetInput.addEventListener("change", applyPreset);
   el.maxEffortInput.addEventListener("change", syncEffort);
   el.fetchModelsBtn.addEventListener("click", fetchModels);
   el.testBtn.addEventListener("click", testProvider);
   el.pickerFilter.addEventListener("input", renderPicker);
   el.modelsInput.addEventListener("input", renderPicker);
-  // Адрес или тип поменяли во время «Загрузить модели» — ответ уже про другое.
+  // Address or type changed during "Load models": that answer is about something else now.
   for (const input of [el.baseInput, el.kindInput]) {
     input.addEventListener("input", () => {
       formEpoch += 1;
@@ -402,45 +425,53 @@ function bind() {
     picker = [];
     renderPicker();
   });
-  $("deleteBtn").addEventListener("click", deleteProvider);
+  el.deleteBtn.addEventListener("click", deleteProvider);
   el.clearKeyBtn.addEventListener("click", () => {
     state.clearKey = true;
     el.keyInput.value = "";
-    el.keyHint.textContent = "Ключ будет удалён при сохранении.";
+    renderKeyHint();
     el.clearKeyBtn.classList.add("hidden");
+    renderNotice();
   });
   el.keyInput.addEventListener("input", () => {
     if (el.keyInput.value.trim()) state.clearKey = false;
   });
 
-  el.startBtn.addEventListener("click", startGateway);
+  el.startBtn.addEventListener("click", () => startGateway());
   el.stopBtn.addEventListener("click", stopGateway);
   el.launchBtn.addEventListener("click", launchClaude);
-  el.launchCodeBtn.addEventListener("click", async () => {
-    await busy(el.launchCodeBtn, "Открываю…", async () => {
-      try {
-        toast(await invoke("launch_claude_code"), "good");
-      } catch (exc) {
-        toast(formatError(exc), "error");
-      }
-    });
-    renderStatus(); // busy включает кнопку обратно — вернуть ей состояние шлюза
-  });
+  el.launchCodeBtn.addEventListener("click", launchClaudeCode);
 
-  $("logsBtn").addEventListener("click", toggleLogs);
+  el.logsBtn.addEventListener("click", toggleLogs);
   $("refreshLogsBtn").addEventListener("click", refreshLogs);
-  $("closeLogsBtn").addEventListener("click", () => {
-    state.logsOpen = false;
-    el.logPanel.classList.add("hidden");
-  });
+  $("closeLogsBtn").addEventListener("click", () => setLogs(false));
 
   $("saveSettingsBtn").addEventListener("click", saveSettings);
-  $("copyTokenBtn").addEventListener("click", () => copyText(el.tokenInput.value, "Токен скопирован"));
+  $("copyTokenBtn").addEventListener("click", () => copyText(el.tokenInput.value, t("toast.tokenCopied")));
   $("copyEnvBtn").addEventListener("click", copyEnv);
   $("openLogsFolderBtn").addEventListener("click", () => invoke("open_logs").catch((e) => toast(formatError(e), "error")));
+  $("browseClaudeBtn").addEventListener("click", () => browse(el.claudePathInput));
+  $("browseCodeBtn").addEventListener("click", () => browse(el.codeDirInput));
+
+  $("toastClose").addEventListener("click", hideToast);
+  $("toastCopy").addEventListener("click", () => copyText(el.toastText.textContent, t("toast.copied")));
+
+  document.addEventListener("keydown", (event) => {
+    if (el.dialog.open) return; // the dialog handles its own keys
+    if (event.key === "Escape") {
+      if (el.toast.classList.contains("show")) hideToast();
+      else if (state.logsOpen) setLogs(false);
+      else if (state.view === "settings") closeSettings();
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      if (state.view === "settings") saveSettings();
+      else if (!el.form.classList.contains("hidden")) el.form.requestSubmit();
+    }
+  });
 }
 
-// «По умолчанию» без потолка шлюз игнорирует — не даём выбрать его впустую.
+// "Default" without a ceiling is ignored by the gateway — don't let it be chosen in vain.
 function syncEffort() {
   const off = !el.maxEffortInput.value;
   el.defaultEffortInput.disabled = off;
@@ -473,7 +504,7 @@ function formProvider() {
   };
 }
 
-// Ключ для проверок: из поля; null — сохранённый; "" — без ключа («Удалить ключ»).
+// Key for probes: from the field; null — the saved one; "" — no key ("Remove key").
 function probeInput() {
   const apiKey = el.keyInput.value.trim();
   return {
@@ -495,34 +526,37 @@ function applyPreset() {
   el.baseInput.value = preset.baseUrl;
   el.formKindBadge.textContent = preset.kind;
   picker = [];
-  formEpoch += 1; // ответ «Загрузить модели» для прежнего адреса уже не нужен
+  formEpoch += 1; // a "Load models" answer for the old address is no longer wanted
   renderPicker();
+  renderNotice();
+  el.keyInput.focus();
 }
 
-// Подсказка каталога к ID; hasOwn — чтобы модель «constructor» не нашла Object.
+// Catalog hint for an ID; hasOwn so a model named "constructor" finds no Object.
 function hintFor(id) {
   return Object.hasOwn(catalog.models ?? {}, id) ? catalog.models[id] : undefined;
 }
 
 async function fetchModels() {
   const form = formEpoch;
-  await busy(el.fetchModelsBtn, "Загружаю…", async () => {
+  await busy(el.fetchModelsBtn, t("form.fetching"), async () => {
     try {
       const fetched = await invoke("fetch_models", { input: probeInput() });
-      if (form !== formEpoch) return; // пока ждали, открыли другого провайдера
+      if (form !== formEpoch) return; // another provider opened meanwhile
       picker = fetched.ids;
       catalog = fetched.catalog ?? { source: null, models: {} };
-      // Уже выбранным моделям без имени — имя из каталога (сохранится вместе с формой).
+      // Already chosen models without a name get the catalog's (saved with the form).
       for (const id of formModels().map(bareId)) {
         const name = hintFor(id)?.name;
         if (name && !Object.hasOwn(labels, id)) labels[id] = name;
       }
       el.pickerFilter.value = "";
       renderPicker();
+      renderNotice();
       if (picker.length) el.pickerBox.scrollIntoView({ block: "nearest", behavior: "smooth" });
-      if (!picker.length) toast("Провайдер вернул пустой список моделей", "error");
+      else toast(t("toast.fetchEmpty"), "error");
     } catch (exc) {
-      toast(`Список моделей: ${formatError(exc)}`, "error");
+      toast(t("toast.fetchError", { error: formatError(exc) }), "error");
     }
   });
 }
@@ -532,23 +566,23 @@ function renderPicker() {
   if (!picker.length) return;
   const chosen = new Set(formModels().map(bareId));
   const filter = el.pickerFilter.value.trim().toLowerCase();
-  const shown = picker.filter(
-    (id) => !filter || `${id} ${hintFor(id)?.name ?? ""}`.toLowerCase().includes(filter),
-  );
-  const source = catalog.source ? ` · каталог OpenCode: ${catalog.source}` : "";
-  el.pickerCount.textContent = `${shown.length} из ${picker.length} · выбрано ${chosen.size}${source}`;
+  const shown = picker.filter((id) => !filter || `${id} ${hintFor(id)?.name ?? ""}`.toLowerCase().includes(filter));
+  const source = catalog.source ? t("picker.catalog", { source: catalog.source }) : "";
+  el.pickerCount.textContent = t("picker.count", { shown: shown.length, total: picker.length, chosen: chosen.size }) + source;
   el.pickerList.replaceChildren();
   for (const id of shown) {
     const hint = hintFor(id);
+    const on = chosen.has(id);
     const chip = document.createElement("button");
     chip.type = "button";
-    chip.className = `chip ${chosen.has(id) ? "on" : ""}`;
+    chip.className = `chip ${on ? "on" : ""}`;
+    chip.setAttribute("aria-pressed", String(on));
     chip.textContent = hint?.context >= 1_000_000 ? `${id} · 1M` : id;
     chip.title = [
       hint?.name,
-      hint?.context ? `контекст ${Math.round(hint.context / 1000)}K` : "",
-      hint?.efforts?.length ? `уровни: ${hint.efforts.join(", ")}` : "",
-      chosen.has(id) ? "Убрать из списка" : "Добавить в список",
+      hint?.context ? t("picker.context", { k: Math.round(hint.context / 1000) }) : "",
+      hint?.efforts?.length ? t("picker.levels", { levels: hint.efforts.join(", ") }) : "",
+      t(on ? "picker.remove" : "picker.add"),
     ]
       .filter(Boolean)
       .join(" · ");
@@ -564,26 +598,27 @@ function toggleModel(id) {
   if (index >= 0) {
     models.splice(index, 1);
   } else {
-    // Из каталога: 1M контекста, имя для меню Claude и уровни, если они ещё не заданы.
+    // From the catalog: 1M context, a name for Claude's menu and levels if none are set yet.
     models.push(hint?.context >= 1_000_000 ? `${id}[1m]` : id);
     if (hint?.name) labels[id] = hint.name;
     if (hint?.efforts?.length && !el.maxEffortInput.value) {
       el.maxEffortInput.value = hint.efforts[hint.efforts.length - 1];
       syncEffort();
       el.defaultEffortInput.value = hint.defaultEffort ?? "";
-      toast(`Уровни рассуждения из каталога: до ${el.maxEffortInput.value} (для всего провайдера)`);
+      toast(t("toast.catalogLevels", { level: el.maxEffortInput.value }));
     }
   }
   el.modelsInput.value = models.join("\n");
   renderPicker();
+  renderNotice();
 }
 
 async function testProvider() {
-  await busy(el.testBtn, "Проверяю…", async () => {
+  await busy(el.testBtn, t("form.testing"), async () => {
     try {
       toast(await invoke("test_provider", { input: probeInput() }), "good");
     } catch (exc) {
-      toast(`Проверка: ${formatError(exc)}`, "error");
+      toast(t("toast.testError", { error: formatError(exc) }), "error");
     }
   });
 }
@@ -591,16 +626,18 @@ async function testProvider() {
 async function busy(button, label, work) {
   const text = button.textContent;
   button.disabled = true;
+  button.setAttribute("aria-busy", "true");
   button.textContent = label;
   try {
     await work();
   } finally {
     button.disabled = false;
+    button.removeAttribute("aria-busy");
     button.textContent = text;
   }
 }
 
-// Сохранение останавливает шлюз (меняются маршруты); если он работал — поднимаем снова.
+// Saving a provider stops the gateway (routes change); if it was running, start it again.
 async function restartIfWas(wasRunning, done) {
   state.status = await invoke("status");
   if (!wasRunning) {
@@ -608,18 +645,15 @@ async function restartIfWas(wasRunning, done) {
     return;
   }
   const started = await startGateway({ quiet: true });
-  if (started) {
-    toast(`${done}. Шлюз перезапущен; уже открытый Claude увидит новые модели после перезапуска.`, "good");
-  } else if (started === null) {
-    toast(done, "good"); // перезапуск перебила более поздняя команда — её итог виден в статусе
-  }
+  if (started) toast(t("toast.restarted", { done }), "good");
+  else if (started === null) toast(done, "good"); // a later command overrode the restart
 }
 
 let saving = false;
 
 async function saveProvider(event) {
   event.preventDefault();
-  if (saving) return; // двойной клик ушёл бы со старым originalId
+  if (saving) return; // a double click would go out with the old originalId
   saving = true;
   try {
     await saveProviderOnce();
@@ -631,13 +665,8 @@ async function saveProvider(event) {
 async function saveProviderOnce() {
   const provider = formProvider();
   const apiKey = el.keyInput.value.trim();
-  const input = {
-    provider,
-    originalId: state.originalId,
-    apiKey: apiKey || null,
-    clearKey: state.clearKey,
-  };
-  const wasRunning = (starting > 0 || !!state.status?.running);
+  const input = { provider, originalId: state.originalId, apiKey: apiKey || null, clearKey: state.clearKey };
+  const wasRunning = starting > 0 || !!state.status?.running;
   try {
     state.config = await invoke("save_provider", { input });
     state.selectedId = provider.id.toLowerCase();
@@ -646,7 +675,7 @@ async function saveProviderOnce() {
     state.clearKey = false;
     picker = [];
     render();
-    await restartIfWas(wasRunning, "Провайдер сохранён");
+    await restartIfWas(wasRunning, t("toast.providerSaved"));
     renderStatus();
   } catch (exc) {
     toast(formatError(exc), "error");
@@ -656,43 +685,50 @@ async function saveProviderOnce() {
 async function deleteProvider() {
   const provider = currentProvider();
   if (!provider || state.isNew) return;
-  if (!confirm(`Удалить провайдера «${provider.name || provider.id}»?`)) return;
+  const answer = await ask({
+    title: t("dialog.deleteTitle", { name: provider.name || provider.id }),
+    text: t("dialog.deleteText"),
+    ok: t("dialog.delete"),
+    cancel: t("dialog.cancel"),
+    danger: true,
+  });
+  if (answer.value !== "ok") return;
   const wasRunning = (starting > 0 || !!state.status?.running) && state.config.providers.length > 1;
   try {
     state.config = await invoke("delete_provider", { id: provider.id });
     state.selectedId = state.config.providers[0]?.id ?? null;
     state.originalId = state.selectedId;
     state.isNew = false;
-    state.clearKey = false; // иначе «удалить ключ» удалённого провайдера сработает на соседе
+    state.clearKey = false; // otherwise "remove key" of the deleted provider would hit a neighbour
     picker = [];
     formEpoch += 1;
     render();
-    await restartIfWas(wasRunning, "Провайдер удалён");
+    await restartIfWas(wasRunning, t("toast.providerDeleted"));
     renderStatus();
   } catch (exc) {
     toast(formatError(exc), "error");
   }
 }
 
-// Сколько запусков идёт: сохранение в это время тоже должно поднять шлюз после себя.
+// How many starts are in flight: a save meanwhile must also bring the gateway up after itself.
 let starting = 0;
 
-// true — работает; false — ошибка (показана); null — запуск перебила более поздняя команда.
+// true — running; false — error (shown); null — a later command overrode the start.
 async function startGateway({ quiet = false } = {}) {
   starting += 1;
   try {
     state.status = await invoke("start_gateway");
     renderStatus();
     if (!state.status.running) {
-      if (!quiet) toast("Запуск отменён более поздней командой");
+      if (!quiet) toast(t("toast.startCancelled"));
       return null;
     }
-    if (!quiet) toast(`Шлюз слушает 127.0.0.1:${state.status.port}`, "good");
+    if (!quiet) toast(t("toast.listening", { port: state.status.port }), "good");
     return true;
   } catch (exc) {
     state.status = await invoke("status").catch(() => state.status);
     renderStatus();
-    toast(`Шлюз не запущен: ${formatError(exc)}`, "error");
+    toast(t("toast.notStarted", { error: formatError(exc) }), "error");
     return false;
   } finally {
     starting -= 1;
@@ -703,26 +739,27 @@ async function stopGateway() {
   try {
     state.status = await invoke("stop_gateway");
     renderStatus();
-    toast("Шлюз остановлен");
+    toast(t("toast.stopped"));
   } catch (exc) {
     toast(formatError(exc), "error");
   }
 }
 
-// Идёт запуск Claude: опрос статуса не должен снова включать кнопку (второй клик
-// начал бы вторую сборку русской копии).
+// Claude is launching: the status poll must not re-enable the button (a second click would
+// start a second build of the Russian copy).
 let launching = false;
+let launchingCode = false;
 
 async function launchClaude() {
   if (launching) return;
   launching = true;
-  // Первая сборка русской копии занимает время — кнопка показывает, что работа идёт.
-  const label = state.config?.russianUi ? "Готовлю копию…" : "Запускаю…";
+  // The first build of the Russian copy takes a while — the button shows work in progress.
+  const label = t(state.config?.russianUi ? "actions.preparingCopy" : "actions.launching");
   try {
     await busy(el.launchBtn, label, async () => {
       try {
-        const message = await invoke("launch_claude");
-        toast(message, message.includes("не применён") ? "error" : "good");
+        const result = await invoke("launch_claude");
+        toast(result.message, result.warning ? "error" : "good");
       } catch (exc) {
         toast(formatError(exc), "error");
       }
@@ -733,13 +770,38 @@ async function launchClaude() {
   }
 }
 
+async function launchClaudeCode() {
+  if (launchingCode) return;
+  launchingCode = true;
+  try {
+    await busy(el.launchCodeBtn, t("actions.opening"), async () => {
+      try {
+        toast(await invoke("launch_claude_code"), "good");
+      } catch (exc) {
+        toast(formatError(exc), "error");
+      }
+    });
+  } finally {
+    launchingCode = false;
+    renderStatus(); // busy re-enables the button — give it back the gateway's state
+  }
+}
+
+async function browse(input) {
+  const picked = await invoke("pick_folder", { start: input.value.trim() || null }).catch(() => null);
+  if (picked) input.value = picked;
+}
+
 async function saveSettings() {
   const port = Number(el.portInput.value);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    toast("Порт должен быть числом от 1 до 65535", "error");
+    toast(t("settings.portInvalid"), "error");
+    el.portInput.focus();
     return;
   }
-  const wasRunning = (starting > 0 || !!state.status?.running);
+  // Only a new port stops the gateway; then bring it back if it was running.
+  const portChanged = port !== state.config?.port;
+  const wasRunning = portChanged && (starting > 0 || !!state.status?.running);
   try {
     state.config = await invoke("save_settings", {
       input: {
@@ -747,10 +809,12 @@ async function saveSettings() {
         claudePath: el.claudePathInput.value.trim() || null,
         codeDir: el.codeDirInput.value.trim() || null,
         russianUi: el.russianInput.checked,
+        language: el.languageInput.value,
       },
     });
-    renderSettings();
-    await restartIfWas(wasRunning, "Настройки сохранены");
+    if (state.config.language !== LANG) applyLanguage(state.config.language);
+    render();
+    await restartIfWas(wasRunning, t("settings.saved"));
     renderStatus();
   } catch (exc) {
     toast(formatError(exc), "error");
@@ -758,26 +822,31 @@ async function saveSettings() {
 }
 
 function toggleLogs() {
-  state.logsOpen = !state.logsOpen;
-  el.logPanel.classList.toggle("hidden", !state.logsOpen);
-  if (state.logsOpen) refreshLogs();
+  setLogs(!state.logsOpen);
+}
+
+function setLogs(open) {
+  state.logsOpen = open;
+  el.logPanel.classList.toggle("hidden", !open);
+  el.logsBtn.setAttribute("aria-expanded", String(open));
+  if (open) refreshLogs();
 }
 
 async function refreshLogs() {
   try {
     const text = await invoke("tail_log");
     const atBottom = el.logText.scrollTop + el.logText.clientHeight >= el.logText.scrollHeight - 20;
-    el.logText.textContent = text || "Логов пока нет";
+    el.logText.textContent = text || t("logs.empty");
     if (atBottom) el.logText.scrollTop = el.logText.scrollHeight;
   } catch {
-    /* журнал может ещё не создаться */
+    /* the log may not exist yet */
   }
 }
 
 function copyEnv() {
   const models = state.status?.models ?? [];
   if (!models.length) {
-    toast("Сначала запустите шлюз с моделями", "error");
+    toast(t("toast.needModels"), "error");
     return;
   }
   const port = state.status?.port ?? state.config?.port;
@@ -791,7 +860,7 @@ function copyEnv() {
     `$env:ANTHROPIC_SMALL_FAST_MODEL="${alias}"`,
     "claude",
   ].join("\n");
-  copyText(text, "Команда для Claude Code скопирована");
+  copyText(text, t("toast.envCopied"));
 }
 
 async function copyText(text, message) {
@@ -803,28 +872,71 @@ async function copyText(text, message) {
   }
 }
 
+// Close button: the first time, explain the tray and offer a real exit.
+async function closeToTray() {
+  if (localStorage.getItem("trayHintDone") !== "1") {
+    const answer = await ask({
+      title: t("dialog.trayTitle"),
+      text: t("dialog.trayText"),
+      ok: t("dialog.trayOk"),
+      cancel: t("dialog.cancel"),
+      alt: t("dialog.exit"),
+      check: t("dialog.trayDontAsk"),
+    });
+    if (answer.checked) localStorage.setItem("trayHintDone", "1");
+    if (answer.value === "alt") {
+      invoke("app_exit").catch(() => {});
+      return;
+    }
+    if (answer.value !== "ok") return;
+  }
+  invoke("win_close").catch(() => {});
+}
+
+// A modal question. Resolves with { value: "ok" | "cancel" | "alt", checked }.
+function ask({ title, text, ok, cancel, alt = null, danger = false, check = null }) {
+  el.dialogTitle.textContent = title;
+  el.dialogText.textContent = text;
+  el.dialogOk.textContent = ok;
+  el.dialogOk.className = danger ? "danger-solid" : "primary";
+  el.dialogCancel.textContent = cancel;
+  el.dialogAlt.textContent = alt ?? "";
+  el.dialogAlt.classList.toggle("hidden", !alt);
+  el.dialogCheckRow.classList.toggle("hidden", !check);
+  el.dialogCheck.checked = false;
+  el.dialogCheckText.textContent = check ?? "";
+  return new Promise((resolve) => {
+    el.dialog.addEventListener(
+      "close",
+      () => resolve({ value: el.dialog.returnValue || "cancel", checked: el.dialogCheck.checked }),
+      { once: true },
+    );
+    el.dialog.returnValue = "";
+    el.dialog.showModal();
+    // Destructive answers are not the default focus.
+    (danger ? el.dialogCancel : el.dialogOk).focus();
+  });
+}
+
 let toastTimer = null;
 function toast(message, kind = "") {
-  el.toast.textContent = message;
+  el.toastText.textContent = message;
   el.toast.className = `toast show ${kind}`;
+  el.toast.setAttribute("role", kind === "error" ? "alert" : "status");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => {
-    el.toast.className = "toast";
-  }, 4800);
+  // Errors stay until closed: they are often long and worth copying.
+  if (kind !== "error") toastTimer = setTimeout(hideToast, 5000);
+}
+
+function hideToast() {
+  clearTimeout(toastTimer);
+  el.toast.className = "toast";
 }
 
 function formatError(exc) {
   if (typeof exc === "string") return exc;
   if (exc?.message) return exc.message;
   return String(exc);
-}
-
-function modelWord(count) {
-  const mod10 = count % 10;
-  const mod100 = count % 100;
-  if (mod10 === 1 && mod100 !== 11) return `${count} модель`;
-  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${count} модели`;
-  return `${count} моделей`;
 }
 
 document.addEventListener("DOMContentLoaded", boot);
