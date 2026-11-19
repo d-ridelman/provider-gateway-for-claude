@@ -1,0 +1,125 @@
+use axum::Json;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use regex::Regex;
+use serde_json::{Value, json};
+use std::sync::OnceLock;
+
+pub fn error_value(kind: &str, message: impl Into<String>) -> Value {
+    json!({"type": "error", "error": {"type": kind, "message": message.into()}})
+}
+
+/// Ответ в форме Anthropic Messages API.
+pub fn anthropic_error(status: u16, kind: &str, message: impl Into<String>) -> Response {
+    let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
+    (status, Json(error_value(kind, message))).into_response()
+}
+
+/// `secret` — ключ провайдера: его вырезаем из сырого текста до regex и обрезки,
+/// иначе они разрежут ключ необычной формы и хвост уйдёт клиенту.
+pub fn upstream_error(status: u16, text: &str, secret: &str) -> Response {
+    let code = if (400..600).contains(&status) {
+        status
+    } else {
+        502
+    };
+    anthropic_error(code, "api_error", clean_error_text(text, secret))
+}
+
+/// Текст ошибки провайдера для клиента: ключ вырезан и из сырого тела, и из
+/// разобранного сообщения (в JSON он мог быть экранирован: `\/`, `+`),
+/// и только потом regex и обрезка.
+pub fn clean_error_text(text: &str, secret: &str) -> String {
+    let text = without_secret(text, secret);
+    let parsed: Option<Value> = serde_json::from_str(text.trim()).ok();
+    // JSON без `error.message` пересериализуем: serde раскрывает `\/` и `\uXXXX`,
+    // и экранированный ключ снова совпадает с настоящим.
+    let message = match &parsed {
+        Some(value) => openai_error_message(value).unwrap_or_else(|| value.to_string()),
+        None => text,
+    };
+    truncate_redacted(&without_secret(&message, secret))
+}
+
+/// Убирает сам ключ из текста (короткие «ключи» не трогаем — заменили бы полтекста).
+pub fn without_secret(text: &str, secret: &str) -> String {
+    if secret.len() >= 4 {
+        text.replace(secret, "…")
+    } else {
+        text.to_string()
+    }
+}
+
+/// Достаёт человеческий текст из OpenAI- или Anthropic-ошибки, иначе режет сырой текст.
+pub fn message_from_error_text(text: &str) -> String {
+    clean_error_text(text, "")
+}
+
+pub fn openai_error_message(value: &Value) -> Option<String> {
+    let error = value.get("error")?;
+    error
+        .get("message")
+        .and_then(Value::as_str)
+        .or_else(|| error.as_str())
+        .map(str::to_string)
+}
+
+pub fn truncate_redacted(text: &str) -> String {
+    let text = text.trim();
+    let text = if text.is_empty() {
+        "upstream error".to_string()
+    } else {
+        redact(text)
+    };
+    text.chars().take(2000).collect()
+}
+
+fn redact(text: &str) -> String {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| {
+        Regex::new(r"(?i)(sk-[a-z0-9._-]{6,}|bearer\s+[a-z0-9._-]{6,})").expect("redaction regex")
+    });
+    re.replace_all(text, |caps: &regex::Captures<'_>| {
+        if caps[0].to_ascii_lowercase().starts_with("bearer") {
+            "Bearer …".to_string()
+        } else {
+            "sk-…".to_string()
+        }
+    })
+    .into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_keys_and_truncates() {
+        let text = format!(
+            "bad key sk-abcdefghij and Bearer abcdefghij {}",
+            "x".repeat(3000)
+        );
+        let out = truncate_redacted(&text);
+        assert!(!out.contains("sk-abcdefghij"));
+        assert!(!out.contains("abcdefghij"));
+        assert_eq!(out.chars().count(), 2000);
+    }
+
+    #[test]
+    fn extracts_openai_message() {
+        let text = r#"{"error":{"message":"model does not exist","type":"invalid_request_error"}}"#;
+        assert_eq!(message_from_error_text(text), "model does not exist");
+    }
+
+    #[test]
+    fn escaped_key_outside_error_message_is_removed() {
+        let key = "sk-abcdef+ghi/jkl";
+        for body in [
+            r#"{"detail":"bad key sk-abcdef+ghi\/jkl"}"#,
+            r#"{"detail":"bad key sk-abcdef+ghi/jkl"}"#,
+        ] {
+            let out = clean_error_text(body, key);
+            assert!(!out.contains("ghi") && !out.contains("abcdef"), "{out}");
+        }
+    }
+}

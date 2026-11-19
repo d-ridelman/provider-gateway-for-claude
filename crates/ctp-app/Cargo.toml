@@ -1,0 +1,37 @@
+[package]
+name = "ctp-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+tauri-build.workspace = true
+
+[dependencies]
+ctp-core = { path = "../ctp-core" }
+ctp-gateway = { path = "../ctp-gateway" }
+anyhow.workspace = true
+arboard.workspace = true
+axum.workspace = true
+keyring.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tauri.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+flate2 = "1"
+regex.workspace = true
+tauri-plugin-single-instance = "2.5.5"
+
+[target.'cfg(windows)'.dependencies]
+windows-registry.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true

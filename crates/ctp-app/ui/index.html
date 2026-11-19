@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Claude Provider Gateway</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <div class="app">
+    <header class="titlebar" data-tauri-drag-region>
+      <div class="titlebar-brand" data-tauri-drag-region>
+        <div class="mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" fill="none">
+            <path d="M16 3v26M3 16h26M6.8 6.8l18.4 18.4M25.2 6.8 6.8 25.2" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+            <circle cx="16" cy="16" r="4.2" fill="currentColor"/>
+          </svg>
+        </div>
+        <div class="brand-text" data-tauri-drag-region>
+          <span class="titlebar-title">Claude Provider Gateway</span>
+          <span class="titlebar-sub">Anthropic Messages → ваши модели</span>
+        </div>
+      </div>
+      <div class="titlebar-right">
+        <button type="button" id="claudeWarn" class="badge warn hidden" title="Проверка установленного Claude нашла проблему — подробности в настройках">Claude: проверьте настройки</button>
+        <div class="status" title="Состояние локального шлюза">
+          <span id="statusDot" class="dot"></span>
+          <span id="statusText">Остановлен</span>
+          <span class="status-sep"></span>
+          <span id="portLabel" class="mono">127.0.0.1:17899</span>
+        </div>
+        <div class="window-controls">
+          <button id="winMin" class="win-btn" title="Свернуть" aria-label="Свернуть">
+            <svg viewBox="0 0 12 12" fill="none"><path d="M2.5 6.5h7" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          </button>
+          <button id="winMax" class="win-btn" title="Развернуть" aria-label="Развернуть">
+            <svg viewBox="0 0 12 12" fill="none"><rect x="2.8" y="2.8" width="6.4" height="6.4" rx="1" stroke="currentColor" stroke-width="1.1"/></svg>
+          </button>
+          <button id="winClose" class="win-btn close" title="Свернуть в трей (шлюз продолжит работать)" aria-label="Свернуть в трей">
+            <svg viewBox="0 0 12 12" fill="none"><path d="M3 3l6 6M9 3 3 9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="shell">
+      <aside class="sidebar">
+        <div class="sidebar-head">
+          <span>Провайдеры</span>
+          <button id="addBtn" class="icon-btn" title="Добавить провайдера">+</button>
+        </div>
+        <div id="providerList" class="provider-list"></div>
+        <div class="sidebar-foot">
+          <button id="settingsBtn" class="ghost wide">Настройки</button>
+        </div>
+      </aside>
+
+      <section class="content">
+        <div id="empty" class="empty">
+          <div class="empty-mark">＋</div>
+          <h2>Пока пусто</h2>
+          <p>Добавьте провайдера: OpenAI, OpenRouter, DeepSeek, Gemini, Ollama или любой OpenAI-совместимый сервис.</p>
+          <button id="emptyAdd" class="primary">Добавить провайдера</button>
+        </div>
+
+        <form id="providerForm" class="card hidden" autocomplete="off">
+          <div class="card-head">
+            <div>
+              <h2 id="formTitle">Провайдер</h2>
+              <p id="formSubtitle" class="muted">Ключ хранится в Windows Credential Manager</p>
+            </div>
+            <div class="badges">
+              <span id="formKindBadge" class="badge">openai</span>
+              <span id="formKeyBadge" class="badge soft">ключ не задан</span>
+            </div>
+          </div>
+
+          <label id="presetField" class="field hidden">
+            <span>Шаблон</span>
+            <select id="presetInput">
+              <option value="">— заполнить вручную —</option>
+            </select>
+            <small>Заполнит ID, тип и Base URL; ключ и модели — ваши.</small>
+          </label>
+
+          <div class="grid two">
+            <label class="field">
+              <span>ID</span>
+              <input id="idInput" name="id" placeholder="openai" spellcheck="false">
+              <small>латиница, цифры, дефис; попадает в имя модели</small>
+            </label>
+            <label class="field">
+              <span>Название</span>
+              <input id="nameInput" name="name" placeholder="OpenAI">
+            </label>
+          </div>
+
+          <div class="grid two">
+            <label class="field">
+              <span>Тип API</span>
+              <select id="kindInput">
+                <option value="openai">OpenAI-совместимый</option>
+                <option value="anthropic">Anthropic Messages</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Base URL</span>
+              <input id="baseInput" name="baseUrl" placeholder="https://api.openai.com/v1" spellcheck="false">
+            </label>
+          </div>
+
+          <label class="field">
+            <span>API-ключ</span>
+            <div class="key-row">
+              <input id="keyInput" type="password" placeholder="вставьте ключ" autocomplete="new-password">
+              <button type="button" id="clearKeyBtn" class="ghost danger hidden">Удалить ключ</button>
+            </div>
+            <small id="keyHint">Для localhost ключ можно не заполнять.</small>
+          </label>
+
+          <div class="field">
+            <div class="field-head">
+              <label for="modelsInput">Модели</label>
+              <button type="button" id="fetchModelsBtn" class="ghost small">Загрузить с провайдера</button>
+            </div>
+            <textarea id="modelsInput" rows="6" spellcheck="false" placeholder="gpt-5.2&#10;claude-sonnet-4-5&#10;qwen3:8b"></textarea>
+            <small>Одна модель на строку. Суффикс <code>[1m]</code> включает 1M-контекст. Первая модель — по умолчанию для фоновых запросов Claude.</small>
+          </div>
+
+          <div id="pickerBox" class="picker hidden">
+            <div class="picker-head">
+              <input id="pickerFilter" placeholder="фильтр" spellcheck="false">
+              <span id="pickerCount" class="muted small"></span>
+              <button type="button" id="pickerClose" class="icon-btn" title="Скрыть">×</button>
+            </div>
+            <div id="pickerList" class="picker-list"></div>
+          </div>
+
+          <div class="grid two">
+            <label class="field">
+              <span>Макс. уровень рассуждения</span>
+              <select id="maxEffortInput">
+                <option value="">выключено</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+                <option value="max">max</option>
+              </select>
+              <small>Включено — в Claude появится выбор уровня, шлюз передаст его провайдеру не выше этого (OpenAI — <code>reasoning_effort</code>, Anthropic — <code>output_config.effort</code>). Включайте, если провайдер его понимает: у OpenAI, например, нет <code>xhigh</code> и <code>max</code>.</small>
+            </label>
+            <label class="field">
+              <span>Уровень по умолчанию</span>
+              <select id="defaultEffortInput">
+                <option value="">как решит провайдер</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="xhigh">xhigh</option>
+                <option value="max">max</option>
+              </select>
+              <small>Если Claude уровень не прислал (например, Claude Code в терминале без <code>--effort</code>).</small>
+            </label>
+          </div>
+
+          <div id="aliasBox" class="alias-box hidden">
+            <div class="alias-title">Псевдонимы для Claude</div>
+            <div id="aliasList" class="alias-list"></div>
+          </div>
+
+          <div class="form-actions">
+            <button type="submit" class="primary">Сохранить</button>
+            <button type="button" id="testBtn" class="ghost" title="Короткий настоящий запрос к первой модели через шлюз">Проверить</button>
+            <button type="button" id="deleteBtn" class="ghost danger">Удалить</button>
+            <span id="formNotice" class="notice"></span>
+          </div>
+        </form>
+
+        <div id="settingsPanel" class="card hidden">
+          <div class="card-head">
+            <div>
+              <h2>Настройки</h2>
+              <p class="muted">Порт, путь к Claude и локальный токен</p>
+            </div>
+            <button id="closeSettings" class="ghost">Закрыть</button>
+          </div>
+
+          <div class="grid two">
+            <label class="field">
+              <span>Порт шлюза</span>
+              <input id="portInput" type="number" min="1" max="65535" placeholder="17899">
+              <small>Слушает только 127.0.0.1</small>
+            </label>
+            <label class="field">
+              <span>claude.exe</span>
+              <input id="claudePathInput" placeholder="определяется автоматически" spellcheck="false">
+              <small id="detectedClaude">Claude Desktop не найден</small>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>Папка для Claude Code</span>
+            <input id="codeDirInput" placeholder="домашняя папка" spellcheck="false">
+            <small>Где кнопка «Claude Code» открывает консоль с <code>claude</code>, подключённым к этому шлюзу.</small>
+          </label>
+
+          <div class="field">
+            <label class="check">
+              <input id="russianInput" type="checkbox">
+              <span>Русский интерфейс Claude</span>
+            </label>
+            <small>Запускает отдельную копию Claude (~700 МБ в <code>%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru</code>) с официальным русским переводом claude.ai. Подпись копии недействительна; установленный Claude не меняется. Если копию собрать нельзя, откроется обычный Claude.</small>
+            <small id="russianFileHint"></small>
+          </div>
+
+          <div class="field">
+            <span>Совместимость с установленным Claude</span>
+            <ul id="claudeCheckList" class="check-list"></ul>
+            <small>Проверяется при старте и перед «Открыть Claude»: после обновления Claude приложение само берёт из него правила моделей, обновляет перевод и заранее собирает русскую копию.</small>
+          </div>
+
+          <label class="field">
+            <span>Локальный токен</span>
+            <div class="key-row">
+              <input id="tokenInput" class="mono" readonly>
+              <button type="button" id="copyTokenBtn" class="ghost">Копировать</button>
+            </div>
+            <small>Этот токен шлюз ждёт в <code>x-api-key</code>; ключи провайдеров хранятся отдельно.</small>
+          </label>
+
+          <div class="form-actions">
+            <button type="button" id="saveSettingsBtn" class="primary">Сохранить настройки</button>
+            <button type="button" id="copyEnvBtn" class="ghost">Скопировать env для Claude Code</button>
+            <button type="button" id="openLogsFolderBtn" class="ghost">Папка с логами</button>
+          </div>
+          <p class="muted small">Claude Desktop запускается в отдельном профиле <code>%LOCALAPPDATA%\ClaudeProviderGateway\Claude-3p</code> и не трогает ваши аккаунты.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="actions">
+      <div class="actions-left">
+        <button id="startBtn" class="primary">Запустить шлюз</button>
+        <button id="stopBtn" class="ghost">Остановить</button>
+        <button id="launchBtn" class="accent" disabled>Открыть Claude</button>
+        <button id="launchCodeBtn" class="ghost" disabled title="Claude Code CLI в новом окне консоли через этот шлюз">Claude Code</button>
+      </div>
+      <div class="actions-right">
+        <span id="modelCount" class="muted">0 моделей</span>
+        <button id="logsBtn" class="ghost">Журнал</button>
+      </div>
+    </footer>
+
+    <section id="logPanel" class="logs hidden">
+      <div class="logs-head">
+        <span>Журнал шлюза</span>
+        <div>
+          <button id="refreshLogsBtn" class="ghost small">Обновить</button>
+          <button id="closeLogsBtn" class="icon-btn" title="Закрыть">×</button>
+        </div>
+      </div>
+      <pre id="logText">Логов пока нет</pre>
+    </section>
+
+    <div id="toast" class="toast"></div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

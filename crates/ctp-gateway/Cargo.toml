@@ -1,0 +1,32 @@
+[package]
+name = "ctp-gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+ctp-core = { path = "../ctp-core" }
+anyhow.workspace = true
+async-stream.workspace = true
+axum.workspace = true
+bytes.workspace = true
+clap.workspace = true
+eventsource-stream.workspace = true
+futures-util.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tracing.workspace = true
+tracing-appender.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+http-body-util.workspace = true
+wiremock.workspace = true

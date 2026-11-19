@@ -1,0 +1,46 @@
+[workspace]
+resolver = "2"
+members = ["crates/ctp-core", "crates/ctp-gateway", "crates/ctp-app"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+arboard = "3"
+async-stream = "0.3"
+axum = "0.8"
+bytes = "1"
+clap = { version = "4", features = ["derive"] }
+eventsource-stream = "0.2"
+futures-util = "0.3"
+http-body-util = "0.1"
+# Без платформенной фичи keyring 3 молча берёт mock: ключи живут только в памяти процесса.
+keyring = { version = "3", features = ["windows-native"] }
+regex = "1"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+sha2 = "0.10"
+subtle = "2"
+tauri = { version = "2.12.7", features = ["tray-icon"] }
+tauri-build = "2.7.6"
+thiserror = "2"
+tiktoken-rs = "0.12"
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4"] }
+wiremock = "0.6"
+windows-registry = "0.6"
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

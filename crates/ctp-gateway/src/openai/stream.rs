@@ -1,0 +1,400 @@
+use crate::error;
+use crate::openai::response;
+use serde_json::{Value, json};
+use std::collections::BTreeMap;
+use uuid::Uuid;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BlockKind {
+    Text,
+    Thinking,
+}
+
+struct CurrentBlock {
+    kind: BlockKind,
+    index: u32,
+}
+
+#[derive(Default)]
+struct ToolCallBuf {
+    id: String,
+    name: String,
+    arguments: String,
+}
+
+/// OpenAI Chat Completions SSE → Anthropic Messages SSE.
+///
+/// Текст и reasoning идут потоком; вызовы инструментов буферизуются до
+/// `finish_reason`, потому что Anthropic не даёт дописывать в уже закрытый
+/// content block, а OpenAI-провайдеры иногда чередуют дельты разных tool call.
+pub struct StreamTranslator {
+    model: String,
+    message_id: String,
+    input_tokens: u64,
+    next_index: u32,
+    current: Option<CurrentBlock>,
+    tools: BTreeMap<u64, ToolCallBuf>,
+    output_chars: u64,
+    output_tokens: Option<u64>,
+    finish_reason: Option<String>,
+    done: bool,
+    secret: String,
+}
+
+impl StreamTranslator {
+    pub fn new(model: impl Into<String>, input_tokens: u64) -> Self {
+        Self {
+            model: model.into(),
+            message_id: format!("msg_{}", Uuid::new_v4().simple()),
+            input_tokens,
+            next_index: 0,
+            current: None,
+            tools: BTreeMap::new(),
+            output_chars: 0,
+            output_tokens: None,
+            finish_reason: None,
+            done: false,
+            secret: String::new(),
+        }
+    }
+
+    /// Ключ провайдера: вырезается из ошибок, пришедших внутри потока.
+    pub fn with_secret(mut self, secret: impl Into<String>) -> Self {
+        self.secret = secret.into();
+        self
+    }
+
+    pub fn start(&self) -> Value {
+        json!({
+            "type": "message_start",
+            "message": {
+                "id": self.message_id,
+                "type": "message",
+                "role": "assistant",
+                "model": self.model,
+                "content": [],
+                "stop_reason": null,
+                "stop_sequence": null,
+                "usage": {"input_tokens": self.input_tokens, "output_tokens": 0}
+            }
+        })
+    }
+
+    pub fn on_chunk(&mut self, chunk: &Value) -> Vec<Value> {
+        if self.done {
+            return Vec::new();
+        }
+        if chunk.get("error").is_some() {
+            self.done = true;
+            return vec![Self::error_event(&error::clean_error_text(
+                &chunk.to_string(),
+                &self.secret,
+            ))];
+        }
+
+        if let Some(output) = chunk
+            .get("usage")
+            .and_then(|usage| {
+                usage
+                    .get("completion_tokens")
+                    .or_else(|| usage.get("output_tokens"))
+            })
+            .and_then(Value::as_u64)
+        {
+            self.output_tokens = Some(output);
+        }
+
+        let Some(choice) = chunk
+            .get("choices")
+            .and_then(Value::as_array)
+            .and_then(|choices| choices.first())
+        else {
+            return Vec::new();
+        };
+        let delta = choice.get("delta").unwrap_or(&Value::Null);
+        let mut events = Vec::new();
+
+        let reasoning = reasoning_delta(delta);
+        if !reasoning.is_empty() {
+            events.extend(self.ensure(BlockKind::Thinking));
+            let index = self.current.as_ref().expect("block was opened").index;
+            events.push(json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "thinking_delta", "thinking": reasoning}
+            }));
+            self.output_chars += reasoning.chars().count() as u64;
+        }
+
+        let text = content_delta(delta);
+        if !text.is_empty() {
+            events.extend(self.ensure(BlockKind::Text));
+            let index = self.current.as_ref().expect("block was opened").index;
+            events.push(json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "text_delta", "text": text}
+            }));
+            self.output_chars += text.chars().count() as u64;
+        }
+
+        if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
+            for (position, call) in calls.iter().enumerate() {
+                let index = call
+                    .get("index")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(position as u64);
+                let entry = self.tools.entry(index).or_default();
+                if let Some(id) = call
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty())
+                {
+                    entry.id = id.to_string();
+                }
+                if let Some(name) = call
+                    .get("function")
+                    .and_then(|function| function.get("name"))
+                    .and_then(Value::as_str)
+                    .filter(|name| !name.is_empty())
+                {
+                    entry.name = name.to_string();
+                }
+                if let Some(arguments) = call
+                    .get("function")
+                    .and_then(|function| function.get("arguments"))
+                {
+                    entry.arguments.push_str(&arguments_text(arguments));
+                }
+            }
+        }
+
+        if let Some(reason) = choice
+            .get("finish_reason")
+            .and_then(Value::as_str)
+            .filter(|reason| !reason.is_empty())
+        {
+            self.finish_reason = Some(reason.to_string());
+        }
+
+        events
+    }
+
+    pub fn finish(&mut self) -> Vec<Value> {
+        if self.done {
+            return Vec::new();
+        }
+        self.done = true;
+
+        let mut events = self.close_current();
+        let mut tool_count = 0usize;
+        for (_, mut call) in std::mem::take(&mut self.tools) {
+            if call.name.is_empty() {
+                tracing::warn!("tool call без имени пропущен");
+                continue;
+            }
+            if call.id.is_empty() {
+                call.id = format!("toolu_{}", Uuid::new_v4().simple());
+            }
+            let arguments = valid_arguments(&call.arguments);
+            let index = self.next_index;
+            self.next_index += 1;
+            events.push(json!({
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "tool_use", "id": call.id, "name": call.name, "input": {}}
+            }));
+            events.push(json!({
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "input_json_delta", "partial_json": arguments}
+            }));
+            events.push(json!({"type": "content_block_stop", "index": index}));
+            self.output_chars += arguments.chars().count() as u64;
+            tool_count += 1;
+        }
+
+        let stop_reason = response::map_stop_reason(self.finish_reason.as_deref(), tool_count > 0);
+        let output_tokens = self
+            .output_tokens
+            .unwrap_or_else(|| (self.output_chars / 4).max(1));
+        events.push(json!({
+            "type": "message_delta",
+            "delta": {"stop_reason": stop_reason, "stop_sequence": null},
+            "usage": {"output_tokens": output_tokens}
+        }));
+        events.push(json!({"type": "message_stop"}));
+        events
+    }
+
+    pub fn is_done(&self) -> bool {
+        self.done
+    }
+
+    pub fn error_event(message: &str) -> Value {
+        json!({"type": "error", "error": {"type": "api_error", "message": message}})
+    }
+
+    fn ensure(&mut self, kind: BlockKind) -> Vec<Value> {
+        if self
+            .current
+            .as_ref()
+            .is_some_and(|block| block.kind == kind)
+        {
+            return Vec::new();
+        }
+        let mut events = self.close_current();
+        let index = self.next_index;
+        self.next_index += 1;
+        let content_block = match kind {
+            BlockKind::Text => json!({"type": "text", "text": ""}),
+            BlockKind::Thinking => json!({"type": "thinking", "thinking": ""}),
+        };
+        events.push(json!({
+            "type": "content_block_start",
+            "index": index,
+            "content_block": content_block
+        }));
+        self.current = Some(CurrentBlock { kind, index });
+        events
+    }
+
+    fn close_current(&mut self) -> Vec<Value> {
+        self.current
+            .take()
+            .map(|block| vec![json!({"type": "content_block_stop", "index": block.index})])
+            .unwrap_or_default()
+    }
+}
+
+fn reasoning_delta(delta: &Value) -> String {
+    for key in ["reasoning_content", "reasoning"] {
+        if let Some(text) = delta.get(key).and_then(Value::as_str) {
+            if !text.is_empty() {
+                return text.to_string();
+            }
+        }
+    }
+    if let Some(details) = delta.get("reasoning_details").and_then(Value::as_array) {
+        return details
+            .iter()
+            .filter_map(|detail| detail.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("");
+    }
+    String::new()
+}
+
+fn content_delta(delta: &Value) -> String {
+    match delta.get("content") {
+        Some(Value::String(text)) => text.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join(""),
+        _ => String::new(),
+    }
+}
+
+fn arguments_text(arguments: &Value) -> String {
+    match arguments {
+        Value::String(text) => text.clone(),
+        Value::Null => String::new(),
+        other => serde_json::to_string(other).unwrap_or_default(),
+    }
+}
+
+fn valid_arguments(arguments: &str) -> String {
+    if arguments.is_empty() {
+        return "{}".to_string();
+    }
+    match serde_json::from_str::<Value>(arguments) {
+        Ok(Value::Object(_)) => arguments.to_string(),
+        _ => {
+            tracing::warn!("tool arguments не JSON-объект, отправляю {{}}");
+            "{}".to_string()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn error_inside_stream_does_not_leak_odd_key() {
+        let mut translator = StreamTranslator::new("claude-x", 1).with_secret("sk-abcdef+ghi/jkl");
+        let events =
+            translator.on_chunk(&json!({"error": {"message": "bad key sk-abcdef+ghi/jkl"}}));
+        let text = events[0].to_string();
+        assert!(!text.contains("ghi/") && !text.contains("abcdef"), "{text}");
+    }
+
+    #[test]
+    fn translates_text_thinking_and_buffered_tool_call() {
+        let mut translator = StreamTranslator::new("claude-x", 12);
+        let start = translator.start();
+        assert_eq!(start["type"], "message_start");
+
+        let chunk = json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "reasoning_content": "think",
+                    "content": "hi",
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_1",
+                        "function": {"name": "read", "arguments": "{\"path\":"}
+                    }]
+                },
+                "finish_reason": null
+            }]
+        });
+        let events = translator.on_chunk(&chunk);
+        let types: Vec<&str> = events
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                "content_block_start",
+                "content_block_delta",
+                "content_block_stop",
+                "content_block_start",
+                "content_block_delta"
+            ]
+        );
+
+        let finish = json!({
+            "choices": [{
+                "delta": {"tool_calls": [{"index": 0, "function": {"arguments": "\"a.txt\"}"}}]},
+                "finish_reason": "tool_calls"
+            }],
+            "usage": {"prompt_tokens": 12, "completion_tokens": 7}
+        });
+        let events = translator.on_chunk(&finish);
+        assert!(events.is_empty(), "tool delta не должен литься в SSE сразу");
+
+        let events = translator.finish();
+        let types: Vec<&str> = events
+            .iter()
+            .map(|event| event["type"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            types,
+            vec![
+                "content_block_stop",
+                "content_block_start",
+                "content_block_delta",
+                "content_block_stop",
+                "message_delta",
+                "message_stop"
+            ]
+        );
+        assert_eq!(events[4]["usage"]["output_tokens"], 7);
+        assert_eq!(events[4]["delta"]["stop_reason"], "tool_use");
+    }
+}

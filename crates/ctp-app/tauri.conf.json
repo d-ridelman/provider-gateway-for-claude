@@ -1,0 +1,43 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Provider Gateway for Claude",
+  "mainBinaryName": "provider-gateway",
+  "version": "0.1.0",
+  "identifier": "app.provider-gateway-for-claude",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "Provider Gateway for Claude",
+        "width": 1080,
+        "height": 760,
+        "minWidth": 900,
+        "minHeight": 620,
+        "center": true,
+        "resizable": true,
+        "decorations": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.ico"],
+    "publisher": "Provider Gateway for Claude contributors",
+    "copyright": "Provider Gateway for Claude contributors. MIT OR Apache-2.0.",
+    "shortDescription": "Local Anthropic Messages gateway for Claude Desktop and Claude Code",
+    "longDescription": "Runs Claude Desktop (third-party inference mode) and Claude Code through any OpenAI- or Anthropic-compatible provider via a local gateway. Not affiliated with Anthropic.",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["English", "Russian"]
+      }
+    }
+  }
+}
