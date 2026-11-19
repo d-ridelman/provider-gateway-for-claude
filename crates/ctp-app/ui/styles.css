@@ -209,7 +209,7 @@ code {
   flex: 1 1 auto;
   min-height: 0;
   display: grid;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: 264px minmax(0, 1fr);
 }
 .sidebar {
   border-right: 1px solid var(--line-soft);
@@ -285,30 +285,45 @@ code {
 .content {
   min-width: 0;
   overflow-y: auto;
-  padding: 24px;
+  padding: 20px;
 }
 .card {
-  max-width: 880px;
+  max-width: 1080px;
   margin: 0 auto;
   background: var(--card-bg);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 22px;
+  padding: 20px 22px;
   box-shadow: var(--shadow);
+  container-type: inline-size;
 }
 .card-head-text { min-width: 0; }
 .card-head-text h2, .card-head-text p { overflow-wrap: anywhere; }
 .card-head {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
-  margin-bottom: 20px;
+  margin-bottom: 14px;
 }
 .card-head h2 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -.01em; }
 .card-head p { margin: 4px 0 0; font-size: 12px; }
 .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 
-.grid { display: grid; gap: 14px; margin-bottom: 14px; }
+.grid { display: grid; gap: 12px 14px; margin-bottom: 12px; align-items: start; }
 .grid.two { grid-template-columns: 1fr 1fr; }
-.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+.grid .field { margin-bottom: 0; }
+.row-ident { grid-template-columns: 1fr 1.3fr 1fr; }
+.row-endpoint { grid-template-columns: 1.2fr 1fr; }
+.row-models { grid-template-columns: 1.7fr 1fr; }
+.effort-col { display: flex; flex-direction: column; gap: 10px; }
+/* The models label row holds a button: keep it the height of a plain label. */
+.field-head { min-height: 18px; }
+.field-head .small { padding: 2px 9px; }
+.effort-col > small { color: var(--dim); font-size: 11px; line-height: 1.4; }
+.field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+/* Settings: two columns when the card is wide enough. */
+.settings-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 24px; }
+@container (max-width: 700px) {
+  .row-ident, .row-endpoint, .row-models, .grid.two, .settings-cols { grid-template-columns: 1fr; }
+}
 .field > span, .field > label:not(.check), .field-label { font-size: 12px; font-weight: 600; color: var(--muted); }
 .field small { color: var(--dim); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
 input, select, textarea {
@@ -328,7 +343,7 @@ input:focus, select:focus, textarea:focus {
   box-shadow: 0 0 0 3px rgba(201, 100, 66, .12);
 }
 input:disabled, select:disabled, textarea:disabled { opacity: .5; cursor: not-allowed; }
-textarea { resize: vertical; min-height: 110px; font-family: var(--mono); line-height: 1.5; }
+textarea { resize: vertical; min-height: 92px; font-family: var(--mono); line-height: 1.5; }
 select {
   appearance: none;
   padding-right: 30px;
@@ -371,10 +386,11 @@ select {
 /* A section of the card, not a card inside the card. */
 .alias-box {
   border-top: 1px solid var(--line-soft);
-  padding: 14px 0 0;
-  margin: 4px 0 16px;
+  padding: 10px 0 0;
+  margin: 2px 0 12px;
 }
-.alias-title { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; font-weight: 650; margin-bottom: 8px; }
+.alias-title { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .1em; font-weight: 650; cursor: pointer; padding: 4px 0; }
+.alias-box[open] .alias-title { margin-bottom: 8px; }
 .alias-list { display: flex; flex-direction: column; gap: 5px; }
 .alias-row { display: flex; align-items: center; gap: 8px; font-size: 11px; min-width: 0; }
 .alias-row .from { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -382,7 +398,7 @@ select {
 .alias-row .to { font-family: var(--mono); color: var(--accent-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .form-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding-top: 4px; }
 /* Save and the unsaved-changes mark stay in view while a long form scrolls. */
-#providerForm .form-actions {
+#providerForm .form-actions, .settings-actions {
   position: sticky;
   bottom: -24px;
   margin: 0 -22px -22px;
@@ -633,7 +649,6 @@ button.small { padding: 5px 9px; font-size: 11px; }
 
 @media (max-width: 900px) {
   .shell { grid-template-columns: 240px minmax(0, 1fr); }
-  .grid.two { grid-template-columns: 1fr; }
   .titlebar-sub { display: none; }
   .status #portLabel { display: none; }
   .status-sep { display: none; }

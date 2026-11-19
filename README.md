@@ -1,0 +1,123 @@
+<p align="center">
+  <img src="docs/images/icon.png" width="96" alt="">
+</p>
+
+<h1 align="center">Provider Gateway for Claude</h1>
+
+<p align="center">
+  Run Claude Desktop and Claude Code on the models you choose:<br>
+  OpenAI, OpenRouter, DeepSeek, Gemini, OpenCode, Ollama, LM Studio or any OpenAI- or Anthropic-compatible API.
+</p>
+
+<p align="center">
+  <b>English</b> · <a href="README.ru.md">Русский</a>
+</p>
+
+<p align="center">
+  <img src="docs/images/main-en.png" width="860" alt="Provider Gateway for Claude: a provider with its models, the gateway running">
+</p>
+
+> **Unofficial.** This project is not affiliated with, endorsed by or sponsored by Anthropic. "Claude" is a trademark of Anthropic, PBC; it is used here only to say which apps the gateway works with.
+
+## What it does
+
+Claude Desktop can run in third-party inference mode and Claude Code can talk to any Anthropic-style endpoint. Provider Gateway for Claude is a small Windows app that runs that endpoint for you on `127.0.0.1` and translates each request to your provider:
+
+- **Anthropic Messages → OpenAI Chat Completions**, including streaming, tool calls, images and reasoning levels; or straight passthrough for Anthropic-compatible providers.
+- **Claude Desktop in a separate profile**, so your own Claude account and chats stay untouched. Your models appear in Claude's model menu under readable names.
+- **Claude Code in one click**: a console opens in your project folder with `claude` already connected to the gateway.
+
+## Features
+
+- Any number of providers, each with its own key, models and reasoning-level ceiling. Templates for OpenAI, OpenRouter, OpenCode Go and Zen, DeepSeek, Gemini, Anthropic, Ollama, llama.cpp and LM Studio.
+- **Load models from the provider**, with hints from the open [OpenCode model catalog](https://models.dev): readable names, 1M-context models and supported reasoning levels are filled in for you.
+- **Test connection** sends one real request through the gateway and shows the answer.
+- **Keys stay in Windows Credential Manager**, never in files. The gateway listens on `127.0.0.1` only and requires a local token.
+- **Keeps working after Claude updates**: the app reads Claude's model rules from the installed version, checks its config fields and tells you in Settings if something no longer matches.
+- **Russian interface for Claude Desktop** (optional): a separate patched copy of Claude with claude.ai's own Russian translation. Your installed Claude is not modified.
+- **Lives in the tray** while you work; the gateway keeps running when the window is closed.
+- **Updates itself** from GitHub Releases; every update is verified against a signing key built into the app.
+- English and Russian interface, following the Windows display language; light and dark theme follow Windows too.
+
+## Requirements
+
+- Windows 10 or 11, x64, with WebView2 (built into Windows 11).
+- [Claude Desktop](https://claude.ai/download) for the desktop chat. Tested with Claude Desktop 6.6395.0.
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) for the terminal agent (optional).
+- An account and API key with at least one provider, or a local model server.
+
+## Install
+
+1. Download `Provider-Gateway-for-Claude_<version>_x64-setup.exe` from [Releases](https://github.com/d-ridelman/provider-gateway-for-claude/releases).
+2. Run it. It installs for the current user only and needs no administrator rights.
+
+The installer is not code-signed yet, so Windows SmartScreen may warn about an unknown publisher: choose **More info → Run anyway**. You can compare the file with `SHA256SUMS.txt` from the same release:
+
+```powershell
+Get-FileHash .\Provider-Gateway-for-Claude_*_x64-setup.exe -Algorithm SHA256
+```
+
+A portable `.exe` is attached to each release as well.
+
+## Quick start
+
+1. Click **+**, pick a template (for example *OpenRouter*), paste your API key.
+2. Click **Load from provider** and pick models, or type model IDs one per line. Add `[1m]` to a model that has a 1M-token context window.
+3. Click **Save**. The gateway starts on its own.
+4. Click **Open Claude** for Claude Desktop, or **Claude Code** for a console with the CLI.
+
+<p align="center">
+  <img src="docs/images/settings-en.png" width="760" alt="Settings: language, port, Claude paths, compatibility check, updates">
+</p>
+
+### Reasoning levels
+
+Set **Max reasoning level** on a provider and Claude offers a level picker for its models. The gateway passes the chosen level as `reasoning_effort` (OpenAI-compatible) or `output_config.effort` (Anthropic), capped at the maximum. **Default level** is used when Claude sends none, for example Claude Code without `--effort`.
+
+### Claude Code by hand
+
+Settings → **Copy the Claude Code command** puts a PowerShell snippet with `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN` and the model on the clipboard, if you prefer your own terminal.
+
+## Privacy and network
+
+The app talks to:
+
+| Where | When |
+|---|---|
+| The providers you add | When Claude or Claude Code sends a request, and on Load models / Test connection |
+| `models.opencode.ai` | On **Load from provider**, for model names and limits; nothing about you is sent |
+| `claude.ai/i18n/ru.json` | Only with the Russian Claude interface turned on, when Claude updates |
+| `github.com` (this repository's releases) | Update check at start and once a day; turn it off in Settings |
+
+There is no telemetry. Prompts and answers go only between Claude and your provider through the local gateway.
+
+## Where things are
+
+| What | Path |
+|---|---|
+| Settings and log | `%APPDATA%\app.provider-gateway-for-claude` |
+| Provider keys | Windows Credential Manager, service `claude-provider-gateway` |
+| Claude Desktop profile used by the app | `%LOCALAPPDATA%\ClaudeProviderGateway\Claude-3p` |
+| Russian Claude copy (~700 MB, optional) | `%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru` |
+
+## Build from source
+
+Requirements: Rust 1.85+ with the MSVC toolchain, Node.js (for the installer), Python 3 (optional, refreshes license notices).
+
+```powershell
+cargo test --workspace
+.\build-app.ps1              # portable exe in dist\
+.\build-app.ps1 -Installer   # plus the NSIS installer
+```
+
+The workspace has three crates:
+
+- `crates/ctp-core` — configuration and model naming shared by the others;
+- `crates/ctp-gateway` — the Anthropic Messages gateway, also usable on its own (`ctp-gateway --providers-file providers.json`);
+- `crates/ctp-app` — the Windows app (Tauri 2).
+
+Releases are prepared with `tools/release.ps1` (signed installer, `latest.json`, checksums). `tools/cloudflare-mirror` is an optional update mirror for networks where GitHub is slow or unreachable.
+
+## License
+
+Licensed under either of [Apache License 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT) at your option. Third-party components and their licenses are listed in [THIRD-PARTY-NOTICES.txt](THIRD-PARTY-NOTICES.txt).

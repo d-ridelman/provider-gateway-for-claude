@@ -91,19 +91,16 @@
             <small data-i18n="form.presetHint"></small>
           </label>
 
-          <div class="grid two">
+          <!-- Compact layout: the whole form fits the default window; narrow cards stack it. -->
+          <div class="grid row-ident">
             <label class="field">
               <span data-i18n="form.id"></span>
-              <input id="idInput" name="id" placeholder="openai" spellcheck="false" required>
-              <small data-i18n="form.idHint"></small>
+              <input id="idInput" name="id" placeholder="openai" spellcheck="false" required data-i18n-title="form.idHint">
             </label>
             <label class="field">
               <span data-i18n="form.name"></span>
               <input id="nameInput" name="name" placeholder="OpenAI">
             </label>
-          </div>
-
-          <div class="grid two">
             <label class="field">
               <span data-i18n="form.kind"></span>
               <select id="kindInput">
@@ -111,28 +108,57 @@
                 <option value="anthropic" data-i18n="form.kindAnthropic"></option>
               </select>
             </label>
+          </div>
+
+          <div class="grid row-endpoint">
             <label class="field">
               <span data-i18n="form.baseUrl"></span>
               <input id="baseInput" name="baseUrl" type="url" placeholder="https://api.openai.com/v1" spellcheck="false" required>
             </label>
+            <div class="field">
+              <label for="keyInput" data-i18n="form.apiKey"></label>
+              <div class="key-row">
+                <input id="keyInput" type="password" autocomplete="new-password" spellcheck="false">
+                <button type="button" id="clearKeyBtn" class="ghost danger hidden" data-i18n="form.clearKey"></button>
+              </div>
+              <small id="keyHint"></small>
+            </div>
           </div>
 
-          <div class="field">
-            <label for="keyInput" data-i18n="form.apiKey"></label>
-            <div class="key-row">
-              <input id="keyInput" type="password" autocomplete="new-password" spellcheck="false">
-              <button type="button" id="clearKeyBtn" class="ghost danger hidden" data-i18n="form.clearKey"></button>
+          <div class="grid row-models">
+            <div class="field">
+              <div class="field-head">
+                <label for="modelsInput" data-i18n="form.models"></label>
+                <button type="button" id="fetchModelsBtn" class="ghost small" data-i18n="form.fetchModels"></button>
+              </div>
+              <textarea id="modelsInput" rows="4" spellcheck="false" placeholder="gpt-5.2&#10;deepseek-v4.1-flash[1m]&#10;qwen3:8b"></textarea>
+              <small data-i18n-html="form.modelsHint"></small>
             </div>
-            <small id="keyHint"></small>
-          </div>
-
-          <div class="field">
-            <div class="field-head">
-              <label for="modelsInput" data-i18n="form.models"></label>
-              <button type="button" id="fetchModelsBtn" class="ghost small" data-i18n="form.fetchModels"></button>
+            <div class="effort-col">
+              <label class="field">
+                <span data-i18n="form.maxEffort" data-i18n-title="form.maxEffortTitle"></span>
+                <select id="maxEffortInput" data-i18n-title="form.maxEffortTitle">
+                  <option value="" data-i18n="form.effortOff"></option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                  <option value="max">max</option>
+                </select>
+              </label>
+              <label class="field">
+                <span data-i18n="form.defaultEffort" data-i18n-title="form.defaultEffortTitle"></span>
+                <select id="defaultEffortInput" data-i18n-title="form.defaultEffortTitle">
+                  <option value="" data-i18n="form.effortProvider"></option>
+                  <option value="low">low</option>
+                  <option value="medium">medium</option>
+                  <option value="high">high</option>
+                  <option value="xhigh">xhigh</option>
+                  <option value="max">max</option>
+                </select>
+              </label>
+              <small data-i18n="form.effortHint"></small>
             </div>
-            <textarea id="modelsInput" rows="5" spellcheck="false" placeholder="gpt-5.2&#10;deepseek-v4.1-flash[1m]&#10;qwen3:8b"></textarea>
-            <small data-i18n-html="form.modelsHint"></small>
           </div>
 
           <div id="pickerBox" class="picker hidden">
@@ -144,37 +170,10 @@
             <div id="pickerList" class="picker-list"></div>
           </div>
 
-          <div class="grid two">
-            <label class="field">
-              <span data-i18n="form.maxEffort"></span>
-              <select id="maxEffortInput">
-                <option value="" data-i18n="form.effortOff"></option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-                <option value="max">max</option>
-              </select>
-              <small data-i18n-html="form.maxEffortHint"></small>
-            </label>
-            <label class="field">
-              <span data-i18n="form.defaultEffort"></span>
-              <select id="defaultEffortInput">
-                <option value="" data-i18n="form.effortProvider"></option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-                <option value="xhigh">xhigh</option>
-                <option value="max">max</option>
-              </select>
-              <small data-i18n-html="form.defaultEffortHint"></small>
-            </label>
-          </div>
-
-          <div id="aliasBox" class="alias-box hidden">
-            <div class="alias-title" data-i18n="form.aliases"></div>
+          <details id="aliasBox" class="alias-box hidden">
+            <summary id="aliasSummary" class="alias-title"></summary>
             <div id="aliasList" class="alias-list"></div>
-          </div>
+          </details>
 
           <div class="form-actions">
             <button type="submit" id="saveBtn" class="primary" data-i18n="form.save"></button>
@@ -193,6 +192,8 @@
             <button type="button" id="closeSettings" class="ghost" data-i18n="settings.close"></button>
           </div>
 
+          <div class="settings-cols">
+          <div>
           <div class="grid two">
             <label class="field">
               <span data-i18n="settings.language"></span>
@@ -234,8 +235,11 @@
             </label>
             <small data-i18n-html="settings.russianHint"></small>
             <small id="russianFileHint"></small>
+            <small data-i18n="settings.profileNote"></small>
+          </div>
           </div>
 
+          <div>
           <div class="field">
             <span class="field-label" data-i18n="settings.check"></span>
             <ul id="claudeCheckList" class="check-list" aria-live="polite"></ul>
@@ -261,13 +265,14 @@
             </div>
             <small data-i18n-html="settings.tokenHint"></small>
           </div>
+          </div>
+          </div>
 
-          <div class="form-actions">
+          <div class="form-actions settings-actions">
             <button type="button" id="saveSettingsBtn" class="primary" data-i18n="settings.save"></button>
             <button type="button" id="copyEnvBtn" class="ghost" data-i18n="settings.copyEnv"></button>
             <button type="button" id="openLogsFolderBtn" class="ghost" data-i18n="settings.logsFolder"></button>
           </div>
-          <p class="muted small" data-i18n-html="settings.profileNote"></p>
         </div>
       </section>
     </main>
