@@ -5,3 +5,5 @@
 .vscode/
 .idea/
 /state/
+# Local handoff notes and the backup of the updater signing key: never published.
+/handoff/
