@@ -47,8 +47,8 @@
       "../../LICENSE-APACHE": "LICENSE-APACHE.txt",
       "../../THIRD-PARTY-NOTICES.txt": "THIRD-PARTY-NOTICES.txt"
     },
-    "publisher": "Provider Gateway for Claude contributors",
-    "copyright": "Provider Gateway for Claude contributors. MIT OR Apache-2.0.",
+    "publisher": "Dmitry Filatov (d-ridelman)",
+    "copyright": "© 2026 Dmitry Filatov (d-ridelman). MIT OR Apache-2.0.",
     "shortDescription": "Local Anthropic Messages gateway for Claude Desktop and Claude Code",
     "longDescription": "Runs Claude Desktop (third-party inference mode) and Claude Code through any OpenAI- or Anthropic-compatible provider via a local gateway. Not affiliated with Anthropic.",
     "windows": {
