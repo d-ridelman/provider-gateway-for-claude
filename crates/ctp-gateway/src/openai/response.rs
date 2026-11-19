@@ -243,14 +243,9 @@ struct Usage {
 
 fn usage_tokens(value: &Value, fallback_input: u64, fallback_output: u64) -> Usage {
     let usage = value.get("usage");
-    let input = usage
-        .and_then(|usage| {
-            usage
-                .get("prompt_tokens")
-                .or_else(|| usage.get("input_tokens"))
-        })
-        .and_then(Value::as_u64)
-        .unwrap_or(fallback_input);
+    let (input, cached) = usage
+        .and_then(input_usage)
+        .unwrap_or((fallback_input, None));
     let output = usage
         .and_then(|usage| {
             usage
@@ -259,19 +254,28 @@ fn usage_tokens(value: &Value, fallback_input: u64, fallback_output: u64) -> Usa
         })
         .and_then(Value::as_u64)
         .unwrap_or(fallback_output);
-    let cached = usage
-        .and_then(|usage| {
-            usage
-                .get("prompt_tokens_details")
-                .and_then(|details| details.get("cached_tokens"))
-                .or_else(|| usage.get("cache_read_input_tokens"))
-        })
-        .and_then(Value::as_u64);
     Usage {
         input,
         output,
         cached,
     }
+}
+
+/// Входные токены провайдера в смысле Anthropic: `input_tokens` без кэша и отдельно
+/// `cache_read_input_tokens`. У OpenAI `prompt_tokens` кэш уже включает — иначе Claude Code
+/// сложил бы его дважды и счёл контекст больше настоящего.
+pub fn input_usage(usage: &Value) -> Option<(u64, Option<u64>)> {
+    let cached = usage
+        .get("prompt_tokens_details")
+        .and_then(|details| details.get("cached_tokens"))
+        .or_else(|| usage.get("cache_read_input_tokens"))
+        .and_then(Value::as_u64)
+        .filter(|cached| *cached > 0);
+    if let Some(prompt) = usage.get("prompt_tokens").and_then(Value::as_u64) {
+        return Some((prompt.saturating_sub(cached.unwrap_or(0)), cached));
+    }
+    let input = usage.get("input_tokens").and_then(Value::as_u64)?;
+    Some((input, cached))
 }
 
 #[cfg(test)]

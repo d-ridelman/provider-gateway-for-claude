@@ -8,6 +8,11 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 - **Advisor switch in Settings** ("Strong is the advisor (/advisor)"): the app writes `advisorModel` to Claude Code's shared settings (`~/.claude/settings.json`, or `CLAUDE_CONFIG_DIR`), so `/advisor` is no longer needed. One line changes, the rest of the file stays byte for byte; the first original is kept as `settings.json.bak`. Ticked by default until you decide, and the first save writes it once; after that the app never turns it on by itself. A model already chosen with `/advisor` is kept; an unreadable settings file is left alone, and the other settings are saved anyway. The tooltip says what it affects (the regular Claude Code too).
 
+### Fixed
+
+- **Context compaction kicked in far too early with screenshots.** The gateway counted an image by its base64 text: one 1920×1140 screenshot came out as ~250 thousand tokens instead of ~1.5 thousand, so Claude Code saw the 1M window as full and compacted the conversation again and again (the context panel showed "Messages" near 100% while the real use was a few percent). Images are now counted by their pixel size, as Claude counts them (PNG, JPEG, GIF, WebP), PDFs by pages.
+- The real input size from the provider (`prompt_tokens`) now reaches Claude Code at the end of a streamed reply, instead of the gateway's estimate; cached tokens are no longer counted twice.
+
 ## [0.2.1] - 2026-11-19
 
 ### Added

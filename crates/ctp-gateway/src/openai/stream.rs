@@ -36,6 +36,10 @@ pub struct StreamTranslator {
     tools: BTreeMap<u64, ToolCallBuf>,
     output_chars: u64,
     output_tokens: Option<u64>,
+    /// Настоящие входные токены от провайдера (без кэша) и кэш — последнего отрезка:
+    /// его запрос и есть нынешний контекст. Приходят в конце потока, уходят в
+    /// `message_delta` вместо оценки из `message_start`.
+    provider_input: Option<(u64, Option<u64>)>,
     /// Токены прошлых отрезков ответа (до вызовов советника).
     prior_output_tokens: u64,
     /// Текст текущего отрезка: из него шлюз собирает ответ ассистента для продолжения.
@@ -68,6 +72,7 @@ impl StreamTranslator {
             tools: BTreeMap::new(),
             output_chars: 0,
             output_tokens: None,
+            provider_input: None,
             prior_output_tokens: 0,
             segment_text: String::new(),
             finish_reason: None,
@@ -120,6 +125,9 @@ impl StreamTranslator {
             .and_then(Value::as_u64)
         {
             self.output_tokens = Some(output);
+        }
+        if let Some(input) = chunk.get("usage").and_then(response::input_usage) {
+            self.provider_input = Some(input);
         }
 
         let Some(choice) = chunk
@@ -235,10 +243,17 @@ impl StreamTranslator {
 
         let stop_reason = response::map_stop_reason(self.finish_reason.as_deref(), tool_count > 0);
         let output_tokens = self.prior_output_tokens + self.segment_tokens();
+        let mut usage = json!({"output_tokens": output_tokens});
+        if let Some((input, cached)) = self.provider_input {
+            usage["input_tokens"] = json!(input);
+            if let Some(cached) = cached {
+                usage["cache_read_input_tokens"] = json!(cached);
+            }
+        }
         events.push(json!({
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": null},
-            "usage": {"output_tokens": output_tokens}
+            "usage": usage
         }));
         events.push(json!({"type": "message_stop"}));
         events
@@ -489,6 +504,37 @@ mod tests {
             ]
         );
         assert_eq!(events[4]["usage"]["output_tokens"], 7);
+        // Настоящий размер запроса от провайдера — Claude Code считает контекст по нему.
+        assert_eq!(events[4]["usage"]["input_tokens"], 12);
+        assert!(events[4]["usage"].get("cache_read_input_tokens").is_none());
         assert_eq!(events[4]["delta"]["stop_reason"], "tool_use");
+    }
+
+    #[test]
+    fn provider_input_is_reported_without_the_cache_twice() {
+        let mut translator = StreamTranslator::new("claude-x", 999_999);
+        translator.on_chunk(&json!({
+            "choices": [{"index": 0, "delta": {"content": "hi"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 50_000, "completion_tokens": 3,
+                      "prompt_tokens_details": {"cached_tokens": 40_000}}
+        }));
+        let events = translator.finish();
+        let delta = events
+            .iter()
+            .find(|e| e["type"] == "message_delta")
+            .unwrap();
+        // OpenAI: prompt_tokens включает кэш; Anthropic: input_tokens — без него.
+        assert_eq!(delta["usage"]["input_tokens"], 10_000);
+        assert_eq!(delta["usage"]["cache_read_input_tokens"], 40_000);
+
+        // Провайдер без usage: оценка остаётся в message_start, в delta входных нет.
+        let mut quiet = StreamTranslator::new("claude-x", 123);
+        quiet.on_chunk(&json!({"choices": [{"index": 0, "delta": {"content": "hi"}, "finish_reason": "stop"}]}));
+        let events = quiet.finish();
+        let delta = events
+            .iter()
+            .find(|e| e["type"] == "message_delta")
+            .unwrap();
+        assert!(delta["usage"].get("input_tokens").is_none());
     }
 }
