@@ -177,6 +177,8 @@ pub async fn messages(
     let session = crate::state::session_id(&headers, &body);
     match provider.kind {
         ProviderKind::Anthropic => {
+            // shortcut: советник шлюза — только для OpenAI-провайдеров; Anthropic-совместимому серверный инструмент `advisor` с моделью шлюза не по силам, поэтому он убирается. Сделать, если появится такой провайдер со своим советником.
+            strip_advisor(&mut body);
             passthrough::messages(&state, &provider, &uri, &headers, body, stream, started).await
         }
         ProviderKind::OpenAi => {
@@ -313,6 +315,34 @@ fn summarize_content(value: &Value) -> String {
 
 fn truncate_chars(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
+}
+
+/// Без советника: объявление `advisor_*` из инструментов и его блоки из истории.
+fn strip_advisor(body: &mut Value) {
+    if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
+        tools.retain(|tool| {
+            !tool
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|kind| kind.starts_with("advisor_"))
+        });
+    }
+    for message in body
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) {
+            content.retain(|block| {
+                let kind = block.get("type").and_then(Value::as_str);
+                !(kind == Some("advisor_tool_result")
+                    || kind == Some("server_tool_use")
+                        && block.get("name").and_then(Value::as_str)
+                            == Some(openai::request::ADVISOR))
+            });
+        }
+    }
 }
 
 fn is_probe(body: &Value) -> bool {

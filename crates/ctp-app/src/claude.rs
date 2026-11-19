@@ -7,6 +7,8 @@ use std::process::Command;
 
 /// Постоянный ID записи в `configLibrary`: Claude видит ту же конфигурацию от запуска к запуску.
 const LIBRARY_ID: &str = "6b1f3c52-7a0e-4f7e-9d4b-c1a0de9a7e3d";
+/// Без неё Claude Code объявляет советника (`/advisor`) только прямому API Anthropic.
+const ADVISOR_ENV: &str = "CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL";
 
 pub fn detect(config: &Config) -> Option<PathBuf> {
     if let Some(path) = config
@@ -190,6 +192,10 @@ pub fn code_env(
     }
     if let Some(opus) = opus {
         set.push(("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), opus.alias.clone()));
+        // fable — уровень выше opus (советники, `model: fable`): та же сильная модель.
+        set.push(("ANTHROPIC_DEFAULT_FABLE_MODEL".into(), opus.alias.clone()));
+        // Советник (`/advisor`): Claude Code объявляет его шлюзу, шлюз ведёт к сильной.
+        set.push((ADVISOR_ENV.into(), "1".into()));
     }
     set.extend([
         // haiku задавалась и до ролей: фоновые мелочи — на основной, если быстрой нет.
@@ -409,6 +415,10 @@ pub fn launch(
     if let Some(real) = real_local_appdata() {
         command.env(crate::ruui::REAL_LOCALAPPDATA_VAR, real);
     }
+    // Советник для сессий Code: Desktop передаёт им своё окружение.
+    if role_aliases(config).opus.is_some() {
+        command.env(ADVISOR_ENV, "1");
+    }
     // Снимок до запуска: копия перепишет `claude://` и COM-класс на себя (проверено вживую).
     #[cfg(windows)]
     let before = russian.then(|| crate::ruui::registry::snapshot(&copies));
@@ -510,7 +520,8 @@ pub fn local_appdata() -> Option<PathBuf> {
 /// Модели для 3p-конфига Claude. С уровнями рассуждения — `behavesAs` и `maxEffort`
 /// (схема `inferenceModels` в Claude 6.6395.0). Выбранные роли — `anthropicFamilyTier`
 /// и `isFamilyDefault`: по ним Desktop задаёт своим сессиям Code
-/// `ANTHROPIC_DEFAULT_{SONNET,OPUS,HAIKU}_MODEL`. Одна модель — одна роль (у записи одно
+/// `ANTHROPIC_DEFAULT_{SONNET,OPUS,HAIKU}_MODEL`. Роль `fable` сюда не идёт: вторая запись
+/// той же модели задвоила бы её в выборе модели. Одна модель — одна роль (у записи одно
 /// поле): выбрана на несколько — достаётся первой из sonnet, opus, haiku, а остальные
 /// Desktop решает сам, как без выбора.
 fn inference_models(
@@ -837,6 +848,12 @@ mod tests {
             Some(fast.alias.clone())
         );
         assert_eq!(get("ANTHROPIC_SMALL_FAST_MODEL"), Some(fast.alias.clone()));
+        // fable (советники) — на сильную, как opus; советник Claude Code включён.
+        assert_eq!(
+            get("ANTHROPIC_DEFAULT_FABLE_MODEL"),
+            Some(strong.alias.clone())
+        );
+        assert_eq!(get(ADVISOR_ENV), Some("1".into()));
         // Окно — по основной модели (без 1M), даже если у быстрой и сильной 1M.
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000".into()));
 
@@ -869,6 +886,10 @@ mod tests {
         };
         let (_, set) = code_env(&status, &stale, std::iter::empty()).unwrap();
         assert!(set.contains(&("ANTHROPIC_MODEL".into(), fast.alias.clone())));
+        assert!(
+            !set.iter()
+                .any(|(n, _)| n == "ANTHROPIC_DEFAULT_FABLE_MODEL" || n == ADVISOR_ENV)
+        );
 
         // Desktop: роль — в записи модели; одна модель на две роли — первая из sonnet, opus.
         let rows = inference_models(&status.models, &roles);
@@ -876,6 +897,8 @@ mod tests {
         assert_eq!(rows[1]["anthropicFamilyTier"], "sonnet");
         assert_eq!(rows[2]["anthropicFamilyTier"], "opus");
         assert!(rows.iter().all(|r| r["isFamilyDefault"] == true));
+        // fable в Desktop не дублируется (советника шлюз ведёт к сильной модели сам).
+        assert_eq!(rows.len(), 3);
         let shared = RoleAliases {
             sonnet: Some(main.alias.clone()),
             opus: Some(main.alias.clone()),

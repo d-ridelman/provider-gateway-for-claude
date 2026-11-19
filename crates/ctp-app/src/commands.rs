@@ -122,6 +122,7 @@ pub async fn test_provider(input: ProbeInput) -> Result<String, String> {
         .ok_or_else(|| tr!("Добавьте хотя бы одну модель", "Add at least one model"))?;
     let file = ctp_core::config::ProvidersFile {
         default: Some(alias.clone()),
+        advisor: None,
         providers: vec![config],
     };
     let started = std::time::Instant::now();

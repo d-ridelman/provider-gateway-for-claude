@@ -36,9 +36,25 @@ pub struct StreamTranslator {
     tools: BTreeMap<u64, ToolCallBuf>,
     output_chars: u64,
     output_tokens: Option<u64>,
+    /// Токены прошлых отрезков ответа (до вызовов советника).
+    prior_output_tokens: u64,
+    /// Текст текущего отрезка: из него шлюз собирает ответ ассистента для продолжения.
+    segment_text: String,
     finish_reason: Option<String>,
     done: bool,
     secret: String,
+}
+
+/// Вызов советника, перехваченный у модели.
+pub struct AdvisorCall {
+    /// ID вызова у провайдера: с ним идёт продолжение (`tool_call_id`).
+    pub call_id: String,
+    /// ID блока `server_tool_use` для Claude Code.
+    pub server_id: String,
+    /// Текст отрезка до вызова — содержимое ответа ассистента в продолжении.
+    pub text: String,
+    /// Другие вызовы инструментов в том же ответе: тогда продолжения нет.
+    pub others: bool,
 }
 
 impl StreamTranslator {
@@ -52,6 +68,8 @@ impl StreamTranslator {
             tools: BTreeMap::new(),
             output_chars: 0,
             output_tokens: None,
+            prior_output_tokens: 0,
+            segment_text: String::new(),
             finish_reason: None,
             done: false,
             secret: String::new(),
@@ -136,6 +154,7 @@ impl StreamTranslator {
                 "delta": {"type": "text_delta", "text": text}
             }));
             self.output_chars += text.chars().count() as u64;
+            self.segment_text.push_str(&text);
         }
 
         if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
@@ -215,9 +234,7 @@ impl StreamTranslator {
         }
 
         let stop_reason = response::map_stop_reason(self.finish_reason.as_deref(), tool_count > 0);
-        let output_tokens = self
-            .output_tokens
-            .unwrap_or_else(|| (self.output_chars / 4).max(1));
+        let output_tokens = self.prior_output_tokens + self.segment_tokens();
         events.push(json!({
             "type": "message_delta",
             "delta": {"stop_reason": stop_reason, "stop_sequence": null},
@@ -229,6 +246,76 @@ impl StreamTranslator {
 
     pub fn is_done(&self) -> bool {
         self.done
+    }
+
+    fn segment_tokens(&self) -> u64 {
+        self.output_tokens
+            .unwrap_or_else(|| (self.output_chars / 4).max(1))
+    }
+
+    /// Модель вызвала советника: вызов убирается из буфера, Claude Code получает блок
+    /// `server_tool_use` (как от сервера Anthropic). Остальные вызовы остаются в буфере.
+    pub fn take_advisor_call(&mut self) -> Option<(AdvisorCall, Vec<Value>)> {
+        if self.done {
+            return None;
+        }
+        let key = *self
+            .tools
+            .iter()
+            .find(|(_, call)| call.name == crate::openai::request::ADVISOR)?
+            .0;
+        let call = self.tools.remove(&key)?;
+        let server_id = format!("srvtoolu_{}", Uuid::new_v4().simple());
+        let call_id = if call.id.is_empty() {
+            format!("call_{}", Uuid::new_v4().simple())
+        } else {
+            call.id
+        };
+        let mut events = self.close_current();
+        let index = self.next_index;
+        self.next_index += 1;
+        events.push(json!({
+            "type": "content_block_start",
+            "index": index,
+            "content_block": {"type": "server_tool_use", "id": server_id, "name": crate::openai::request::ADVISOR, "input": {}}
+        }));
+        events.push(json!({
+            "type": "content_block_delta",
+            "index": index,
+            "delta": {"type": "input_json_delta", "partial_json": ""}
+        }));
+        events.push(json!({"type": "content_block_stop", "index": index}));
+        let advisor = AdvisorCall {
+            call_id,
+            server_id,
+            text: std::mem::take(&mut self.segment_text),
+            others: !self.tools.is_empty(),
+        };
+        Some((advisor, events))
+    }
+
+    /// Ответ советника для Claude Code: блок `advisor_tool_result`.
+    pub fn advisor_result(&mut self, server_id: &str, content: Value) -> Vec<Value> {
+        let index = self.next_index;
+        self.next_index += 1;
+        vec![
+            json!({
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "advisor_tool_result", "tool_use_id": server_id, "content": content}
+            }),
+            json!({"type": "content_block_stop", "index": index}),
+        ]
+    }
+
+    /// Новый отрезок того же ответа (продолжение после советника): блоки и номера идут
+    /// дальше, токены складываются.
+    pub fn next_segment(&mut self) {
+        self.prior_output_tokens += self.segment_tokens();
+        self.output_tokens = None;
+        self.output_chars = 0;
+        self.segment_text.clear();
+        self.finish_reason = None;
     }
 
     pub fn error_event(message: &str) -> Value {
