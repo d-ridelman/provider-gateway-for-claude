@@ -160,7 +160,7 @@ pub fn save_settings(
         input.port
     };
     let mut config = shared.config.lock().unwrap();
-    // Маршруты шлюза зависят только от порта: остальные настройки его не останавливают.
+    // Шлюз останавливают только порт и роли моделей (основная — модель по умолчанию).
     let port_changed = config.port != port;
     // Сначала на диск, потом в память: при ошибке записи всё остаётся как было.
     let mut next = config.clone();
