@@ -84,7 +84,13 @@ Set **Max reasoning level** on a provider and Claude offers a level picker for i
 
 ### Different models for subagents
 
-Claude Code asks for models by role: `sonnet`, `opus` and `haiku`. Settings → **Models for Claude Code** picks a gateway model for each: main (`sonnet`: the console session, subagents that inherit the model such as Explore and Plan, and every role left unassigned), strong (`opus`, for subagents with `model: opus`) and fast (`haiku`, for subagents with `model: haiku` and background tasks). It applies to the **Claude Code** console, the copied command and the Code tab of Claude Desktop (from the next **Open Claude**). A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session.
+Claude Code asks for models by role: `sonnet`, `opus` and `haiku`. Settings → **Models for Claude Code** picks a gateway model for each: main (`sonnet`: the console session, subagents that inherit the model such as Explore and Plan, and every role left unassigned), strong (`opus`, for subagents with `model: opus`) and fast (`haiku`, for subagents with `model: haiku` and background tasks). It applies to the **Claude Code** console, the copied command and the Code tab of Claude Desktop (from the next **Open Claude**). A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session. Subagents with `model: fable` get the strong model as well.
+
+### Advisor
+
+Claude Code's advisor (`/advisor`) lets the working model consult a stronger one in the middle of a task. At Anthropic it is a server-side tool, so through a third-party provider it would simply be off. With a strong model chosen, the gateway runs it itself: the main model calls `advisor`, the gateway asks the strong model with the whole conversation and puts its advice into the same reply, as Anthropic's server does.
+
+Turn it on once in Claude Code with `/advisor opus` (or `fable`): whichever Claude model is named, the gateway answers with the strong one. It works with OpenAI-compatible providers, in the **Claude Code** console and in the Code tab of the Russian copy of Claude Desktop. Not covered: the Code tab of the regular Claude Desktop (it turns experimental features off for its sessions) and Anthropic-type providers. The gateway log shows each consultation (`advisor consulted`, model and time).
 
 ### Claude Code by hand
 

@@ -2,6 +2,17 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [0.3.0] - 2026-11-19
+
+### Added
+
+- **Advisor through the gateway.** Claude Code's advisor (`/advisor`) is a server-side tool at Anthropic and was off through third-party providers. With a strong model chosen, the gateway now runs it: the main model calls `advisor`, the gateway asks the strong model with the conversation and continues the same reply with Anthropic's `server_tool_use` / `advisor_tool_result` blocks. Works with OpenAI-compatible providers in the Claude Code console and in the Code tab of the Russian copy of Claude Desktop. Any advisor model Claude Code names that the gateway does not know (`claude-fable-…`, `claude-opus-…`) is answered by the strong model.
+- Subagents with `model: fable` use the strong model (console and the Russian copy).
+
+### Changed
+
+- The Russian copy lifts Claude Desktop's ban on experimental betas for Code sessions when the advisor is on (the advisor is one of them), so these sessions behave like Claude Code in the console.
+
 ## [0.2.0] - 2026-11-19
 
 ### Added
@@ -16,7 +27,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 ### Changed
 
 - **Copy the Claude Code command** is built from the same environment as the Claude Code button (it now includes the context window and all model roles).
-- The console's context window is 1M only when every role's model supports 1M.
+- The console's context window follows the main model (1M only when it supports 1M).
 
 ## [0.1.0] - 2026-11-19
 
@@ -37,5 +48,6 @@ The first public release.
 - Updates from GitHub Releases, verified with the signing key built into the app.
 - Provider keys in Windows Credential Manager; the gateway requires a local token.
 
+[0.3.0]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.3.0
 [0.2.0]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.0
 [0.1.0]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.1.0
