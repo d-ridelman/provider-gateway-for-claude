@@ -2,7 +2,7 @@ use crate::model::{
     FetchedModels, ProbeInput, SaveProviderInput, SettingsInput, UiConfig, UiStatus,
 };
 use crate::state::AppShared;
-use crate::{claude, runtime, store};
+use crate::{claude, runtime, store, tr};
 use std::process::Command;
 use tauri::State;
 
@@ -52,9 +52,10 @@ pub fn save_provider(
             match &previous {
                 Some(old) => {
                     if let Err(undo) = store::set_key(&row.id, old) {
-                        tracing::error!(provider = %row.id, error = %undo, "не удалось вернуть прежний ключ");
-                        return Err(format!(
-                            "Настройки не сохранены ({exc}), и прежний ключ вернуть не удалось — введите ключ заново"
+                        tracing::error!(provider = %row.id, error = %undo, "failed to restore the previous key");
+                        return Err(tr!(
+                            "Настройки не сохранены ({exc}), и прежний ключ вернуть не удалось — введите ключ заново",
+                            "Settings not saved ({exc}) and the previous key could not be restored; enter the key again"
                         ));
                     }
                 }
@@ -118,16 +119,17 @@ pub async fn test_provider(input: ProbeInput) -> Result<String, String> {
         .models
         .first()
         .cloned()
-        .ok_or_else(|| "Добавьте хотя бы одну модель".to_string())?;
+        .ok_or_else(|| tr!("Добавьте хотя бы одну модель", "Add at least one model"))?;
     let file = ctp_core::config::ProvidersFile {
         default: Some(alias.clone()),
         providers: vec![config],
     };
     let started = std::time::Instant::now();
     let reply = ctp_gateway::probe::chat_check(file, &alias).await?;
-    Ok(format!(
-        "{model} ответила за {:.1} с: «{reply}»",
-        started.elapsed().as_secs_f32()
+    let secs = started.elapsed().as_secs_f32();
+    Ok(tr!(
+        "{model} ответила за {secs:.1} с: «{reply}»",
+        "{model} replied in {secs:.1} s: \"{reply}\""
     ))
 }
 

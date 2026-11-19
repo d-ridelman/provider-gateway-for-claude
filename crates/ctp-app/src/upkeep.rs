@@ -7,7 +7,7 @@
 //! «нашлось то, на что опирается приложение», а не «Claude точно примет конфиг».
 
 use crate::model::Config;
-use crate::ruui;
+use crate::{ruui, tr};
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -77,7 +77,11 @@ pub fn extract_rules(app_asar: &[u8]) -> Result<String> {
     }
     ensure!(
         !found.is_empty(),
-        "в app.asar не найдено правило отбора моделей"
+        "{}",
+        tr!(
+            "в app.asar не найдено правило отбора моделей",
+            "no model filter rule found in app.asar"
+        )
     );
     Ok(if found.len() == 1 {
         found.remove(0)
@@ -136,11 +140,22 @@ fn rules_of(config_dir: &Path, app: &Path) -> Result<String> {
 /// Ошибка — действует вшитое правило, текст ошибки — для самопроверки.
 pub fn apply_rules(config_dir: &Path, exe: &Path) -> Result<bool> {
     let applied = app_dir(exe)
-        .context("Claude найден не в папке версии app-…")
+        .with_context(|| {
+            tr!(
+                "Claude найден не в папке версии app-…",
+                "Claude is not in an app-… version folder"
+            )
+        })
         .and_then(|app| rules_of(config_dir, &app))
         .and_then(|pattern| {
             ctp_core::alias::set_desktop_rules(Some(&pattern)).map_err(|exc| {
-                anyhow::anyhow!("правило Claude не разобрано ({exc}), действует вшитое")
+                anyhow::anyhow!(
+                    "{}",
+                    tr!(
+                        "правило Claude не разобрано ({exc}), действует вшитое",
+                        "Claude rule not parsed ({exc}); the built-in one applies"
+                    )
+                )
             })
         });
     match applied {
@@ -167,12 +182,20 @@ fn coverage(en_keys: &HashSet<String>, ru: &serde_json::Map<String, Value>) -> f
 }
 
 fn parse_translation(raw: &[u8]) -> Result<serde_json::Map<String, Value>> {
-    let map: serde_json::Map<String, Value> =
-        serde_json::from_slice(raw).context("перевод — не JSON-объект")?;
+    let map: serde_json::Map<String, Value> = serde_json::from_slice(raw).with_context(|| {
+        tr!(
+            "перевод — не JSON-объект",
+            "translation is not a JSON object"
+        )
+    })?;
+    let count = map.len();
     ensure!(
-        map.len() > 1000,
-        "в переводе слишком мало строк ({})",
-        map.len()
+        count > 1000,
+        "{}",
+        tr!(
+            "в переводе слишком мало строк ({count})",
+            "translation has too few strings ({count})"
+        )
     );
     Ok(map)
 }
@@ -185,7 +208,7 @@ fn download_translation() -> Result<Vec<u8>> {
     let curl = std::env::var_os("SystemRoot")
         .map(|root| PathBuf::from(root).join("System32").join("curl.exe"))
         .filter(|path| path.is_file())
-        .context("нет системного curl.exe")?;
+        .with_context(|| tr!("нет системного curl.exe", "system curl.exe not found"))?;
     let mut command = std::process::Command::new(curl);
     command.args([
         "-sS",
@@ -211,7 +234,8 @@ fn download_translation() -> Result<Vec<u8>> {
     );
     ensure!(
         output.stdout.len() as u64 <= MAX_TRANSLATION,
-        "ответ больше 64 МБ"
+        "{}",
+        tr!("ответ больше 64 МБ", "response is larger than 64 MB")
     );
     Ok(output.stdout)
 }
@@ -255,9 +279,18 @@ pub fn refresh_translation(config_dir: &Path, app: &Path) -> Result<String> {
         .as_ref()
         .is_some_and(|(v, at)| *v == version && at.elapsed() < RETRY_AFTER);
     if (current.is_none() || meta.claude_version != version) && failed_recently {
-        note = " (скачать не вышло, повтор позже)".into();
+        note = tr!(
+            " (скачать не вышло, повтор позже)",
+            " (download failed, will retry later)"
+        );
         if current.is_none() {
-            anyhow::bail!("перевод не скачан, повтор через полчаса");
+            anyhow::bail!(
+                "{}",
+                tr!(
+                    "перевод не скачан, повтор через полчаса",
+                    "translation not downloaded, retrying in half an hour"
+                )
+            );
         }
     } else if current.is_none() || meta.claude_version != version {
         let downloaded =
@@ -271,12 +304,15 @@ pub fn refresh_translation(config_dir: &Path, app: &Path) -> Result<String> {
                     .as_ref()
                     .is_some_and(|old| coverage(&en, &fresh) + 1e-9 < coverage(&en, old));
                 if worse {
-                    note = " (скачанный перевод хуже — оставлен прежний)".into();
+                    note = tr!(
+                        " (скачанный перевод хуже — оставлен прежний)",
+                        " (downloaded translation is worse, kept the previous one)"
+                    );
                 } else if current.as_ref() != Some(&fresh) {
                     let tmp = file.with_extension("json.download");
                     fs::write(&tmp, &raw)?;
                     fs::rename(&tmp, &file)?;
-                    note = " (обновлён)".into();
+                    note = tr!(" (обновлён)", " (updated)");
                 }
                 let meta = TranslationMeta {
                     claude_version: version,
@@ -284,19 +320,26 @@ pub fn refresh_translation(config_dir: &Path, app: &Path) -> Result<String> {
                 fs::write(&meta_path, serde_json::to_vec(&meta)?)?;
             }
             Err(exc) if current.is_some() => {
-                note = format!(" (обновить не вышло: {exc:#})");
+                note = tr!(" (обновить не вышло: {exc:#})", " (update failed: {exc:#})");
             }
-            Err(exc) => return Err(exc.context("перевод не скачан")),
+            Err(exc) => {
+                return Err(exc.context(tr!("перевод не скачан", "translation not downloaded")));
+            }
         }
     }
     let map = parse_translation(&fs::read(&file)?)?;
     let share = coverage(&en, &map);
     Ok(if en.is_empty() {
-        format!("Перевод: {} строк{note}", map.len())
+        let count = map.len();
+        tr!(
+            "Перевод: {count} строк{note}",
+            "Translation: {count} strings{note}"
+        )
     } else {
-        format!(
-            "Перевод: {:.0}% строк этой версии Claude{note}",
-            share * 100.0
+        let percent = share * 100.0;
+        tr!(
+            "Перевод: {percent:.0}% строк этой версии Claude{note}",
+            "Translation: {percent:.0}% of this Claude version's strings{note}"
         )
     })
 }
@@ -308,13 +351,13 @@ pub fn prepare(config: &Config, config_dir: &Path) -> bool {
         return false;
     };
     let changed = apply_rules(config_dir, &exe).unwrap_or_else(|exc| {
-        tracing::warn!(error = %format!("{exc:#}"), "правило моделей Claude");
+        tracing::warn!(error = %format!("{exc:#}"), "Claude model rule");
         false
     });
     if config.russian_ui {
         if let Some(app) = app_dir(&exe) {
             if let Err(exc) = refresh_translation(config_dir, &app) {
-                tracing::warn!(error = %format!("{exc:#}"), "перевод Claude");
+                tracing::warn!(error = %format!("{exc:#}"), "Claude translation");
             }
         }
     }
@@ -325,14 +368,20 @@ pub fn prepare(config: &Config, config_dir: &Path) -> bool {
 pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
     let mut check = Check::default();
     let Some(exe) = crate::claude::detect(config) else {
-        check.push(false, "Claude Desktop не найден");
+        check.push(
+            false,
+            tr!("Claude Desktop не найден", "Claude Desktop not found"),
+        );
         return check;
     };
     let Some(app) = app_dir(&exe) else {
         check.version = exe.display().to_string();
         check.push(
             false,
-            "Claude найден не в папке версии app-… — проверки файлов пропущены",
+            tr!(
+                "Claude найден не в папке версии app-… — проверки файлов пропущены",
+                "Claude is not in an app-… version folder; file checks skipped"
+            ),
         );
         return check;
     };
@@ -350,9 +399,15 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
             check.push(
                 true,
                 if same {
-                    "Правило отбора моделей прочитано из Claude (как в прошлой версии)"
+                    tr!(
+                        "Правило отбора моделей прочитано из Claude (как в прошлой версии)",
+                        "Model filter rule read from Claude (same as the previous version)"
+                    )
                 } else {
-                    "Правило отбора моделей прочитано из Claude (новое — применено)"
+                    tr!(
+                        "Правило отбора моделей прочитано из Claude (новое — применено)",
+                        "Model filter rule read from Claude (new, applied)"
+                    )
                 },
             );
         }
@@ -368,11 +423,21 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
     if rejected.is_empty() {
         // Только запретный список: вторую половину условия Claude (в имени «claude» или
         // семейство) псевдоним `claude-…` выполняет по построению, её не проверяем.
-        check.push(true, "Имена моделей шлюза не попадают под запрет Claude");
+        check.push(
+            true,
+            tr!(
+                "Имена моделей шлюза не попадают под запрет Claude",
+                "Gateway model names pass Claude's block list"
+            ),
+        );
     } else {
+        let rejected = rejected.join(", ");
         check.push(
             false,
-            format!("Claude скроет модели: {}", rejected.join(", ")),
+            tr!(
+                "Claude скроет модели: {rejected}",
+                "Claude will hide models: {rejected}"
+            ),
         );
     }
 
@@ -384,15 +449,28 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
                 .filter(|field| !contains(&asar, field.as_bytes()))
                 .collect();
             if missing.is_empty() {
-                check.push(true, "Поля конфига моделей на месте");
+                check.push(
+                    true,
+                    tr!(
+                        "Поля конфига моделей на месте",
+                        "Model config fields are in place"
+                    ),
+                );
             } else {
+                let missing = missing.join(", ");
                 check.push(
                     false,
-                    format!("В Claude нет полей конфига: {}", missing.join(", ")),
+                    tr!(
+                        "В Claude нет полей конфига: {missing}",
+                        "Claude lacks config fields: {missing}"
+                    ),
                 );
             }
         }
-        Err(exc) => check.push(false, format!("app.asar не прочитан: {exc}")),
+        Err(exc) => check.push(
+            false,
+            tr!("app.asar не прочитан: {exc}", "app.asar not read: {exc}"),
+        ),
     }
 
     if config.russian_ui {
@@ -401,16 +479,28 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
             Err(exc) => check.push(false, format!("{exc:#}")),
         }
         match ruui::locale_changes(&app.join("resources").join("ion-dist.asar")) {
-            Ok(_) => check.push(true, "Русский язык встраивается в эту версию"),
-            Err(exc) => check.push(false, format!("Русский интерфейс: {exc:#}")),
+            Ok(_) => check.push(
+                true,
+                tr!(
+                    "Русский язык встраивается в эту версию",
+                    "Russian can be added to this version"
+                ),
+            ),
+            Err(exc) => check.push(
+                false,
+                tr!("Русский интерфейс: {exc:#}", "Russian interface: {exc:#}"),
+            ),
         }
         if build_copy {
             match fs::read(config_dir.join(ruui::TRANSLATION_FILE))
                 .map_err(anyhow::Error::from)
                 .and_then(|ru| ruui::ensure_copy(&app, &crate::claude::copies_root()?, &ru))
             {
-                Ok(_) => check.push(true, "Русская копия готова"),
-                Err(exc) => check.push(false, format!("Русская копия: {exc:#}")),
+                Ok(_) => check.push(true, tr!("Русская копия готова", "Russian copy is ready")),
+                Err(exc) => check.push(
+                    false,
+                    tr!("Русская копия: {exc:#}", "Russian copy: {exc:#}"),
+                ),
             }
         }
     }

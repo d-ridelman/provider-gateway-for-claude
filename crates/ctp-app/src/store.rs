@@ -1,4 +1,5 @@
 use crate::model::{AliasRow, Config, ProviderRow, UiConfig, UiProvider};
+use crate::tr;
 use ctp_core::alias::{desktop_alias, strip_1m};
 use ctp_core::config::{ProviderConfig, ProvidersFile};
 use std::collections::{BTreeMap, HashSet};
@@ -51,7 +52,7 @@ pub fn load_or_create(dir: &Path) -> anyhow::Result<Config> {
                     .map_or(0, |d| d.as_secs());
                 let backup = dir.join(format!("config.broken-{stamp}.json"));
                 std::fs::copy(&path, &backup)?;
-                tracing::error!(error = %exc, backup = %backup.display(), "config.json не читается, начинаю с пустого");
+                tracing::error!(error = %exc, backup = %backup.display(), "config.json is unreadable, starting empty");
                 Config::default()
             }
         }
@@ -104,7 +105,10 @@ pub fn normalize(config: &mut Config) {
 pub fn clean_row(row: ProviderRow) -> Result<ProviderRow, String> {
     let row = clean_endpoint(row)?;
     if row.models.is_empty() {
-        return Err("Добавьте хотя бы одну модель".into());
+        return Err(tr!(
+            "Добавьте хотя бы одну модель",
+            "Add at least one model"
+        ));
     }
     Ok(row)
 }
@@ -113,14 +117,20 @@ pub fn clean_row(row: ProviderRow) -> Result<ProviderRow, String> {
 pub fn clean_endpoint(mut row: ProviderRow) -> Result<ProviderRow, String> {
     row.id = row.id.trim().to_ascii_lowercase();
     if row.id.is_empty() {
-        return Err("ID провайдера не может быть пустым".into());
+        return Err(tr!(
+            "ID провайдера не может быть пустым",
+            "Provider ID cannot be empty"
+        ));
     }
     if !row
         .id
         .chars()
         .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
     {
-        return Err("ID: только латиница, цифры и дефис".into());
+        return Err(tr!(
+            "ID: только латиница, цифры и дефис",
+            "ID: only Latin letters, digits and hyphens"
+        ));
     }
     row.name = row.name.trim().to_string();
     if row.name.is_empty() {
@@ -133,14 +143,26 @@ pub fn clean_endpoint(mut row: ProviderRow) -> Result<ProviderRow, String> {
     };
     row.base_url = row.base_url.trim().trim_end_matches('/').to_string();
     if row.base_url.is_empty() {
-        return Err("Укажите baseUrl провайдера".into());
+        return Err(tr!(
+            "Укажите baseUrl провайдера",
+            "Enter the provider's baseUrl"
+        ));
     }
     if !(row.base_url.starts_with("http://") || row.base_url.starts_with("https://")) {
-        return Err("baseUrl должен начинаться с http:// или https://".into());
+        return Err(tr!(
+            "baseUrl должен начинаться с http:// или https://",
+            "baseUrl must start with http:// or https://"
+        ));
     }
     row.models = clean_models(&row.models);
-    row.max_effort = clean_effort(row.max_effort.take(), "Макс. уровень рассуждения")?;
-    row.default_effort = clean_effort(row.default_effort.take(), "Уровень по умолчанию")?;
+    row.max_effort = clean_effort(
+        row.max_effort.take(),
+        &tr!("Макс. уровень рассуждения", "Max reasoning level"),
+    )?;
+    row.default_effort = clean_effort(
+        row.default_effort.take(),
+        &tr!("Уровень по умолчанию", "Default level"),
+    )?;
     // Имена — только для моделей из списка, без пустых.
     let ids: HashSet<String> = row
         .models
@@ -166,7 +188,10 @@ fn clean_effort(value: Option<String>, label: &str) -> Result<Option<String>, St
     if ctp_gateway::state::EFFORT_LEVELS.contains(&value.as_str()) {
         Ok(Some(value))
     } else {
-        Err(format!("{label}: неизвестное значение «{value}»"))
+        Err(tr!(
+            "{label}: неизвестное значение «{value}»",
+            "{label}: unknown value \"{value}\""
+        ))
     }
 }
 
@@ -182,7 +207,11 @@ pub fn apply_provider(
         .iter()
         .any(|p| p.id == row.id && original.is_none_or(|o| p.id != o));
     if clash {
-        return Err(format!("Провайдер с ID «{}» уже есть", row.id));
+        let id = &row.id;
+        return Err(tr!(
+            "Провайдер с ID «{id}» уже есть",
+            "A provider with ID \"{id}\" already exists"
+        ));
     }
     let mut next = config.clone();
     let slot = original.and_then(|o| next.providers.iter_mut().find(|p| p.id == o));
@@ -288,7 +317,10 @@ pub fn build_file(config: &Config) -> Result<ProvidersFile, String> {
         .filter(|provider| !provider.models.is_empty())
         .collect();
     if providers.is_empty() {
-        return Err("Нет ни одного провайдера с моделями".into());
+        return Err(tr!(
+            "Нет ни одного провайдера с моделями",
+            "No providers with models"
+        ));
     }
     let default = providers
         .first()
@@ -319,9 +351,12 @@ pub fn read_key(id: &str) -> Result<Option<String>, String> {
 }
 
 pub fn set_key(id: &str, key: &str) -> Result<(), String> {
-    entry(id)?
-        .set_password(key)
-        .map_err(|exc| format!("Не удалось сохранить ключ в Windows Credential Manager: {exc}"))
+    entry(id)?.set_password(key).map_err(|exc| {
+        tr!(
+            "Не удалось сохранить ключ в Windows Credential Manager: {exc}",
+            "Could not save the key to Windows Credential Manager: {exc}"
+        )
+    })
 }
 
 pub fn delete_key(id: &str) {
@@ -345,13 +380,13 @@ pub fn rotate_log(dir: &Path) {
 pub fn tail_log(dir: &Path, lines: usize) -> String {
     use std::io::{Read, Seek, SeekFrom};
     let Ok(mut file) = std::fs::File::open(dir.join("gateway.log")) else {
-        return "Логов пока нет".to_string();
+        return tr!("Логов пока нет", "No logs yet");
     };
     let len = file.metadata().map(|meta| meta.len()).unwrap_or(0);
     let start = len.saturating_sub(TAIL_BYTES);
     let mut bytes = Vec::new();
     if file.seek(SeekFrom::Start(start)).is_err() || file.read_to_end(&mut bytes).is_err() {
-        return "Журнал не читается".to_string();
+        return tr!("Журнал не читается", "Log is unreadable");
     }
     let text = String::from_utf8_lossy(&bytes);
     // С середины файла первая строка обрезана — её не показываем.

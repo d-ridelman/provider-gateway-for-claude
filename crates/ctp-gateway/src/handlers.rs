@@ -133,7 +133,7 @@ pub async fn messages(
         info!(
             provider = %provider.id,
             model = %upstream_model,
-            "POST /v1/messages probe -> 200 (локально)"
+            "POST /v1/messages probe -> 200 (local)"
         );
         return probe_reply(&response_model, stream);
     }
@@ -225,7 +225,7 @@ pub async fn count_tokens(
         match passthrough::count_tokens(&state, &provider, &headers, &body).await {
             Ok(response) => return response,
             Err(exc) => {
-                warn!(provider = %provider.id, error = %exc, "count_tokens: локальная оценка");
+                warn!(provider = %provider.id, error = %exc, "count_tokens: local estimate");
             }
         }
     }
@@ -251,7 +251,7 @@ pub async fn oauth_authorize(body: Bytes) -> Response {
         url.push_str("&state=");
         url.push_str(&state);
     }
-    info!("POST /v1/oauth/authorize -> код выдан");
+    info!("POST /v1/oauth/authorize -> code issued");
     (StatusCode::OK, Json(json!({"redirect_uri": url}))).into_response()
 }
 
@@ -267,7 +267,7 @@ pub async fn oauth_token(State(state): State<AppState>, body: Bytes) -> Response
         .get("grant_type")
         .and_then(Value::as_str)
         .unwrap_or("authorization_code");
-    info!(grant, "POST /v1/oauth/token -> токен выдан");
+    info!(grant, "POST /v1/oauth/token -> token issued");
     (
         StatusCode::OK,
         Json(json!({
@@ -281,7 +281,7 @@ pub async fn oauth_token(State(state): State<AppState>, body: Bytes) -> Response
 }
 
 pub async fn api_stub(method: Method, uri: Uri) -> Response {
-    info!("{} {} -> 200 (заглушка api)", method, uri.path());
+    info!("{} {} -> 200 (api stub)", method, uri.path());
     (StatusCode::OK, Json(json!({}))).into_response()
 }
 

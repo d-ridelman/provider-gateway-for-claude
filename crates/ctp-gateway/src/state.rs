@@ -37,7 +37,7 @@ fn session_header_for(cfg: &ProviderConfig) -> Option<String> {
             return None;
         }
         if axum::http::HeaderName::from_bytes(name.as_bytes()).is_err() {
-            tracing::warn!(provider = %cfg.id, name, "некорректный session_header пропущен");
+            tracing::warn!(provider = %cfg.id, name, "invalid session_header skipped");
             return None;
         }
         return Some(name.to_ascii_lowercase());
@@ -113,12 +113,7 @@ fn effort_level(value: Option<&str>, provider: &str, field: &str) -> Option<&'st
     }
     let level = EFFORT_LEVELS.iter().copied().find(|l| *l == value);
     if level.is_none() {
-        tracing::warn!(
-            provider,
-            field,
-            value,
-            "неизвестный уровень рассуждения пропущен"
-        );
+        tracing::warn!(provider, field, value, "unknown reasoning level skipped");
     }
     level
 }
@@ -235,7 +230,7 @@ pub struct ModelRouter {
 impl ModelRouter {
     pub fn new(file: ProvidersFile) -> anyhow::Result<Self> {
         if file.providers.is_empty() {
-            anyhow::bail!("не задан ни один провайдер");
+            anyhow::bail!("no providers configured");
         }
 
         let mut providers = Vec::with_capacity(file.providers.len());
@@ -279,7 +274,7 @@ impl ModelRouter {
 
         for provider in &providers {
             if provider.base_url.is_empty() {
-                anyhow::bail!("провайдер {:?}: пустой base_url", provider.id);
+                anyhow::bail!("provider {:?}: empty base_url", provider.id);
             }
         }
 

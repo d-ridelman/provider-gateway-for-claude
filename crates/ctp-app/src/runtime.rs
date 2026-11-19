@@ -1,6 +1,6 @@
 use crate::model::{ModelInfo, UiStatus};
 use crate::state::AppShared;
-use crate::store;
+use crate::{store, tr};
 use ctp_gateway::state::{AppState, ModelRouter};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -32,7 +32,8 @@ pub async fn start(shared: &AppShared) -> Result<UiStatus, String> {
     let config = { shared.config.lock().unwrap().clone() };
 
     let file = store::build_file(&config)?;
-    let router = ModelRouter::new(file).map_err(|exc| format!("Конфиг провайдеров: {exc}"))?;
+    let router = ModelRouter::new(file)
+        .map_err(|exc| tr!("Конфиг провайдеров: {exc}", "Provider config: {exc}"))?;
 
     let rows: HashMap<String, crate::model::AliasRow> = config
         .providers
@@ -59,7 +60,7 @@ pub async fn start(shared: &AppShared) -> Result<UiStatus, String> {
 
     let token = config.token.clone();
     if token.is_empty() {
-        return Err("Пустой локальный токен".into());
+        return Err(tr!("Пустой локальный токен", "Local token is empty"));
     }
     let gateway_state = AppState::new(
         router,
@@ -67,10 +68,10 @@ pub async fn start(shared: &AppShared) -> Result<UiStatus, String> {
         false,
         "user:inference user:file_upload user:profile user:sessions:claude_code".into(),
     )
-    .map_err(|exc| format!("Шлюз: {exc}"))?;
+    .map_err(|exc| tr!("Шлюз: {exc}", "Gateway: {exc}"))?;
 
     let Some(listener) = bind(shared, config.port, epoch).await? else {
-        tracing::info!("запуск шлюза перебит более поздней командой");
+        tracing::info!("gateway start superseded by a later command");
         return Ok(status(shared));
     };
     let port = listener.local_addr().map_err(|exc| exc.to_string())?.port();
@@ -85,7 +86,7 @@ pub async fn start(shared: &AppShared) -> Result<UiStatus, String> {
                 let _ = wait.await;
             });
         if let Err(exc) = server.await {
-            tracing::error!(error = %exc, "шлюз остановился с ошибкой");
+            tracing::error!(error = %exc, "gateway stopped with an error");
         }
     });
 
@@ -95,7 +96,7 @@ pub async fn start(shared: &AppShared) -> Result<UiStatus, String> {
             // Пока шёл bind, шлюз остановили или запустили заново — этот сервер лишний.
             let _ = shutdown.send(());
             drop(slot);
-            tracing::info!(port, "запуск шлюза перебит более поздней командой");
+            tracing::info!(port, "gateway start superseded by a later command");
             return Ok(status(shared));
         }
         *slot = Some(GatewayRuntime {
@@ -106,7 +107,7 @@ pub async fn start(shared: &AppShared) -> Result<UiStatus, String> {
             alive,
         });
     }
-    tracing::info!(port, "шлюз запущен");
+    tracing::info!(port, "gateway started");
     Ok(status(shared))
 }
 
@@ -129,11 +130,17 @@ async fn bind(
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
             Err(exc) if exc.kind() == std::io::ErrorKind::AddrInUse => {
-                return Err(format!(
-                    "Порт {port} занят — возможно, уже открыто другое окно шлюза"
+                return Err(tr!(
+                    "Порт {port} занят — возможно, уже открыто другое окно шлюза",
+                    "Port {port} is busy; another gateway window may already be open"
                 ));
             }
-            Err(exc) => return Err(format!("Не удалось открыть порт {port}: {exc}")),
+            Err(exc) => {
+                return Err(tr!(
+                    "Не удалось открыть порт {port}: {exc}",
+                    "Could not open port {port}: {exc}"
+                ));
+            }
         }
     }
 }

@@ -48,7 +48,7 @@ pub async fn list_models(provider: &Provider) -> Result<Vec<String>, String> {
     let response = request.send().await.map_err(|exc| {
         // У reqwest верхний текст ошибки — «error sending request», суть в причине.
         let why = if exc.is_timeout() {
-            format!("нет ответа за {} с", LIST_TIMEOUT.as_secs())
+            format!("no response in {} s", LIST_TIMEOUT.as_secs())
         } else {
             // Самая глубокая причина: «отказано в подключении», ошибка сертификата и т. п.
             let mut cause: &dyn std::error::Error = &exc;
@@ -56,7 +56,7 @@ pub async fn list_models(provider: &Provider) -> Result<Vec<String>, String> {
                 cause = next;
             }
             if exc.is_connect() {
-                format!("не удалось подключиться (адрес, порт, VPN/прокси?): {cause}")
+                format!("could not connect (address, port, VPN/proxy?): {cause}")
             } else {
                 cause.to_string()
             }
@@ -89,14 +89,14 @@ fn scrub(text: &str, keys: &[&str]) -> String {
 fn parse_model_ids(text: &str) -> Result<Vec<String>, String> {
     let value: Value = serde_json::from_str(text).map_err(|_| {
         let head: String = truncate_redacted(text).chars().take(200).collect();
-        format!("ответ не похож на список моделей: {head}")
+        format!("response does not look like a model list: {head}")
     })?;
     let items = value
         .get("data")
         .or_else(|| value.get("models"))
         .unwrap_or(&value)
         .as_array()
-        .ok_or_else(|| "в ответе нет списка моделей".to_string())?;
+        .ok_or_else(|| "no model list in the response".to_string())?;
     let mut ids: Vec<String> = items
         .iter()
         .filter_map(|item| {
@@ -138,7 +138,7 @@ pub async fn chat_check(file: ProvidersFile, model: &str) -> Result<String, Stri
         .map_err(|exc| exc.to_string())?;
     let response = tokio::time::timeout(CHAT_TIMEOUT, crate::app(state).oneshot(request))
         .await
-        .map_err(|_| format!("провайдер не ответил за {} с", CHAT_TIMEOUT.as_secs()))?
+        .map_err(|_| format!("provider did not respond in {} s", CHAT_TIMEOUT.as_secs()))?
         .map_err(|exc| exc.to_string())?;
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
@@ -166,7 +166,7 @@ pub async fn chat_check(file: ProvidersFile, model: &str) -> Result<String, Stri
     let text = text.trim();
     if text.is_empty() {
         let stop = value["stop_reason"].as_str().unwrap_or("?");
-        return Ok(format!("пустой ответ (stop_reason: {stop})"));
+        return Ok(format!("empty response (stop_reason: {stop})"));
     }
     Ok(scrub(text, &keys).chars().take(200).collect())
 }

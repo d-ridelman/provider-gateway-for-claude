@@ -28,7 +28,7 @@ pub async fn messages(
     let upstream = match request.send().await {
         Ok(response) => response,
         Err(exc) => {
-            warn!(provider = %provider.id, error = %exc, "Anthropic passthrough: сеть");
+            warn!(provider = %provider.id, error = %exc, "Anthropic passthrough: network");
             return error::anthropic_error(502, "api_error", exc.to_string());
         }
     };
@@ -65,7 +65,7 @@ pub async fn messages(
         return response;
     }
 
-    info!(provider = %provider.id, "POST /v1/messages passthrough: поток");
+    info!(provider = %provider.id, "POST /v1/messages passthrough: stream");
     let log = RequestLog::new(started, provider.id.clone(), "passthrough");
     let stream_body = async_stream::stream! {
         let _log = log;
@@ -95,7 +95,7 @@ pub async fn count_tokens(
         upstream_headers(state.clients.json.post(&url), provider, incoming, body).json(body);
     let upstream = tokio::time::timeout(Duration::from_secs(120), request.send())
         .await
-        .map_err(|_| anyhow::anyhow!("count_tokens: таймаут 120 с"))??;
+        .map_err(|_| anyhow::anyhow!("count_tokens: 120 s timeout"))??;
 
     let status = upstream.status();
     let content_type = upstream
@@ -175,7 +175,7 @@ impl Drop for RequestLog {
         info!(
             provider = %self.provider,
             ms = self.started.elapsed().as_millis(),
-            "{} завершён",
+            "{} finished",
             self.operation
         );
     }

@@ -190,7 +190,7 @@ impl StreamTranslator {
         let mut tool_count = 0usize;
         for (_, mut call) in std::mem::take(&mut self.tools) {
             if call.name.is_empty() {
-                tracing::warn!("tool call без имени пропущен");
+                tracing::warn!("tool call without a name skipped");
                 continue;
             }
             if call.id.is_empty() {
@@ -312,7 +312,7 @@ fn valid_arguments(arguments: &str) -> String {
     match serde_json::from_str::<Value>(arguments) {
         Ok(Value::Object(_)) => arguments.to_string(),
         _ => {
-            tracing::warn!("tool arguments не JSON-объект, отправляю {{}}");
+            tracing::warn!("tool arguments are not a JSON object, sending {{}}");
             "{}".to_string()
         }
     }

@@ -10,6 +10,7 @@
 //! Подпись копии `claude.exe` после этого недействительна. Оригинал не меняется:
 //! копия лежит отдельно, файлы читаются, но не пишутся.
 
+use crate::tr;
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -55,11 +56,13 @@ fn read_header(file: &mut File) -> Result<Header> {
     let (four, header_size, payload_size, json_len) = (word(0), word(4), word(8), word(12));
     ensure!(
         four == 4 && header_size == payload_size + 4 && payload_size == align4(4 + json_len),
-        "неизвестный формат asar"
+        "{}",
+        tr!("неизвестный формат asar", "unknown asar format")
     );
     let mut raw = vec![0u8; json_len as usize];
     file.read_exact(&mut raw)?;
-    let json = serde_json::from_slice(&raw).context("заголовок asar не читается")?;
+    let json = serde_json::from_slice(&raw)
+        .with_context(|| tr!("заголовок asar не читается", "asar header is unreadable"))?;
     Ok(Header {
         json,
         raw,
@@ -106,11 +109,16 @@ fn entry_mut<'a>(root: &'a mut Value, path: &str) -> Result<&'a mut Value> {
     for (i, part) in parts.iter().enumerate() {
         let files = node
             .as_object_mut()
-            .context("заголовок asar: не объект")?
+            .with_context(|| tr!("заголовок asar: не объект", "asar header: not an object"))?
             .entry("files")
             .or_insert_with(|| json!({}))
             .as_object_mut()
-            .context("заголовок asar: files не объект")?;
+            .with_context(|| {
+                tr!(
+                    "заголовок asar: files не объект",
+                    "asar header: files is not an object"
+                )
+            })?;
         let last = i + 1 == parts.len();
         node = files.entry(part.to_string()).or_insert_with(|| {
             if last {
@@ -120,7 +128,14 @@ fn entry_mut<'a>(root: &'a mut Value, path: &str) -> Result<&'a mut Value> {
             }
         });
     }
-    ensure!(node.get("unpacked").is_none(), "{path}: файл вне архива");
+    ensure!(
+        node.get("unpacked").is_none(),
+        "{}",
+        tr!(
+            "{path}: файл вне архива",
+            "{path}: file is outside the archive"
+        )
+    );
     Ok(node)
 }
 
@@ -154,7 +169,11 @@ fn rebuild(src: &Path, dst: &Path, changes: &[(String, Vec<u8>)]) -> Result<(Str
     out.write_all(&vec![0u8; (payload_size - 4 - json_len) as usize])?;
     input.seek(SeekFrom::Start(header.base))?;
     let copied = std::io::copy(&mut input, &mut out)?;
-    ensure!(copied == payload_len, "asar прочитан не полностью");
+    ensure!(
+        copied == payload_len,
+        "{}",
+        tr!("asar прочитан не полностью", "asar was not read completely")
+    );
     for (_, data) in changes {
         out.write_all(data)?;
     }
@@ -181,11 +200,20 @@ fn replace_all(data: &[u8], old: &[u8], new: &[u8]) -> Option<Vec<u8>> {
 /// `ion-dist.asar` с русским: `i18n/ru.json` и `"ru"` в списке языков бандлов.
 pub fn patch_ion_dist(src: &Path, dst: &Path, ru_json: &[u8]) -> Result<(String, String)> {
     let map: serde_json::Map<String, Value> =
-        serde_json::from_slice(ru_json).context("файл перевода — не JSON-объект")?;
+        serde_json::from_slice(ru_json).with_context(|| {
+            tr!(
+                "файл перевода — не JSON-объект",
+                "translation file is not a JSON object"
+            )
+        })?;
+    let count = map.len();
     ensure!(
-        map.len() > 1000,
-        "в файле перевода слишком мало строк ({})",
-        map.len()
+        count > 1000,
+        "{}",
+        tr!(
+            "в файле перевода слишком мало строк ({count})",
+            "translation file has too few strings ({count})"
+        )
     );
 
     let mut changes = locale_changes(src)?;
@@ -201,7 +229,11 @@ pub fn locale_changes(src: &Path) -> Result<Vec<(String, Vec<u8>)>> {
     let locales = bundled_locales(&header.json);
     ensure!(
         locales.len() >= 3 && locales.contains("en-US"),
-        "в интерфейсе этой версии Claude не найдены файлы языков (i18n/*.json)"
+        "{}",
+        tr!(
+            "в интерфейсе этой версии Claude не найдены файлы языков (i18n/*.json)",
+            "no language files (i18n/*.json) found in this Claude version's interface"
+        )
     );
     let mut files = Vec::new();
     js_files(&header.json, "", &mut files);
@@ -216,7 +248,11 @@ pub fn locale_changes(src: &Path) -> Result<Vec<(String, Vec<u8>)>> {
     }
     ensure!(
         !changes.is_empty(),
-        "в интерфейсе этой версии Claude не найден список языков"
+        "{}",
+        tr!(
+            "в интерфейсе этой версии Claude не найден список языков",
+            "no language list found in this Claude version's interface"
+        )
     );
     Ok(changes)
 }
@@ -272,9 +308,14 @@ pub fn patch_exe(exe: &[u8], old_hash: &str, new_hash: &str) -> Result<Vec<u8>> 
     let count = exe.windows(old.len()).filter(|w| *w == old).count();
     ensure!(
         count == 1,
-        "хеш ion-dist.asar найден в claude.exe {count} раз(а), ожидался 1"
+        "{}",
+        tr!(
+            "хеш ion-dist.asar найден в claude.exe {count} раз(а), ожидался 1",
+            "ion-dist.asar hash found in claude.exe {count} time(s), expected 1"
+        )
     );
-    replace_all(exe, old, new_hash.as_bytes()).context("хеш не заменён")
+    replace_all(exe, old, new_hash.as_bytes())
+        .with_context(|| tr!("хеш не заменён", "hash not replaced"))
 }
 
 fn stamp(path: &Path) -> Result<(u64, u64)> {
@@ -312,7 +353,12 @@ pub fn ensure_copy(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<
         .file_name()
         .and_then(|n| n.to_str())
         .filter(|n| n.starts_with("app-"))
-        .context("Claude найден не в папке версии app-…")?
+        .with_context(|| {
+            tr!(
+                "Claude найден не в папке версии app-…",
+                "Claude is not in an app-… version folder"
+            )
+        })?
         .to_string();
     let src_exe = app_dir.join("claude.exe");
     let src_asar = app_dir.join("resources").join("ion-dist.asar");
@@ -341,7 +387,7 @@ pub fn ensure_copy(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<
         && only_translation_differs(&target.join(MARKER), &marker)
         && is_open(&target, cache_root)
     {
-        tracing::info!("перевод обновлён, но русская копия открыта — запускаю её");
+        tracing::info!("translation updated but the Russian copy is open, launching it");
         return Ok(ready);
     }
     fs::create_dir_all(cache_root)?;
@@ -359,11 +405,15 @@ pub fn ensure_copy(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<
             // Та же версия Claude, сменился только перевод: открытая копия годится,
             // новый перевод она получит при следующей сборке.
             if only_translation_differs(&target.join(MARKER), &marker) && ready.is_file() {
-                tracing::info!("перевод обновлён, но русская копия открыта — запускаю её");
+                tracing::info!("translation updated but the Russian copy is open, launching it");
                 return Ok(ready);
             }
             anyhow::bail!(
-                "русская копия Claude сейчас открыта — закройте её и запустите снова ({exc})"
+                "{}",
+                tr!(
+                    "русская копия Claude сейчас открыта — закройте её и запустите снова ({exc})",
+                    "the Russian copy of Claude is open; close it and launch again ({exc})"
+                )
             );
         }
     }
@@ -392,7 +442,7 @@ fn is_open(target: &Path, cache_root: &Path) -> bool {
     match fs::rename(target, &probe) {
         Ok(()) => {
             if let Err(exc) = fs::rename(&probe, target) {
-                tracing::error!(error = %exc, "русская копия не вернулась из пробы");
+                tracing::error!(error = %exc, "Russian copy was not renamed back after the probe");
             }
             false
         }
@@ -423,18 +473,25 @@ pub fn read_asar_file(asar: &Path, path: &str) -> Result<Vec<u8>> {
         node = node
             .get("files")
             .and_then(|files| files.get(part))
-            .with_context(|| format!("в {} нет {path}", asar.display()))?;
+            .with_context(|| {
+                let asar = asar.display();
+                tr!("в {asar} нет {path}", "{asar} has no {path}")
+            })?;
     }
     let offset: u64 = node
         .get("offset")
         .and_then(Value::as_str)
         .and_then(|o| o.parse().ok())
-        .context("у файла нет смещения")?;
+        .with_context(|| tr!("у файла нет смещения", "file has no offset"))?;
     let size = node
         .get("size")
         .and_then(Value::as_u64)
-        .context("у файла нет размера")?;
-    ensure!(size <= 256 * 1024 * 1024, "{path}: слишком большой");
+        .with_context(|| tr!("у файла нет размера", "file has no size"))?;
+    ensure!(
+        size <= 256 * 1024 * 1024,
+        "{}",
+        tr!("{path}: слишком большой", "{path}: too large")
+    );
     let mut data = vec![0u8; size as usize];
     file.seek(SeekFrom::Start(header.base + offset))?;
     file.read_exact(&mut data)?;
@@ -674,9 +731,9 @@ pub mod registry {
             };
             match result {
                 Ok(()) => {
-                    tracing::info!(key = %path, value = %name, fix = ?fix, "реестр: след копии убран")
+                    tracing::info!(key = %path, value = %name, fix = ?fix, "registry: copy trace removed")
                 }
-                Err(exc) => tracing::warn!(key = %path, error = %exc, "реестр: не заменить"),
+                Err(exc) => tracing::warn!(key = %path, error = %exc, "registry: cannot replace"),
             }
         }
         // MuiCache — кэш имён программ: путь копии в имени значения, просто убираем.

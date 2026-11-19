@@ -2,6 +2,7 @@
 //! для моделей провайдера, найденного по адресу. Только подсказки для формы: сбой каталога
 //! (сеть, смена схемы — URL помечен `experimental`) оставляет всё как без него.
 
+use crate::tr;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
@@ -136,7 +137,7 @@ pub async fn load() -> Option<Arc<Catalog>> {
     let cached = match download().await {
         Ok(catalog) => Some(Arc::new(catalog)),
         Err(exc) => {
-            tracing::warn!(error = %exc, "каталог моделей OpenCode недоступен");
+            tracing::warn!(error = %exc, "OpenCode model catalog unavailable");
             None
         }
     };
@@ -165,7 +166,7 @@ async fn download() -> Result<Catalog, String> {
         .get("content-encoding")
         .is_some_and(|value| value.as_bytes().eq_ignore_ascii_case(b"gzip"));
     if response.content_length().is_some_and(|len| len > MAX_BYTES) {
-        return Err("ответ больше 64 МБ".into());
+        return Err(tr!("ответ больше 64 МБ", "response is larger than 64 MB"));
     }
     let body = response.bytes().await.map_err(|exc| exc.to_string())?;
     tokio::task::spawn_blocking(move || parse(&body, gzip))
@@ -174,7 +175,7 @@ async fn download() -> Result<Catalog, String> {
 }
 
 fn parse(body: &[u8], gzip: bool) -> Result<Catalog, String> {
-    let too_big = || "каталог больше 64 МБ".to_string();
+    let too_big = || tr!("каталог больше 64 МБ", "catalog is larger than 64 MB");
     let mut text = Vec::new();
     let json = if gzip {
         flate2::read::GzDecoder::new(body)
@@ -195,7 +196,10 @@ fn parse(body: &[u8], gzip: bool) -> Result<Catalog, String> {
         .values()
         .any(|provider| provider.0.as_ref().is_some_and(|p| !p.models.is_empty()))
     {
-        return Err("в ответе нет провайдеров с моделями".into());
+        return Err(tr!(
+            "в ответе нет провайдеров с моделями",
+            "no providers with models in the response"
+        ));
     }
     Ok(catalog)
 }

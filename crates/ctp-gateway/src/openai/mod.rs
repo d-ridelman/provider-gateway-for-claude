@@ -44,7 +44,7 @@ pub async fn messages(
         let response = match request.send().await {
             Ok(response) => response,
             Err(exc) => {
-                warn!(provider = %provider.id, error = %exc, "OpenAI upstream: сеть");
+                warn!(provider = %provider.id, error = %exc, "OpenAI upstream: network");
                 return error::anthropic_error(502, "api_error", exc.to_string());
             }
         };
@@ -69,7 +69,7 @@ pub async fn messages(
                                 model = %upstream_model,
                                 from = current,
                                 to = limit,
-                                "max_tokens больше лимита модели, повторяю"
+                                "max_tokens above the model limit, retrying"
                             );
                             payload[key.as_str()] = json!(limit);
                             attempt = 1;
@@ -103,7 +103,7 @@ pub async fn messages(
         let value: Value = match serde_json::from_str(&text) {
             Ok(value) => value,
             Err(_) => {
-                return error::anthropic_error(502, "api_error", "провайдер вернул не JSON");
+                return error::anthropic_error(502, "api_error", "provider returned non-JSON");
             }
         };
         if value.get("error").is_some() {
@@ -138,7 +138,7 @@ pub async fn messages(
         let value: Value = match serde_json::from_str(&text) {
             Ok(value) => value,
             Err(_) => {
-                return error::anthropic_error(502, "api_error", "провайдер вернул не JSON");
+                return error::anthropic_error(502, "api_error", "provider returned non-JSON");
             }
         };
         if value.get("error").is_some() {
@@ -151,7 +151,7 @@ pub async fn messages(
         info!(
             provider = %provider.id,
             model = %upstream_model,
-            "POST /v1/messages openai: stream заменён целым ответом"
+            "POST /v1/messages openai: stream replaced with a whole response"
         );
         return sse::response(response::to_events(&message));
     }
@@ -243,7 +243,7 @@ pub(crate) fn upstream_headers(provider: &Provider, session: Option<&str>) -> He
         ) {
             headers.insert(name, value);
         } else {
-            warn!(header = %name, "некорректный заголовок провайдера пропущен");
+            warn!(header = %name, "invalid provider header skipped");
         }
     }
     headers

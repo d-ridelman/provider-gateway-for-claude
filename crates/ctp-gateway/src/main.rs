@@ -46,7 +46,7 @@ async fn main() -> anyhow::Result<()> {
         providers = state.router.providers.len(),
         models = state.router.routes.len(),
         debug_prompts = state.debug_prompts,
-        "шлюз слушает"
+        "gateway listening"
     );
 
     axum::serve(listener, app(state))
@@ -89,7 +89,7 @@ fn init_logging(
 
 async fn shutdown() {
     if let Err(exc) = tokio::signal::ctrl_c().await {
-        tracing::warn!(error = %exc, "не удалось подписаться на Ctrl+C");
+        tracing::warn!(error = %exc, "failed to subscribe to Ctrl+C");
     }
-    tracing::info!("шлюз останавливается");
+    tracing::info!("gateway shutting down");
 }

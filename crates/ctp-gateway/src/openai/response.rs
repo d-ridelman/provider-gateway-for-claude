@@ -12,7 +12,7 @@ pub fn translate(
         .get("choices")
         .and_then(Value::as_array)
         .and_then(|choices| choices.first())
-        .ok_or_else(|| anyhow::anyhow!("ответ провайдера без choices"))?;
+        .ok_or_else(|| anyhow::anyhow!("provider response has no choices"))?;
     let message = choice.get("message").unwrap_or(&Value::Null);
 
     let mut content = Vec::new();

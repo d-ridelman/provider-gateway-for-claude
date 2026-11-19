@@ -44,12 +44,12 @@ pub fn state_from_env_with(providers_file: Option<&Path>) -> anyhow::Result<AppS
     let file = load_providers(providers_file)?;
 
     if token.is_empty() && !open_mode {
-        bail!("GATEWAY_TOKEN обязателен");
+        bail!("GATEWAY_TOKEN is required");
     }
 
     let router = ModelRouter::new(file)?;
     if router.routes.is_empty() {
-        tracing::warn!("не задано ни одной модели: /v1/models будет пустым");
+        tracing::warn!("no models configured: /v1/models will be empty");
     }
     AppState::new(router, token, open_mode, oauth_scope)
 }

@@ -334,7 +334,7 @@ async fn anthropic_passthrough_keeps_headers_and_body() {
             "type": "message",
             "role": "assistant",
             "model": "claude-test",
-            "content": [{"type": "thinking", "thinking": "размышление"}],
+            "content": [{"type": "thinking", "thinking": "pondering"}],
             "stop_reason": "end_turn",
             "stop_sequence": null,
             "usage": {"input_tokens": 5, "output_tokens": 3}
@@ -363,7 +363,7 @@ async fn anthropic_passthrough_keeps_headers_and_body() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = json_body(response).await;
     assert_eq!(body["content"][0]["type"], "thinking");
-    assert_eq!(body["content"][0]["thinking"], "размышление");
+    assert_eq!(body["content"][0]["thinking"], "pondering");
 
     let requests = upstream.received_requests().await.unwrap();
     let last = requests.last().unwrap();
@@ -731,7 +731,7 @@ async fn probe_explains_connection_refused() {
     let error = ctp_gateway::probe::list_models(&provider)
         .await
         .unwrap_err();
-    assert!(error.contains("не удалось подключиться"), "{error}");
+    assert!(error.contains("could not connect"), "{error}");
 }
 
 #[tokio::test]

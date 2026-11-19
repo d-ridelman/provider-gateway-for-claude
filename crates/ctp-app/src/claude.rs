@@ -1,4 +1,5 @@
 use crate::model::{Config, UiStatus};
+use crate::tr;
 use serde_json::json;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -68,12 +69,21 @@ fn version_key(name: &str) -> Vec<u64> {
 fn russian_copy(exe: &Path, copies: &Path, config_dir: &Path) -> anyhow::Result<PathBuf> {
     use anyhow::Context;
     let file = config_dir.join(crate::ruui::TRANSLATION_FILE);
-    let ru = fs::read(&file).with_context(|| format!("нет файла перевода {}", file.display()))?;
-    let app_dir = exe.parent().context("у claude.exe нет папки")?;
+    let ru = fs::read(&file).with_context(|| {
+        let file = file.display();
+        tr!("нет файла перевода {file}", "no translation file {file}")
+    })?;
+    let app_dir = exe
+        .parent()
+        .with_context(|| tr!("у claude.exe нет папки", "claude.exe has no folder"))?;
+    let dir = app_dir.display();
     anyhow::ensure!(
         app_dir.join("resources").join("ion-dist.asar").is_file(),
-        "{} — не папка версии Claude (нет resources\\ion-dist.asar)",
-        app_dir.display()
+        "{}",
+        tr!(
+            "{dir} — не папка версии Claude (нет resources\\ion-dist.asar)",
+            "{dir} is not a Claude version folder (no resources\\ion-dist.asar)"
+        )
     );
     crate::ruui::ensure_copy(app_dir, copies, &ru)
 }
@@ -115,10 +125,12 @@ pub fn code_env(
     status: &UiStatus,
     inherited: impl Iterator<Item = String>,
 ) -> Result<CodeEnv, String> {
-    let first = status
-        .models
-        .first()
-        .ok_or("В шлюзе нет моделей: добавьте провайдера и модель")?;
+    let first = status.models.first().ok_or_else(|| {
+        tr!(
+            "В шлюзе нет моделей: добавьте провайдера и модель",
+            "The gateway has no models: add a provider and a model"
+        )
+    })?;
     let model = first.alias.clone();
     // Имя шлюза Claude Code не знает и считает окно 1M — у модели без `[1m]` сжатие
     // разговора началось бы слишком поздно. Как в Claude Desktop: без `[1m]` — 200K.
@@ -183,16 +195,19 @@ fn find_claude_cli() -> Option<PathBuf> {
 /// окружением, поэтому его получает и Windows Terminal, если он терминал по умолчанию.
 pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String> {
     if !status.running {
-        return Err("Сначала запустите шлюз".into());
+        return Err(tr!("Сначала запустите шлюз", "Start the gateway first"));
     }
     // vars_os: значение не в Unicode не должно ронять запуск — нужны только имена.
     let (remove, set) = code_env(
         status,
         std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned()),
     )?;
-    let cli = find_claude_cli().ok_or(
-        "Claude Code не найден: установите его (claude.ai/install) или добавьте claude в PATH",
-    )?;
+    let cli = find_claude_cli().ok_or_else(|| {
+        tr!(
+            "Claude Code не найден: установите его (claude.ai/install) или добавьте claude в PATH",
+            "Claude Code not found: install it (claude.ai/install) or add claude to PATH"
+        )
+    })?;
     let dir = config
         .code_dir
         .as_deref()
@@ -200,12 +215,18 @@ pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String>
         .filter(|d| !d.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("USERPROFILE").map(PathBuf::from))
-        .ok_or("Не задана папка для Claude Code")?;
+        .ok_or_else(|| {
+            tr!(
+                "Не задана папка для Claude Code",
+                "No folder set for Claude Code"
+            )
+        })?;
     let dir = std::path::absolute(&dir).unwrap_or(dir);
     if !dir.is_dir() {
-        return Err(format!(
-            "Папка для Claude Code не найдена: {}",
-            dir.display()
+        let dir = dir.display();
+        return Err(tr!(
+            "Папка для Claude Code не найдена: {dir}",
+            "Claude Code folder not found: {dir}"
         ));
     }
     // Через `start`: Rust всегда передаёт ребёнку свои std-потоки (у оконного приложения
@@ -226,38 +247,58 @@ pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String>
     }
     command.envs(set.iter().map(|(k, v)| (k, v)));
     command.env(CLI_VAR, &cli);
-    command
-        .spawn()
-        .map_err(|exc| format!("Не удалось открыть консоль: {exc}"))?;
+    command.spawn().map_err(|exc| {
+        tr!(
+            "Не удалось открыть консоль: {exc}",
+            "Could not open a console: {exc}"
+        )
+    })?;
     let model = &set[2].1;
-    Ok(format!(
-        "Claude Code открыт в {} через шлюз (модель {model})",
-        dir.display()
+    let dir = dir.display();
+    Ok(tr!(
+        "Claude Code открыт в {dir} через шлюз (модель {model})",
+        "Claude Code opened in {dir} through the gateway (model {model})"
     ))
 }
 
 pub fn launch(config: &Config, status: &UiStatus, config_dir: &Path) -> Result<String, String> {
     if !status.running {
-        return Err("Сначала запустите шлюз".into());
+        return Err(tr!("Сначала запустите шлюз", "Start the gateway first"));
     }
     if status.models.is_empty() {
-        return Err("В шлюзе нет моделей: добавьте провайдера и модель".into());
+        return Err(tr!(
+            "В шлюзе нет моделей: добавьте провайдера и модель",
+            "The gateway has no models: add a provider and a model"
+        ));
     }
     let exe = detect(config).ok_or_else(|| {
-        "Claude Desktop не найден. Укажите путь к claude.exe в настройках.".to_string()
+        tr!(
+            "Claude Desktop не найден. Укажите путь к claude.exe в настройках.",
+            "Claude Desktop not found. Set the path to claude.exe in the settings."
+        )
     })?;
-    let local = std::env::var_os("LOCALAPPDATA")
-        .ok_or_else(|| "Не найдена переменная LOCALAPPDATA".to_string())?;
+    let local = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
+        tr!(
+            "Не найдена переменная LOCALAPPDATA",
+            "LOCALAPPDATA variable not found"
+        )
+    })?;
     let base = PathBuf::from(local).join("ClaudeProviderGateway");
     let copies = base.join("claude-ru");
     let original = exe.clone();
     let (exe, russian, note) = if config.russian_ui {
         match russian_copy(&exe, &copies, config_dir) {
-            Ok(copy) => (copy, true, " Русский интерфейс включён.".to_string()),
+            Ok(copy) => (
+                copy,
+                true,
+                tr!(" Русский интерфейс включён.", " Russian interface is on."),
+            ),
             Err(exc) => {
-                tracing::warn!(error = %format!("{exc:#}"), "русский интерфейс не применён");
-                let note =
-                    format!(" Русский интерфейс не применён ({exc:#}) — запущен обычный Claude.");
+                tracing::warn!(error = %format!("{exc:#}"), "Russian interface not applied");
+                let note = tr!(
+                    " Русский интерфейс не применён ({exc:#}) — запущен обычный Claude.",
+                    " Russian interface not applied ({exc:#}); started the regular Claude."
+                );
                 (exe, false, note)
             }
         }
@@ -266,7 +307,8 @@ pub fn launch(config: &Config, status: &UiStatus, config_dir: &Path) -> Result<S
     };
     let profile = base.join("Claude-3p");
     let library = profile.join("configLibrary");
-    fs::create_dir_all(&library).map_err(|exc| format!("Профиль Claude: {exc}"))?;
+    fs::create_dir_all(&library)
+        .map_err(|exc| tr!("Профиль Claude: {exc}", "Claude profile: {exc}"))?;
 
     set_deployment_mode(&profile.join("claude_desktop_config.json"))?;
 
@@ -307,9 +349,13 @@ pub fn launch(config: &Config, status: &UiStatus, config_dir: &Path) -> Result<S
     let before = russian.then(|| crate::ruui::registry::snapshot(&copies));
     #[cfg(not(windows))]
     let before: Option<Before> = None;
-    let mut child = command
-        .spawn()
-        .map_err(|exc| format!("Не удалось запустить {}: {exc}", exe.display()))?;
+    let mut child = command.spawn().map_err(|exc| {
+        let exe = exe.display();
+        tr!(
+            "Не удалось запустить {exe}: {exc}",
+            "Could not start {exe}: {exc}"
+        )
+    })?;
     let pid = child.id();
     // Возвращаем ключи установленному Claude после старта копии и ещё раз, когда она
     // закроется. Если окно шлюза закроют раньше — это сделает следующий старт
@@ -322,9 +368,10 @@ pub fn launch(config: &Config, status: &UiStatus, config_dir: &Path) -> Result<S
             repair_for(&copies, &original, before.as_ref());
         });
     }
-    Ok(format!(
-        "Claude запущен (PID {pid}). Профиль: {}.{note}",
-        profile.display()
+    let profile = profile.display();
+    Ok(tr!(
+        "Claude запущен (PID {pid}). Профиль: {profile}.{note}",
+        "Claude started (PID {pid}). Profile: {profile}.{note}"
     ))
 }
 
@@ -369,8 +416,15 @@ pub const EFFORT_PROFILE: &str = "claude-opus-4-8";
 
 /// Папка русских копий Claude (`%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru`).
 pub fn copies_root() -> anyhow::Result<PathBuf> {
-    let local = std::env::var_os("LOCALAPPDATA")
-        .ok_or_else(|| anyhow::anyhow!("Не найдена переменная LOCALAPPDATA"))?;
+    let local = std::env::var_os("LOCALAPPDATA").ok_or_else(|| {
+        anyhow::anyhow!(
+            "{}",
+            tr!(
+                "Не найдена переменная LOCALAPPDATA",
+                "LOCALAPPDATA variable not found"
+            )
+        )
+    })?;
     Ok(PathBuf::from(local)
         .join("ClaudeProviderGateway")
         .join("claude-ru"))
@@ -423,9 +477,10 @@ fn set_deployment_mode(path: &Path) -> Result<(), String> {
                         .map_or(0, |d| d.as_secs());
                     let backup = path.with_extension(format!("json.broken-{stamp}"));
                     fs::copy(path, &backup).map_err(|exc| {
-                        format!(
-                            "{} не читается, а копию сделать нельзя: {exc}",
-                            path.display()
+                        let path = path.display();
+                        tr!(
+                            "{path} не читается, а копию сделать нельзя: {exc}",
+                            "{path} is unreadable and cannot be backed up: {exc}"
                         )
                     })?;
                     json!({})
@@ -434,7 +489,13 @@ fn set_deployment_mode(path: &Path) -> Result<(), String> {
         }
         Err(exc) if exc.kind() == std::io::ErrorKind::NotFound => json!({}),
         // Занят, нет доступа, UTF-16… — не перезаписываем вслепую настройки Claude.
-        Err(exc) => return Err(format!("Не прочитать {}: {exc}", path.display())),
+        Err(exc) => {
+            let path = path.display();
+            return Err(tr!(
+                "Не прочитать {path}: {exc}",
+                "Cannot read {path}: {exc}"
+            ));
+        }
     };
     if config["deploymentMode"] == "3p" {
         return Ok(());
