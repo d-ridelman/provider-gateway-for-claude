@@ -29,6 +29,10 @@ pub struct Config {
     /// Какие модели шлюза Claude Code считает «opus», «sonnet» и «haiku».
     #[serde(default)]
     pub model_roles: ModelRoles,
+    /// Человек уже решал про советника Claude Code (галочка в настройках): после этого
+    /// программа не включает его сама, даже если `advisorModel` в его настройках нет.
+    #[serde(default)]
+    pub advisor_decided: bool,
 }
 
 /// Модель шлюза: провайдер и ID модели у него (не псевдоним — тот меняется вместе с
@@ -68,6 +72,7 @@ impl Default for Config {
             language: None,
             auto_update: true,
             model_roles: ModelRoles::default(),
+            advisor_decided: false,
         }
     }
 }
@@ -124,6 +129,11 @@ pub struct UiConfig {
     /// Версия этой сборки (`Cargo.toml`).
     pub version: String,
     pub model_roles: ModelRoles,
+    /// `advisorModel` из настроек Claude Code (`None` — советник выключен).
+    pub advisor_model: Option<String>,
+    pub advisor_decided: bool,
+    /// Файл настроек Claude Code, куда пишется советник.
+    pub claude_settings: String,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -229,4 +239,8 @@ pub struct SettingsInput {
     pub auto_update: bool,
     #[serde(default)]
     pub model_roles: ModelRoles,
+    /// Галочка советника, только если человек её трогал или она меняет файл; `None` —
+    /// настройки Claude Code не трогать.
+    #[serde(default)]
+    pub advisor: Option<bool>,
 }

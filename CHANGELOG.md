@@ -2,6 +2,12 @@
 
 All notable changes to this project are listed here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+
+- **Advisor switch in Settings** ("Strong is also Claude Code's advisor"): the app writes `advisorModel` to Claude Code's shared settings (`~/.claude/settings.json`, or `CLAUDE_CONFIG_DIR`), so `/advisor` is no longer needed. One line changes, the rest of the file stays byte for byte; the first original is kept as `settings.json.bak`. Ticked by default until you decide; an existing `/advisor` choice is kept. The tooltip says what it affects (the regular Claude Code too).
+
 ## [0.2.1] - 2026-11-19
 
 ### Added

@@ -127,6 +127,20 @@ pub struct RoleAliases {
     pub haiku: Option<String>,
 }
 
+/// Советника шлюз исполняет, только если сильная модель (роль opus) выбрана, она ещё
+/// есть у провайдера и провайдер OpenAI-совместимый. По конфигу: шлюз может быть
+/// остановлен.
+pub fn advisor_available(config: &Config) -> bool {
+    let Some(strong) = config.model_roles.opus.as_ref() else {
+        return false;
+    };
+    crate::store::role_alias(config, Some(strong)).is_some()
+        && config
+            .providers
+            .iter()
+            .any(|p| p.id == strong.provider && p.kind != "anthropic")
+}
+
 pub fn role_aliases(config: &Config) -> RoleAliases {
     let roles = &config.model_roles;
     RoleAliases {
@@ -420,9 +434,7 @@ pub fn launch(
     }
     // Советник для сессий Code: Desktop передаёт им своё окружение. Как в консоли — только
     // если сильная модель на OpenAI-совместимом провайдере.
-    if let Some(strong) = role_aliases(config).opus
-        && status.models.iter().any(|m| m.alias == strong && m.openai)
-    {
+    if advisor_available(config) {
         command.env(ADVISOR_ENV, "1");
     }
     // Снимок до запуска: копия перепишет `claude://` и COM-класс на себя (проверено вживую).
@@ -823,6 +835,36 @@ mod tests {
             claude: None,
             update: None,
         }
+    }
+
+    #[test]
+    fn advisor_is_available_only_on_an_openai_strong_model() {
+        let row = |id: &str, kind: &str| crate::model::ProviderRow {
+            id: id.into(),
+            name: id.into(),
+            kind: kind.into(),
+            base_url: "https://example.com/v1".into(),
+            models: vec!["m1".into()],
+            ..Default::default()
+        };
+        let mut config = Config {
+            providers: vec![row("oa", "openai"), row("an", "anthropic")],
+            ..Default::default()
+        };
+        assert!(!advisor_available(&config));
+        let strong = |provider: &str, model: &str| {
+            Some(crate::model::ModelRef {
+                provider: provider.into(),
+                model: model.into(),
+            })
+        };
+        config.model_roles.opus = strong("oa", "m1");
+        assert!(advisor_available(&config));
+        config.model_roles.opus = strong("an", "m1");
+        assert!(!advisor_available(&config));
+        // Модели больше нет у провайдера — как не выбрана.
+        config.model_roles.opus = strong("oa", "gone");
+        assert!(!advisor_available(&config));
     }
 
     #[test]
