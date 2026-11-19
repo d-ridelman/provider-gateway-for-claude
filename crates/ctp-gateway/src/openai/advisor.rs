@@ -60,9 +60,16 @@ pub async fn consult(
         body[key.as_str()] = value.clone();
     }
 
+    // Потоком: целый ответ на большой разговор сильная модель готовит минутами, и
+    // посредники по дороге рвут соединение, в котором долго нет ни байта.
+    body["stream"] = json!(true);
+    if provider.include_usage {
+        body["stream_options"] = json!({"include_usage": true});
+    }
     let headers = upstream_headers(provider, session);
+    let deadline = tokio::time::Instant::now() + TIMEOUT;
     let mut retried = false;
-    let reply = loop {
+    let advice = loop {
         let request = state
             .clients
             .stream
@@ -70,23 +77,35 @@ pub async fn consult(
             .headers(headers.clone())
             .json(&body)
             .send();
-        let response = match tokio::time::timeout(TIMEOUT, request).await {
+        let response = match tokio::time::timeout_at(deadline, request).await {
             Err(_) => return Err("execution_time_exceeded"),
             Ok(Err(exc)) => {
-                warn!(provider = %provider.id, error = %exc, "advisor: network");
+                warn!(provider = %provider.id, error = %error_chain(&exc), "advisor: network");
                 return Err("unavailable");
             }
             Ok(Ok(response)) => response,
         };
         let status = response.status().as_u16();
-        let text = match tokio::time::timeout(TIMEOUT, response.text()).await {
+        if (200..300).contains(&status) {
+            match tokio::time::timeout_at(deadline, read_answer(response)).await {
+                Err(_) => return Err("execution_time_exceeded"),
+                Ok(Err(text)) => {
+                    warn!(
+                        provider = %provider.id,
+                        model = %route.model,
+                        error = %error::clean_error_text(&text, &provider.api_key),
+                        "advisor: stream failed"
+                    );
+                    return Err("unavailable");
+                }
+                Ok(Ok(advice)) => break advice,
+            }
+        }
+        let text = match tokio::time::timeout_at(deadline, response.text()).await {
             Ok(Ok(text)) => text,
             Ok(Err(_)) => return Err("unavailable"),
             Err(_) => return Err("execution_time_exceeded"),
         };
-        if (200..300).contains(&status) {
-            break text;
-        }
         if !retried
             && let Some(limit) = crate::util::parse_output_limit(&text)
             && let Some(key) = provider.max_tokens_key(&route.model)
@@ -105,9 +124,6 @@ pub async fn consult(
         return Err(error_code(status, &text));
     };
 
-    let value: Value = serde_json::from_str(&reply).map_err(|_| "unavailable")?;
-    let message = value.pointer("/choices/0/message");
-    let advice = response::content_text(message.and_then(|m| m.get("content")));
     if advice.trim().is_empty() {
         warn!(provider = %provider.id, model = %route.model, "advisor: empty answer");
         return Err("unavailable");
@@ -120,6 +136,57 @@ pub async fn consult(
         "advisor consulted"
     );
     Ok(advice)
+}
+
+/// Текст ответа: поток OpenAI (`delta.content`) или целый JSON, если провайдер `stream`
+/// не поддержал. Ошибка — текст для журнала.
+async fn read_answer(response: reqwest::Response) -> Result<String, String> {
+    use eventsource_stream::Eventsource;
+    use futures_util::StreamExt;
+
+    let is_sse = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_none_or(|kind| kind.contains("text/event-stream"));
+    if !is_sse {
+        let text = response.text().await.map_err(|exc| error_chain(&exc))?;
+        let value: Value = serde_json::from_str(&text).map_err(|_| text.clone())?;
+        if value.get("error").is_some() {
+            return Err(text);
+        }
+        return Ok(response::content_text(
+            value.pointer("/choices/0/message/content"),
+        ));
+    }
+    let mut advice = String::new();
+    let mut source = response.bytes_stream().eventsource();
+    while let Some(event) = source.next().await {
+        let event = event.map_err(|exc| exc.to_string())?;
+        if event.data.trim() == "[DONE]" {
+            break;
+        }
+        let chunk: Value = serde_json::from_str(&event.data).map_err(|_| event.data.clone())?;
+        if chunk.get("error").is_some() {
+            return Err(event.data);
+        }
+        advice.push_str(&response::content_text(
+            chunk.pointer("/choices/0/delta/content"),
+        ));
+    }
+    Ok(advice)
+}
+
+/// Ошибка с причинами: у reqwest сам текст — «error sending request», суть в источниках.
+fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut text = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        text.push_str(": ");
+        text.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    text
 }
 
 /// Код ошибки советника из списка, который знает Claude Code.

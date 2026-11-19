@@ -1005,7 +1005,8 @@ async fn gateway_answers_the_advisor_and_continues_the_same_reply() {
         .find(|b| b["model"] == "strong-model")
         .unwrap();
     assert!(advice.get("tools").is_none());
-    assert!(advice["stream"].is_null());
+    // Потоком: иначе на большом разговоре посредники рвут молчащее соединение.
+    assert_eq!(advice["stream"], true);
     let transcript = advice["messages"][1]["content"].as_str().unwrap();
     assert!(transcript.contains("fix it") && transcript.contains("Let me ask."));
     // В продолжении: ответ ассистента с вызовом и результат советника.
@@ -1077,6 +1078,33 @@ async fn advisor_calls_are_capped_even_if_the_model_keeps_calling() {
         .unwrap();
     assert!(last_main.get("tools").is_none(), "{last_main}");
     assert!(last_main.get("tool_choice").is_none());
+}
+
+#[tokio::test]
+async fn streamed_advice_is_collected_without_the_reasoning() {
+    let upstream = MockServer::start().await;
+    mount_main_calling_advisor(&upstream).await;
+    let advice = sse_body(&[
+        json!({"choices": [{"index": 0, "delta": {"reasoning_content": "thinking…"}, "finish_reason": null}]}),
+        json!({"choices": [{"index": 0, "delta": {"content": "Test "}, "finish_reason": null}]}),
+        json!({"choices": [{"index": 0, "delta": {"content": "first."}, "finish_reason": "stop"}]}),
+    ]);
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("strong-model"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(advice, "text/event-stream"))
+        .mount(&upstream)
+        .await;
+
+    let response = app(advisor_state(&upstream.uri()))
+        .oneshot(ask_with_advisor())
+        .await
+        .unwrap();
+    let body = text_body(response).await;
+    let blocks = started_blocks(&body);
+    assert_eq!(blocks[2]["content"]["type"], "advisor_result", "{body}");
+    assert_eq!(blocks[2]["content"]["text"], "Test first.");
+    assert!(body.contains("\"text\":\"Done.\""));
 }
 
 #[tokio::test]
