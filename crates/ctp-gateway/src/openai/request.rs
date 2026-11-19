@@ -291,7 +291,7 @@ fn convert_tools(body: &Value) -> Vec<Value> {
                 .iter()
                 .filter_map(|tool| {
                     let name = tool.get("name").and_then(Value::as_str)?;
-                    let schema = tool.get("input_schema")?;
+                    let schema = portable_schema(tool.get("input_schema")?);
                     Some(json!({
                         "type": "function",
                         "function": {
@@ -304,6 +304,30 @@ fn convert_tools(body: &Value) -> Vec<Value> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Схема инструмента без `pattern`, которые не скомпилирует движок вида RE2. Провайдеры
+/// на Go (OpenCode и др.) проверяют схемы им и отвергают весь запрос (400 «is not a
+/// regex») из-за одного инструмента MCP, например с `^[^\uD800-\uDFFF]*$` (суррогаты)
+/// или с просмотром вперёд из JS. Шаблон — лишь подсказка модели: входные данные всё
+/// равно проверяет сам инструмент. Удаляются только строковые `pattern`: свойство с
+/// именем `pattern` внутри `properties` — объект-схема, его не трогаем.
+fn portable_schema(schema: &Value) -> Value {
+    match schema {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .filter(|(key, value)| {
+                    !(key.as_str() == "pattern"
+                        && value
+                            .as_str()
+                            .is_some_and(|re| regex::Regex::new(re).is_err()))
+                })
+                .map(|(key, value)| (key.clone(), portable_schema(value)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(portable_schema).collect()),
+        other => other.clone(),
+    }
 }
 
 fn convert_tool_choice(value: Option<&Value>, has_tools: bool) -> (Option<Value>, Option<bool>) {
@@ -335,6 +359,34 @@ mod tests {
     use super::*;
     use crate::state::{Provider, ProviderKind};
     use std::collections::BTreeMap;
+
+    #[test]
+    fn tool_schemas_drop_only_patterns_a_re2_engine_rejects() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                // The rea MCP tool that made OpenCode answer 400 "is not a regex".
+                "session": {"type": "string", "pattern": r"^[^\uD800-\uDFFF]*$"},
+                "lookahead": {"type": "string", "pattern": "^(?=a)a$"},
+                "plain": {"type": "string", "pattern": "^[a-z0-9-]+$"},
+                // A property that is called "pattern" is a schema, not a regex.
+                "pattern": {"type": "string", "description": "glob"},
+                "list": {"type": "array", "items": {"anyOf": [
+                    {"type": "string", "pattern": r"^[^\uD800-\uDFFF]*$"},
+                    {"type": "integer"}
+                ]}}
+            }
+        });
+        let body = json!({"tools": [{"name": "t", "description": "d", "input_schema": schema}]});
+        let out = convert_tools(&body);
+        let props = &out[0]["function"]["parameters"]["properties"];
+        assert!(props["session"].get("pattern").is_none());
+        assert!(props["lookahead"].get("pattern").is_none());
+        assert_eq!(props["plain"]["pattern"], "^[a-z0-9-]+$");
+        assert_eq!(props["pattern"]["type"], "string");
+        assert!(props["list"]["items"]["anyOf"][0].get("pattern").is_none());
+        assert_eq!(props["session"]["type"], "string");
+    }
 
     fn provider() -> Provider {
         Provider {
