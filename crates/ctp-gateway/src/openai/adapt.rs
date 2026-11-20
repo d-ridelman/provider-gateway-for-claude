@@ -29,8 +29,12 @@ const TOOL_CAP: usize = 128;
 pub enum Step {
     /// Картинки заменяются пометкой в тексте.
     Images,
-    /// Необязательные поля запроса убираются.
-    Fields,
+    /// Уровень рассуждения (`reasoning_effort`) убирается.
+    Effort,
+    /// Параметры выборки (`temperature`, `top_p`, `stop`, `parallel_tool_calls`) убираются.
+    Sampling,
+    /// `stream_options` (учёт токенов в потоке) убирается.
+    StreamOptions,
     /// Имена инструментов становятся короткими и из `[A-Za-z0-9_-]`.
     ToolNames,
     /// Подряд идущие сообщения одной роли сливаются.
@@ -41,10 +45,13 @@ pub enum Step {
     ToolCap,
 }
 
-/// Порядок проб: от самого вероятного и безобидного к самому грубому.
-pub const LADDER: [Step; 6] = [
+/// Порядок проб: от самого вероятного и безобидного к самому грубому. Поля убираются по
+/// одному виду: выучится только то, что помогло, а не всё сразу.
+pub const LADDER: [Step; 8] = [
     Step::Images,
-    Step::Fields,
+    Step::Effort,
+    Step::Sampling,
+    Step::StreamOptions,
     Step::ToolNames,
     Step::MergeRoles,
     Step::Schemas,
@@ -55,7 +62,9 @@ impl Step {
     pub fn label(self) -> &'static str {
         match self {
             Self::Images => "images left out",
-            Self::Fields => "optional request fields left out",
+            Self::Effort => "reasoning effort left out",
+            Self::Sampling => "sampling parameters left out",
+            Self::StreamOptions => "stream options left out",
             Self::ToolNames => "tool names shortened",
             Self::MergeRoles => "consecutive messages merged",
             Self::Schemas => "tool schemas simplified",
@@ -68,7 +77,13 @@ impl Step {
 pub fn apply(step: Step, payload: &mut Value, provider: &Provider) -> bool {
     match step {
         Step::Images => crate::openai::request::strip_images(payload) > 0,
-        Step::Fields => drop_fields(payload, provider),
+        Step::Effort => drop_fields(payload, provider, &["reasoning_effort"]),
+        Step::Sampling => drop_fields(
+            payload,
+            provider,
+            &["temperature", "top_p", "stop", "parallel_tool_calls"],
+        ),
+        Step::StreamOptions => drop_fields(payload, provider, &["stream_options"]),
         Step::ToolNames => rename_tools(payload),
         Step::MergeRoles => merge_roles(payload),
         Step::Schemas => simplify_tools(payload),
@@ -78,20 +93,13 @@ pub fn apply(step: Step, payload: &mut Value, provider: &Provider) -> bool {
 
 /// Поля, без которых запрос остаётся запросом. Заданное самим человеком в `extra_body`
 /// провайдера не трогается.
-fn drop_fields(payload: &mut Value, provider: &Provider) -> bool {
+fn drop_fields(payload: &mut Value, provider: &Provider, keys: &[&str]) -> bool {
     let Some(map) = payload.as_object_mut() else {
         return false;
     };
     let mut changed = false;
-    for key in [
-        "reasoning_effort",
-        "parallel_tool_calls",
-        "stream_options",
-        "temperature",
-        "top_p",
-        "stop",
-    ] {
-        if !provider.extra_body.contains_key(key) && map.remove(key).is_some() {
+    for key in keys {
+        if !provider.extra_body.contains_key(*key) && map.remove(*key).is_some() {
             changed = true;
         }
     }
@@ -253,14 +261,41 @@ fn merge_roles(payload: &mut Value) -> bool {
 /// Схема только из типов, описаний, перечислений и вложенности: `anyOf`, `$ref`, форматы,
 /// пределы и прочее, что строгий провайдер может не понять, уходит. Описание остаётся и
 /// ведёт модель.
-// shortcut: `anyOf`/`oneOf` без `type` сводятся к строке; точнее — выбирать первый вариант, если такой провайдер встретится.
+/// `anyOf`/`oneOf`/`allOf` дают первый вариант, не `null`; `type: [a, "null"]` — `a`;
+/// `enum` без `type` берёт тип по первому значению.
+// shortcut: `$ref` без разворота сводится к строке, если нет `properties`; разворачивать `$defs`, если такой провайдер и такие схемы встретятся.
 fn simplify_schema(schema: &Value) -> Value {
     let Value::Object(map) = schema else {
         return schema.clone();
     };
+    for key in ["anyOf", "oneOf", "allOf"] {
+        if let Some(Value::Array(variants)) = map.get(key)
+            && let Some(first) = variants
+                .iter()
+                .find(|variant| variant.get("type").and_then(Value::as_str) != Some("null"))
+        {
+            let mut out = simplify_schema(first);
+            if let (Some(description), Some(object)) = (map.get("description"), out.as_object_mut())
+            {
+                object.insert("description".into(), description.clone());
+            }
+            return out;
+        }
+    }
     let mut out = Map::new();
-    if let Some(kind) = map.get("type") {
-        out.insert("type".into(), kind.clone());
+    match map.get("type") {
+        Some(Value::Array(kinds)) => {
+            if let Some(kind) = kinds
+                .iter()
+                .find(|kind| kind.as_str().is_some_and(|k| k != "null"))
+            {
+                out.insert("type".into(), kind.clone());
+            }
+        }
+        Some(kind) => {
+            out.insert("type".into(), kind.clone());
+        }
+        None => {}
     }
     if let Some(Value::String(text)) = map.get("description") {
         out.insert("description".into(), json!(text));
@@ -286,12 +321,18 @@ fn simplify_schema(schema: &Value) -> Value {
         out.insert("required".into(), Value::Array(required.clone()));
     }
     if !out.contains_key("type") {
+        let from_enum = match out.get("enum").and_then(|values| values.get(0)) {
+            Some(Value::Number(n)) if n.is_i64() || n.is_u64() => "integer",
+            Some(Value::Number(_)) => "number",
+            Some(Value::Bool(_)) => "boolean",
+            _ => "string",
+        };
         out.insert(
             "type".into(),
             json!(if out.contains_key("properties") {
                 "object"
             } else {
-                "string"
+                from_enum
             }),
         );
     }
@@ -336,42 +377,77 @@ fn cap_tools(payload: &mut Value) -> bool {
     true
 }
 
+/// Сообщение провайдера об ошибке без эха запроса: `error.message`, `msg` из `detail`
+/// (FastAPI и vLLM повторяют во вводе всё, что получили, и в нём «context» и «token»
+/// есть почти всегда) или просто начало текста.
+pub(crate) fn error_message(text: &str) -> String {
+    let Ok(value) = serde_json::from_str::<Value>(text) else {
+        return text.chars().take(600).collect();
+    };
+    if let Some(message) = crate::error::openai_error_message(&value) {
+        return message;
+    }
+    match value.get("detail").or_else(|| value.get("message")) {
+        Some(Value::String(message)) => message.clone(),
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| item.get("msg").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("; "),
+        _ => text.chars().take(600).collect(),
+    }
+}
+
 /// Причина 400 может быть упрощением, а не запросом по существу? Переполнение окна,
-/// лимиты, деньги, ключи и фильтры контента лесенка не лечит.
+/// лимиты, деньги, ключи, фильтры контента и несуществующая модель лесенку не лечат.
 pub fn adaptable(status: u16, text: &str) -> bool {
     if !matches!(status, 400 | 422) {
         return false;
     }
+    let message = error_message(text);
+    if context_overflow(&message) {
+        return false;
+    }
+    let lower = message.to_ascii_lowercase();
+    let missing_model = lower.contains("model")
+        && (lower.contains("not found") || lower.contains("does not exist"));
+    !missing_model
+        && ![
+            "rate limit",
+            "quota",
+            "balance",
+            "credit",
+            "billing",
+            "api key",
+            "api_key",
+            "unauthorized",
+            "permission",
+            "content_filter",
+            "content filter",
+            "content policy",
+            "moderation",
+            "safety",
+            "max_tokens",
+            "max_completion_tokens",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
+}
+
+/// Провайдер говорит, что разговор не влез в окно модели (а не что слишком велик вывод).
+pub fn context_overflow(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
-    ![
-        "context",
-        "too long",
-        "too large",
-        "token",
-        "rate limit",
-        "quota",
-        "balance",
-        "credit",
-        "billing",
-        "api key",
-        "api_key",
-        "unauthorized",
-        "permission",
-        "content_filter",
-        "content filter",
-        "content policy",
-        "moderation",
-        "safety",
-        "not found",
-        "does not exist",
+    if [
+        "max_tokens",
+        "max_completion_tokens",
+        "output token",
+        "completion token",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
-}
-
-/// Провайдер говорит, что запрос не влез в окно модели.
-pub fn context_overflow(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
+    {
+        return false;
+    }
     [
         "context length",
         "context_length",
@@ -382,12 +458,33 @@ pub fn context_overflow(text: &str) -> bool {
         "prompt is too long",
         "input is too long",
         "too many tokens",
-        "token limit",
-        "tokens exceed",
         "reduce the length",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
+}
+
+/// «prompt is too long: N tokens > M maximum» по тексту провайдера, если числа в нём есть:
+/// Claude Code достаёт их регуляркой и по ним решает, насколько сжимать.
+pub fn overflow_message(text: &str) -> Option<String> {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static LIMIT: OnceLock<Regex> = OnceLock::new();
+    static ACTUAL: OnceLock<Regex> = OnceLock::new();
+    let limit = LIMIT.get_or_init(|| {
+        Regex::new(r"(?i)maximum context (?:length|window|size) (?:is|of) (\d[\d,]*)")
+            .expect("limit regex")
+    });
+    let actual = ACTUAL.get_or_init(|| {
+        Regex::new(r"(?i)(?:resulted in|requested|you sent|contains?|has|of) (\d[\d,]*) tokens")
+            .expect("actual regex")
+    });
+    let number = |re: &Regex| {
+        re.captures(text)
+            .and_then(|caps| caps[1].replace(',', "").parse::<u64>().ok())
+    };
+    let (limit, actual) = (number(limit)?, number(actual)?);
+    (actual > limit).then(|| format!("prompt is too long: {actual} tokens > {limit} maximum"))
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -449,13 +546,23 @@ impl Profiles {
         self.inner.lock().unwrap_or_else(|exc| exc.into_inner())
     }
 
-    /// Шаги, которые для этой модели применяются заранее.
+    /// Шаги, которые для этой модели применяются заранее. Выученное старше срока
+    /// забывается и здесь, а не только при загрузке: приложение живёт в трее неделями.
     pub fn steps(&self, key: &str) -> Vec<Step> {
-        self.lock()
+        let mut inner = self.lock();
+        let expired = inner
             .learned
             .get(key)
-            .map(|learned| learned.steps.clone())
-            .unwrap_or_default()
+            .map(|learned| learned.at.saturating_add(EXPIRES.as_secs()) < now());
+        match expired {
+            Some(true) => {
+                inner.learned.remove(key);
+                self.save(&inner);
+                Vec::new()
+            }
+            Some(false) => inner.learned[key].steps.clone(),
+            None => Vec::new(),
+        }
     }
 
     /// Выученное: `(модель, шаги)` по алфавиту (для журнала и диагностики).
@@ -470,56 +577,48 @@ impl Profiles {
         all
     }
 
-    /// Запрос прошёл после упрощений `steps`. Второй такой случай подряд с теми же
-    /// шагами — модель выучена (результат — шаги). Выученное дополняется новыми шагами.
-    pub fn record_success(&self, key: &str, steps: &[Step]) -> Option<Vec<Step>> {
-        if steps.is_empty() {
+    /// Запрос прошёл, когда к известным шагам добавился `flipped`: до него отказ ещё был,
+    /// с ним — нет. Запоминается только он (предыдущие шаги лесенки не помогли, и лишнее
+    /// навсегда отняло бы у модели то, что она принимает). Тот же новый шаг на втором
+    /// запросе — выучено; результат — все шаги модели.
+    pub fn record_success(&self, key: &str, flipped: Step) -> Option<Vec<Step>> {
+        let mut inner = self.lock();
+        let known: Vec<Step> = inner
+            .learned
+            .get(key)
+            .map(|learned| learned.steps.clone())
+            .unwrap_or_default();
+        if known.contains(&flipped) {
             return None;
         }
-        let mut inner = self.lock();
-        let mut ordered: Vec<Step> = LADDER
+        let candidate: Vec<Step> = LADDER
             .iter()
             .copied()
-            .filter(|step| steps.contains(step))
+            .filter(|step| *step == flipped || known.contains(step))
             .collect();
-        let result = if let Some(learned) = inner.learned.get_mut(key) {
-            let before = learned.steps.len();
-            for step in &ordered {
-                if !learned.steps.contains(step) {
-                    learned.steps.push(*step);
-                }
-            }
-            learned.at = now();
-            (learned.steps.len() != before).then(|| learned.steps.clone())
-        } else {
+        let confirmed = {
             let entry = inner
                 .pending
                 .entry(key.to_string())
                 .or_insert_with(|| (Vec::new(), 0));
-            if entry.0 == ordered {
+            if entry.0 == candidate {
                 entry.1 += 1;
             } else {
-                *entry = (std::mem::take(&mut ordered), 1);
+                *entry = (candidate, 1);
             }
-            if entry.1 >= CONFIRMATIONS {
-                let steps = entry.0.clone();
-                inner.pending.remove(key);
-                inner.learned.insert(
-                    key.to_string(),
-                    Learned {
-                        steps: steps.clone(),
-                        at: now(),
-                    },
-                );
-                Some(steps)
-            } else {
-                None
-            }
+            (entry.1 >= CONFIRMATIONS).then(|| entry.0.clone())
         };
-        if result.is_some() {
-            self.save(&inner);
-        }
-        result
+        let steps = confirmed?;
+        inner.pending.remove(key);
+        inner.learned.insert(
+            key.to_string(),
+            Learned {
+                steps: steps.clone(),
+                at: now(),
+            },
+        );
+        self.save(&inner);
+        Some(steps)
     }
 
     /// Лесенка этой модели недавно не помогла.
@@ -591,11 +690,16 @@ mod tests {
         let mut payload = json!({"model": "m", "messages": [], "reasoning_effort": "high",
             "parallel_tool_calls": true, "stream_options": {"include_usage": true}, "top_p": 1});
         let owner = provider(&[("top_p", json!(0.9))]);
-        assert!(drop_fields(&mut payload, &owner));
+        // Каждый шаг трогает только свои поля: выучится то, что помогло, не всё сразу.
+        assert!(apply(Step::Effort, &mut payload, &owner));
         assert!(payload.get("reasoning_effort").is_none());
+        assert!(payload.get("stream_options").is_some());
+        assert!(apply(Step::StreamOptions, &mut payload, &owner));
         assert!(payload.get("stream_options").is_none());
+        assert!(apply(Step::Sampling, &mut payload, &owner));
+        assert!(payload.get("parallel_tool_calls").is_none());
         assert_eq!(payload["top_p"], 1);
-        assert!(!drop_fields(&mut payload, &owner));
+        assert!(!apply(Step::Sampling, &mut payload, &owner));
     }
 
     #[test]
@@ -693,6 +797,38 @@ mod tests {
     }
 
     #[test]
+    fn simplified_schemas_stay_valid_for_unions_and_numeric_enums() {
+        let object = json!({"type": "object", "properties": {"x": {"type": "integer"}}});
+        let simple = simplify_schema(&json!({
+            "properties": {
+                "count": {"enum": [1, 2, 3]},
+                "flag": {"enum": [true]},
+                "maybe": {"type": ["string", "null"], "description": "nullable"},
+                "either": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "string"}}],
+                           "description": "list or nothing"},
+                "shape": {"oneOf": [object.clone(), {"type": "string"}]}
+            }
+        }));
+        assert_eq!(simple["type"], "object");
+        let props = &simple["properties"];
+        assert_eq!(props["count"]["type"], "integer");
+        assert_eq!(props["flag"]["type"], "boolean");
+        assert_eq!(
+            props["maybe"],
+            json!({"type": "string", "description": "nullable"})
+        );
+        assert_eq!(props["either"]["type"], "array");
+        assert_eq!(props["either"]["items"], json!({"type": "string"}));
+        assert_eq!(props["either"]["description"], "list or nothing");
+        // Объект из `oneOf` остаётся объектом, а не строкой.
+        assert_eq!(props["shape"]["type"], "object");
+        assert_eq!(
+            props["shape"]["properties"]["x"],
+            json!({"type": "integer"})
+        );
+    }
+
+    #[test]
     fn the_tool_cap_keeps_the_advisor() {
         let mut tools: Vec<Value> = (0..200)
             .map(|i| tool(&format!("t{i}"), json!({"type": "object"})))
@@ -724,9 +860,76 @@ mod tests {
         ));
         assert!(!adaptable(400, "Insufficient balance"));
         assert!(!adaptable(400, "blocked by content policy"));
+        assert!(!adaptable(400, "model glm-9 does not exist"));
         assert!(context_overflow("maximum context length is 8192 tokens"));
         assert!(context_overflow("Prompt is too long: 300000 tokens"));
         assert!(!context_overflow("the request is invalid"));
+        // Предел вывода — не переполнение окна, но и не капризы запроса.
+        assert!(!context_overflow(
+            "max_tokens exceeds the model's output token limit"
+        ));
+        assert!(!adaptable(
+            400,
+            r#"{"error":{"message":"max_tokens is too large: 99999"}}"#
+        ));
+        // Внятные отказы, которые лечат шаги лесенки.
+        let long_name = r#"{"error":{"message":"Invalid 'tools[3].function.name': string too long. Expected a string with maximum length 64"}}"#;
+        assert!(adaptable(400, long_name));
+        assert!(adaptable(
+            400,
+            r#"{"error":{"message":"Unexpected token in schema"}}"#
+        ));
+        assert!(adaptable(
+            400,
+            r#"{"error":{"message":"array too long: tools"}}"#
+        ));
+        // Эхо запроса в 422 (FastAPI, vLLM) не должно принимать за переполнение или лимит.
+        let echo = r#"{"detail":[{"type":"extra_forbidden","loc":["body","reasoning_effort"],"msg":"Extra inputs are not permitted","input":{"messages":[{"content":"the context and the token budget"}]}}]}"#;
+        assert!(adaptable(422, echo));
+        assert!(!adaptable(
+            422,
+            r#"{"detail":[{"msg":"maximum context length is 8192 tokens"}]}"#
+        ));
+    }
+
+    #[test]
+    fn overflow_numbers_are_taken_from_the_providers_words() {
+        let openai = "This model's maximum context length is 8192 tokens. However, your messages resulted in 9,000 tokens. Please reduce the length of the messages.";
+        assert_eq!(
+            overflow_message(openai).as_deref(),
+            Some("prompt is too long: 9000 tokens > 8192 maximum")
+        );
+        assert_eq!(
+            overflow_message("maximum context length is 8192 tokens"),
+            None
+        );
+        // Число не больше предела — это не переполнение.
+        assert_eq!(
+            overflow_message("maximum context length is 8192 tokens, requested 100 tokens"),
+            None
+        );
+    }
+
+    #[test]
+    fn an_old_lesson_is_forgotten_in_memory_too() {
+        let profiles = Profiles::in_memory();
+        profiles.lock().learned.insert(
+            "p/old".into(),
+            Learned {
+                steps: vec![Step::Images],
+                at: 1,
+            },
+        );
+        profiles.lock().learned.insert(
+            "p/fresh".into(),
+            Learned {
+                steps: vec![Step::Images],
+                at: now(),
+            },
+        );
+        assert!(profiles.steps("p/old").is_empty());
+        assert_eq!(profiles.steps("p/fresh"), vec![Step::Images]);
+        assert_eq!(profiles.snapshot().len(), 1);
     }
 
     #[test]
@@ -737,25 +940,28 @@ mod tests {
         let path = dir.join("model-profiles.json");
 
         let profiles = Profiles::load(path.clone());
-        assert_eq!(profiles.record_success("p/m", &[Step::Images]), None);
+        // Запоминается шаг, который перевёл отказ в успех, и только после второго раза.
+        assert_eq!(profiles.record_success("p/m", Step::Images), None);
         assert!(profiles.steps("p/m").is_empty());
-        // Другие шаги — счёт заново.
-        assert_eq!(profiles.record_success("p/m", &[Step::Fields]), None);
+        // Другой шаг — счёт заново.
+        assert_eq!(profiles.record_success("p/m", Step::Effort), None);
         assert_eq!(
-            profiles.record_success("p/m", &[Step::Fields]),
-            Some(vec![Step::Fields])
+            profiles.record_success("p/m", Step::Effort),
+            Some(vec![Step::Effort])
         );
-        assert_eq!(profiles.steps("p/m"), vec![Step::Fields]);
-        // Выученное дополняется, порядок — как в лесенке.
+        assert_eq!(profiles.steps("p/m"), vec![Step::Effort]);
+        // Уже известный шаг ничего не меняет.
+        assert_eq!(profiles.record_success("p/m", Step::Effort), None);
+        // Выученное дополняется тоже со второго раза; порядок — как в лесенке.
+        assert_eq!(profiles.record_success("p/m", Step::Images), None);
         assert_eq!(
-            profiles.record_success("p/m", &[Step::Schemas, Step::Fields]),
-            Some(vec![Step::Fields, Step::Schemas])
+            profiles.record_success("p/m", Step::Images),
+            Some(vec![Step::Images, Step::Effort])
         );
-        assert_eq!(profiles.record_success("p/m", &[]), None);
 
         // После перезапуска — то же.
         let reloaded = Profiles::load(path.clone());
-        assert_eq!(reloaded.steps("p/m"), vec![Step::Fields, Step::Schemas]);
+        assert_eq!(reloaded.steps("p/m"), vec![Step::Images, Step::Effort]);
         assert_eq!(reloaded.snapshot().len(), 1);
 
         // Устаревшее забывается; битый файл — пустые профили.

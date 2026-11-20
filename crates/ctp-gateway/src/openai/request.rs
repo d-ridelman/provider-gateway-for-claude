@@ -429,10 +429,11 @@ fn convert_tools(body: &Value) -> Vec<Value> {
                 .iter()
                 .filter_map(|tool| {
                     let name = tool.get("name").and_then(Value::as_str)?;
+                    // Серверный инструмент без схемы (советник) имени не занимает.
+                    let schema = portable_schema(tool.get("input_schema")?);
                     if !seen.insert(name.to_string()) {
                         return None;
                     }
-                    let schema = portable_schema(tool.get("input_schema")?);
                     Some(json!({
                         "type": "function",
                         "function": {
