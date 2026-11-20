@@ -62,13 +62,21 @@ pub async fn start(shared: &AppShared) -> Result<UiStatus, String> {
     if token.is_empty() {
         return Err(tr!("Пустой локальный токен", "Local token is empty"));
     }
-    let gateway_state = AppState::new(
+    let mut gateway_state = AppState::new(
         router,
         token.clone(),
         false,
         "user:inference user:file_upload user:profile user:sessions:claude_code".into(),
     )
     .map_err(|exc| tr!("Шлюз: {exc}", "Gateway: {exc}"))?;
+    // Что шлюз узнал о капризах моделей (картинки, поля, имена инструментов…), живёт рядом
+    // с настройками и переживает перезапуск; удалить файл — забыть всё.
+    gateway_state.profiles = std::sync::Arc::new(ctp_gateway::openai::adapt::Profiles::load(
+        shared.config_dir.join("model-profiles.json"),
+    ));
+    for (model, steps) in gateway_state.profiles.snapshot() {
+        tracing::info!(model = %model, steps = ?steps, "known quirks of this model");
+    }
 
     let Some(listener) = bind(shared, config.port, epoch).await? else {
         tracing::info!("gateway start superseded by a later command");

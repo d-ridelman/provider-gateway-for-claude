@@ -420,6 +420,8 @@ fn image_part(block: &Value) -> Option<Value> {
 }
 
 fn convert_tools(body: &Value) -> Vec<Value> {
+    // Повтор имени провайдеры отвергают (400 «the request is invalid»): остаётся первый.
+    let mut seen = std::collections::HashSet::new();
     body.get("tools")
         .and_then(Value::as_array)
         .map(|tools| {
@@ -427,6 +429,9 @@ fn convert_tools(body: &Value) -> Vec<Value> {
                 .iter()
                 .filter_map(|tool| {
                     let name = tool.get("name").and_then(Value::as_str)?;
+                    if !seen.insert(name.to_string()) {
+                        return None;
+                    }
                     let schema = portable_schema(tool.get("input_schema")?);
                     Some(json!({
                         "type": "function",

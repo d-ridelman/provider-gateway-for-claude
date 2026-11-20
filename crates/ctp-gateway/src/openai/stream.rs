@@ -47,6 +47,8 @@ pub struct StreamTranslator {
     finish_reason: Option<String>,
     done: bool,
     secret: String,
+    /// Сокращённое для провайдера имя инструмента → настоящее.
+    names: std::collections::HashMap<String, String>,
 }
 
 /// Вызов советника, перехваченный у модели.
@@ -78,7 +80,14 @@ impl StreamTranslator {
             finish_reason: None,
             done: false,
             secret: String::new(),
+            names: Default::default(),
         }
+    }
+
+    /// Настоящие имена инструментов, сокращённых для провайдера (`adapt::name_map`).
+    pub fn with_names(mut self, names: std::collections::HashMap<String, String>) -> Self {
+        self.names = names;
+        self
     }
 
     /// Ключ провайдера: вырезается из ошибок, пришедших внутри потока.
@@ -229,7 +238,8 @@ impl StreamTranslator {
             events.push(json!({
                 "type": "content_block_start",
                 "index": index,
-                "content_block": {"type": "tool_use", "id": call.id, "name": call.name, "input": {}}
+                "content_block": {"type": "tool_use", "id": call.id,
+                                  "name": self.names.get(&call.name).unwrap_or(&call.name), "input": {}}
             }));
             events.push(json!({
                 "type": "content_block_delta",
