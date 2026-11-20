@@ -50,11 +50,13 @@ impl SendError {
 
     /// Та же ошибка внутри уже начатого потока (после `message_start`).
     fn event(&self, provider: &Provider) -> Value {
-        let text = match self {
-            Self::Network(text) => text.clone(),
-            Self::Status { text, .. } => error::clean_error_text(text, &provider.api_key),
-        };
-        stream::StreamTranslator::error_event(&text)
+        match self {
+            Self::Network(text) => stream::StreamTranslator::error_event(text),
+            Self::Status { status, text, .. } => {
+                let (_, kind, message) = error::classify(*status, text, &provider.api_key);
+                stream::StreamTranslator::error_event_of(kind, &message)
+            }
+        }
     }
 }
 
@@ -93,15 +95,14 @@ async fn send(
             }
         };
         if response.status().is_success() {
-            if !applied.is_empty() {
-                let steps = [known.as_slice(), applied.as_slice()].concat();
+            if let Some(flipped) = applied.last().copied() {
                 info!(
                     provider = %provider.id,
                     model = %upstream_model,
                     steps = %labels(&applied),
                     "the request went through after simplifying it"
                 );
-                if let Some(learned) = state.profiles.record_success(&key, &steps) {
+                if let Some(learned) = state.profiles.record_success(&key, flipped) {
                     info!(
                         provider = %provider.id,
                         model = %upstream_model,

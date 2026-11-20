@@ -353,7 +353,12 @@ impl StreamTranslator {
     }
 
     pub fn error_event(message: &str) -> Value {
-        json!({"type": "error", "error": {"type": "api_error", "message": message}})
+        Self::error_event_of("api_error", message)
+    }
+
+    /// Ошибка внутри потока с типом по статусу провайдера (лимит, переполнение окна…).
+    pub fn error_event_of(kind: &str, message: &str) -> Value {
+        json!({"type": "error", "error": {"type": kind, "message": message}})
     }
 
     fn ensure(&mut self, kind: BlockKind) -> Vec<Value> {

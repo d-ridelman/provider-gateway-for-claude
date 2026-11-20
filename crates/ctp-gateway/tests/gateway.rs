@@ -1017,6 +1017,116 @@ async fn an_unexplained_400_climbs_the_ladder_one_step_at_a_time() {
 }
 
 #[tokio::test]
+async fn only_the_step_that_made_the_difference_is_learned() {
+    let upstream = MockServer::start().await;
+    // Мешает только `reasoning_effort`; картинки провайдер принимает.
+    refuse_when_body_has("reasoning_effort", "the request is invalid")
+        .mount(&upstream)
+        .await;
+    answer_ok().mount(&upstream).await;
+    let state = effort_state(&upstream.uri());
+    let with_image = || {
+        post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                             "data": screenshot_png(32, 32)}},
+                {"type": "text", "text": "look"}
+            ]}]
+        }))
+    };
+    // Лесенка сначала убирает картинки (отказ остаётся), потом уровень рассуждения.
+    for expected_total in [3, 6] {
+        let response = app(state.clone()).oneshot(with_image()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        text_body(response).await;
+        assert_eq!(
+            upstream.received_requests().await.unwrap().len(),
+            expected_total
+        );
+    }
+    assert_eq!(
+        state.profiles.snapshot(),
+        vec![(
+            "p/some-model".to_string(),
+            vec![ctp_gateway::openai::adapt::Step::Effort]
+        )]
+    );
+    // Дальше уходит один запрос: без уровня рассуждения, но с картинкой.
+    let response = app(state).oneshot(with_image()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    text_body(response).await;
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 7);
+    let last = String::from_utf8_lossy(&requests[6].body);
+    assert!(last.contains("image_url"));
+    assert!(!last.contains("reasoning_effort"));
+}
+
+#[tokio::test]
+async fn a_422_that_echoes_the_request_still_climbs_the_ladder() {
+    let upstream = MockServer::start().await;
+    // FastAPI/vLLM повторяют ввод: в нём есть и «context», и «token».
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("reasoning_effort"))
+        .respond_with(ResponseTemplate::new(422).set_body_json(json!({"detail": [{
+            "type": "extra_forbidden", "loc": ["body", "reasoning_effort"],
+            "msg": "Extra inputs are not permitted",
+            "input": {"messages": [{"content": "the context and the token budget"}]}
+        }]})))
+        .with_priority(1)
+        .mount(&upstream)
+        .await;
+    answer_ok().mount(&upstream).await;
+    let response = app(effort_state(&upstream.uri()))
+        .oneshot(plain_ask())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(text_body(response).await.contains("\"text\":\"ok\""));
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn openais_wording_about_a_long_tool_name_reaches_the_name_step_and_restores_it_without_a_stream()
+ {
+    let long = format!("mcp__server__{}", "w".repeat(70));
+    let safe = ctp_gateway::openai::adapt::safe_name(&long);
+    let upstream = MockServer::start().await;
+    refuse_when_body_has(
+        &"w".repeat(65),
+        "Invalid 'tools[0].function.name': string too long. Expected a string with maximum length 64",
+    )
+    .mount(&upstream)
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+                "role": "assistant", "content": null,
+                "tool_calls": [{"id": "call_1", "type": "function",
+                                "function": {"name": safe, "arguments": "{}"}}]}}]
+        })))
+        .with_priority(10)
+        .mount(&upstream)
+        .await;
+    let response = app(state_with(&upstream.uri(), "openai", "some-model"))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32,
+            "tools": [{"name": long, "description": "d", "input_schema": {"type": "object"}}],
+            "messages": [{"role": "user", "content": "go"}]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["content"][0]["type"], "tool_use");
+    assert_eq!(body["content"][0]["name"], long.as_str());
+    assert_eq!(body["stop_reason"], "tool_use");
+}
+
+#[tokio::test]
 async fn long_tool_names_are_shortened_for_the_provider_and_restored_for_the_client() {
     let long = format!("mcp__server__{}", "q".repeat(70));
     let safe = ctp_gateway::openai::adapt::safe_name(&long);

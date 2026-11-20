@@ -18,22 +18,29 @@ pub fn anthropic_error(status: u16, kind: &str, message: impl Into<String>) -> R
 /// `secret` — ключ провайдера: его вырезаем из сырого текста до regex и обрезки,
 /// иначе они разрежут ключ необычной формы и хвост уйдёт клиенту.
 pub fn upstream_error(status: u16, text: &str, secret: &str) -> Response {
+    let (code, kind, message) = classify(status, text, secret);
+    anthropic_error(code, kind, message)
+}
+
+/// Ошибка провайдера как её отдаёт Anthropic: статус, тип, сообщение. Общая для ответа
+/// и для ошибки внутри уже начатого потока.
+pub fn classify(status: u16, text: &str, secret: &str) -> (u16, &'static str, String) {
     let code = if (400..600).contains(&status) {
         status
     } else {
         502
     };
     let message = clean_error_text(text, secret);
-    if matches!(code, 400 | 413 | 422) && crate::openai::adapt::context_overflow(text) {
+    let provider_said = crate::openai::adapt::error_message(text);
+    if matches!(code, 400 | 413 | 422) && crate::openai::adapt::context_overflow(&provider_said) {
         // Так отвечает Anthropic, когда разговор не влез в окно, и Claude Code по этому
-        // тексту сам сжимает его и повторяет, а не показывает ошибку.
-        return anthropic_error(
-            400,
-            "invalid_request_error",
-            format!("prompt is too long: {message}"),
-        );
+        // тексту сам сжимает его и повторяет, а не показывает ошибку. Числа он достаёт
+        // из «N tokens > M maximum»: берём их из текста провайдера, если они там есть.
+        let said = crate::openai::adapt::overflow_message(&provider_said)
+            .unwrap_or_else(|| format!("prompt is too long: {message}"));
+        return (400, "invalid_request_error", said);
     }
-    anthropic_error(code, error_kind(code), message)
+    (code, error_kind(code), message)
 }
 
 /// Тип ошибки Anthropic по статусу: по нему Claude Code решает, повторять ли запрос
@@ -117,6 +124,27 @@ fn redact(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classified_errors_carry_anthropics_status_kind_and_overflow_numbers() {
+        let (status, kind, message) = classify(429, r#"{"error":{"message":"slow"}}"#, "");
+        assert_eq!(
+            (status, kind, message.as_str()),
+            (429, "rate_limit_error", "slow")
+        );
+        assert_eq!(classify(529, "busy", "").1, "overloaded_error");
+        assert_eq!(classify(99, "weird", "").0, 502);
+        let overflow = r#"{"error":{"message":"This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens."}}"#;
+        let (status, kind, message) = classify(400, overflow, "");
+        assert_eq!((status, kind), (400, "invalid_request_error"));
+        assert_eq!(message, "prompt is too long: 9000 tokens > 8192 maximum");
+        // Без чисел в тексте провайдера — его слова после стандартного начала.
+        let (_, _, message) = classify(413, "context window exceeded", "");
+        assert_eq!(message, "prompt is too long: context window exceeded");
+        // Предел вывода — не переполнение окна.
+        let (_, _, message) = classify(400, "max_tokens exceeds the output token limit", "");
+        assert!(!message.starts_with("prompt is too long"));
+    }
 
     #[test]
     fn redacts_keys_and_truncates() {
