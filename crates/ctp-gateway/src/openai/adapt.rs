@@ -21,6 +21,8 @@ const CONFIRMATIONS: u8 = 2;
 const EXPIRES: Duration = Duration::from_secs(30 * 24 * 3600);
 /// Лесенка не помогла: следующие 400 этой модели не гоняем по ней, это не капризы.
 const COOLDOWN: Duration = Duration::from_secs(5 * 60);
+/// Подтверждения складываются, только если между ними не больше суток.
+const PENDING_TTL: Duration = Duration::from_secs(24 * 3600);
 /// Предел инструментов у строгих провайдеров (OpenAI: 128).
 const TOOL_CAP: usize = 128;
 
@@ -130,10 +132,7 @@ pub fn safe_name(name: &str) -> String {
             }
         })
         .collect();
-    let mut hash = 0xcbf2_9ce4_8422_2325u64;
-    for byte in name.bytes() {
-        hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
-    }
+    let hash = fnv(name);
     let head: String = cleaned.chars().take(54).collect();
     format!("{head}_{:08x}", hash & 0xffff_ffff)
 }
@@ -377,6 +376,35 @@ fn cap_tools(payload: &mut Value) -> bool {
     true
 }
 
+/// Отпечатки картинок запроса (для счёта подтверждений: одна и та же картинка в
+/// истории — не новое подтверждение).
+pub fn image_ids(payload: &Value) -> Vec<u64> {
+    let mut ids: Vec<u64> = payload
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|message| message.get("content").and_then(Value::as_array))
+        .flatten()
+        .filter(|part| part.get("type").and_then(Value::as_str) == Some("image_url"))
+        .map(|part| {
+            fnv(part
+                .pointer("/image_url/url")
+                .and_then(Value::as_str)
+                .unwrap_or(""))
+        })
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids
+}
+
+fn fnv(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |hash, byte| {
+        (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
 /// Сообщение провайдера об ошибке без эха запроса: `error.message`, `msg` из `detail`
 /// (FastAPI и vLLM повторяют во вводе всё, что получили, и в нём «context» и «token»
 /// есть почти всегда) или просто начало текста.
@@ -405,7 +433,7 @@ pub fn adaptable(status: u16, text: &str) -> bool {
         return false;
     }
     let message = error_message(text);
-    if context_overflow(&message) {
+    if is_overflow(text) {
         return false;
     }
     let lower = message.to_ascii_lowercase();
@@ -437,9 +465,33 @@ pub fn adaptable(status: u16, text: &str) -> bool {
 /// Провайдер говорит, что разговор не влез в окно модели (а не что слишком велик вывод).
 pub fn context_overflow(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
+    // Эти слова о окне, даже если рядом упомянут вывод (vLLM: «maximum context length
+    // is N tokens. However, you requested M output tokens and your prompt contains…»).
+    if [
+        "context length",
+        "context_length",
+        "context window",
+        "context size",
+        "maximum context",
+        "exceeds the context",
+        "exceed the context",
+        "exceeds the available context",
+        "prompt is too long",
+        "input is too long",
+        "input token count",
+        "too many tokens",
+        "too many input tokens",
+        "reduce the length",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    {
+        return true;
+    }
     if [
         "max_tokens",
         "max_completion_tokens",
+        "max_new_tokens",
         "output token",
         "completion token",
     ]
@@ -449,19 +501,29 @@ pub fn context_overflow(text: &str) -> bool {
         return false;
     }
     [
-        "context length",
-        "context_length",
-        "context window",
-        "maximum context",
-        "exceeds the context",
-        "exceed the context",
-        "prompt is too long",
-        "input is too long",
-        "too many tokens",
-        "reduce the length",
+        "token limit",
+        "tokens exceed",
+        "maximum number of tokens",
+        "input length",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
+}
+
+/// Переполнение по сообщению и по коду ошибки в теле: у одних провайдеров текст
+/// невнятный, а `code` — `context_length_exceeded` — ясный.
+pub fn is_overflow(text: &str) -> bool {
+    if context_overflow(&error_message(text)) {
+        return true;
+    }
+    serde_json::from_str::<Value>(text).is_ok_and(|value| {
+        ["code", "type"].iter().any(|field| {
+            value
+                .pointer(&format!("/error/{field}"))
+                .and_then(Value::as_str)
+                .is_some_and(|code| code.to_ascii_lowercase().contains("context_length"))
+        })
+    })
 }
 
 /// «prompt is too long: N tokens > M maximum» по тексту провайдера, если числа в нём есть:
@@ -471,19 +533,31 @@ pub fn overflow_message(text: &str) -> Option<String> {
     use std::sync::OnceLock;
     static LIMIT: OnceLock<Regex> = OnceLock::new();
     static ACTUAL: OnceLock<Regex> = OnceLock::new();
+    static GEMINI: OnceLock<Regex> = OnceLock::new();
     let limit = LIMIT.get_or_init(|| {
         Regex::new(r"(?i)maximum context (?:length|window|size) (?:is|of) (\d[\d,]*)")
             .expect("limit regex")
     });
     let actual = ACTUAL.get_or_init(|| {
-        Regex::new(r"(?i)(?:resulted in|requested|you sent|contains?|has|of) (\d[\d,]*) tokens")
-            .expect("actual regex")
+        Regex::new(
+            r"(?i)(?:resulted in|requested|you sent|contains?|has) (\d[\d,]*) (?:input )?tokens",
+        )
+        .expect("actual regex")
+    });
+    let gemini = GEMINI.get_or_init(|| {
+        Regex::new(
+            r"(?i)token count \((\d+)\) exceeds the maximum number of tokens allowed \((\d+)\)",
+        )
+        .expect("gemini regex")
     });
     let number = |re: &Regex| {
         re.captures(text)
             .and_then(|caps| caps[1].replace(',', "").parse::<u64>().ok())
     };
-    let (limit, actual) = (number(limit)?, number(actual)?);
+    let (limit, actual) = match gemini.captures(text) {
+        Some(caps) => (caps[2].parse::<u64>().ok()?, caps[1].parse::<u64>().ok()?),
+        None => (number(limit)?, number(actual)?),
+    };
     (actual > limit).then(|| format!("prompt is too long: {actual} tokens > {limit} maximum"))
 }
 
@@ -494,10 +568,19 @@ struct Learned {
     at: u64,
 }
 
+/// Подтверждения одного кандидата: сколько раз помогло, на каких картинках и когда
+/// последний раз (старое подтверждение не складывается с новым).
+struct Pending {
+    steps: Vec<Step>,
+    count: u8,
+    seen: Vec<u64>,
+    at: Instant,
+}
+
 #[derive(Default)]
 struct Inner {
     learned: HashMap<String, Learned>,
-    pending: HashMap<String, (Vec<Step>, u8)>,
+    pending: HashMap<String, Pending>,
     cooling: HashMap<String, Instant>,
 }
 
@@ -580,8 +663,11 @@ impl Profiles {
     /// Запрос прошёл, когда к известным шагам добавился `flipped`: до него отказ ещё был,
     /// с ним — нет. Запоминается только он (предыдущие шаги лесенки не помогли, и лишнее
     /// навсегда отняло бы у модели то, что она принимает). Тот же новый шаг на втором
-    /// запросе — выучено; результат — все шаги модели.
-    pub fn record_success(&self, key: &str, flipped: Step) -> Option<Vec<Step>> {
+    /// запросе — выучено; результат — все шаги модели. `images` — отпечатки убранных
+    /// картинок: Claude Code шлёт всю историю каждый раз, и один битый скриншот
+    /// отказывал бы на каждом ходе. Подтверждение засчитывается, только если среди
+    /// картинок есть ещё не виденные (пусто — шаг не про картинки).
+    pub fn record_success(&self, key: &str, flipped: Step, images: &[u64]) -> Option<Vec<Step>> {
         let mut inner = self.lock();
         let known: Vec<Step> = inner
             .learned
@@ -600,13 +686,27 @@ impl Profiles {
             let entry = inner
                 .pending
                 .entry(key.to_string())
-                .or_insert_with(|| (Vec::new(), 0));
-            if entry.0 == candidate {
-                entry.1 += 1;
-            } else {
-                *entry = (candidate, 1);
+                .or_insert_with(|| Pending {
+                    steps: Vec::new(),
+                    count: 0,
+                    seen: Vec::new(),
+                    at: Instant::now(),
+                });
+            if entry.steps != candidate || entry.at.elapsed() > PENDING_TTL {
+                *entry = Pending {
+                    steps: candidate,
+                    count: 0,
+                    seen: Vec::new(),
+                    at: Instant::now(),
+                };
             }
-            (entry.1 >= CONFIRMATIONS).then(|| entry.0.clone())
+            let fresh = images.is_empty() || images.iter().any(|id| !entry.seen.contains(id));
+            if fresh {
+                entry.count += 1;
+                entry.seen.extend_from_slice(images);
+                entry.at = Instant::now();
+            }
+            (fresh && entry.count >= CONFIRMATIONS).then(|| entry.steps.clone())
         };
         let steps = confirmed?;
         inner.pending.remove(key);
@@ -619,6 +719,19 @@ impl Profiles {
         );
         self.save(&inner);
         Some(steps)
+    }
+
+    /// Запрос с картинками прошёл как есть: картинки модели не мешают, накопленные
+    /// «подтверждения» про них были случайностью.
+    pub fn images_are_fine(&self, key: &str) {
+        let mut inner = self.lock();
+        if inner
+            .pending
+            .get(key)
+            .is_some_and(|pending| pending.steps.contains(&Step::Images))
+        {
+            inner.pending.remove(key);
+        }
     }
 
     /// Лесенка этой модели недавно не помогла.
@@ -933,6 +1046,74 @@ mod tests {
     }
 
     #[test]
+    fn the_same_broken_image_in_the_history_is_one_confirmation_not_two() {
+        let profiles = Profiles::in_memory();
+        // Ход 1: картинка 7 отказывает. Ход 2: она же в истории, новых нет.
+        assert_eq!(profiles.record_success("p/m", Step::Images, &[7]), None);
+        assert_eq!(profiles.record_success("p/m", Step::Images, &[7]), None);
+        assert!(profiles.steps("p/m").is_empty());
+        // Новый скриншот, который тоже не принят, — вот второе подтверждение.
+        assert_eq!(
+            profiles.record_success("p/m", Step::Images, &[7, 8]),
+            Some(vec![Step::Images])
+        );
+        // Запрос с картинками, прошедший как есть, обнуляет накопленное.
+        let other = Profiles::in_memory();
+        assert_eq!(other.record_success("p/m", Step::Images, &[1]), None);
+        other.images_are_fine("p/m");
+        assert_eq!(other.record_success("p/m", Step::Images, &[2]), None);
+        assert!(other.steps("p/m").is_empty());
+    }
+
+    #[test]
+    fn overflow_wordings_of_other_providers_are_recognised() {
+        for text in [
+            "the request exceeds the available context size, try increasing it",
+            "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575).",
+            "exceeded model token limit: 8192",
+            "This model's maximum context length is 32768 tokens. However, you requested 2000 output tokens and your prompt contains at least 30769 input tokens",
+            "Input length (9000) exceeds the maximum",
+        ] {
+            assert!(context_overflow(text), "{text}");
+            assert!(is_overflow(
+                &json!({"error": {"message": text}}).to_string()
+            ));
+            assert!(!adaptable(
+                400,
+                &json!({"error": {"message": text}}).to_string()
+            ));
+        }
+        // Код в теле при невнятном тексте.
+        let coded = r#"{"error":{"message":"Bad Request","code":"context_length_exceeded"}}"#;
+        assert!(is_overflow(coded) && !adaptable(400, coded));
+        // Лимит вывода — не окно.
+        assert!(!context_overflow(
+            "max_tokens is too large: 100000 for this model"
+        ));
+        assert_eq!(
+            overflow_message(
+                "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)."
+            )
+            .as_deref(),
+            Some("prompt is too long: 1196265 tokens > 1048575 maximum")
+        );
+        assert_eq!(
+            overflow_message(
+                "maximum context length of 8192 tokens, but your messages resulted in 9000 tokens"
+            )
+            .as_deref(),
+            Some("prompt is too long: 9000 tokens > 8192 maximum")
+        );
+        assert_eq!(
+            overflow_message(
+                "maximum context length is 32768 tokens. However, you requested 2000 output tokens and your prompt contains at least 30769 input tokens"
+            ),
+            None,
+            "30769 < 32768 requested+prompt: no honest numbers, the text goes as is"
+        );
+    }
+
+    #[test]
     fn a_model_is_learned_on_the_second_confirmation_and_kept_on_disk() {
         let dir = std::env::temp_dir().join(format!("ctp-profiles-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
@@ -941,21 +1122,21 @@ mod tests {
 
         let profiles = Profiles::load(path.clone());
         // Запоминается шаг, который перевёл отказ в успех, и только после второго раза.
-        assert_eq!(profiles.record_success("p/m", Step::Images), None);
+        assert_eq!(profiles.record_success("p/m", Step::Images, &[1]), None);
         assert!(profiles.steps("p/m").is_empty());
         // Другой шаг — счёт заново.
-        assert_eq!(profiles.record_success("p/m", Step::Effort), None);
+        assert_eq!(profiles.record_success("p/m", Step::Effort, &[]), None);
         assert_eq!(
-            profiles.record_success("p/m", Step::Effort),
+            profiles.record_success("p/m", Step::Effort, &[]),
             Some(vec![Step::Effort])
         );
         assert_eq!(profiles.steps("p/m"), vec![Step::Effort]);
         // Уже известный шаг ничего не меняет.
-        assert_eq!(profiles.record_success("p/m", Step::Effort), None);
+        assert_eq!(profiles.record_success("p/m", Step::Effort, &[]), None);
         // Выученное дополняется тоже со второго раза; порядок — как в лесенке.
-        assert_eq!(profiles.record_success("p/m", Step::Images), None);
+        assert_eq!(profiles.record_success("p/m", Step::Images, &[2]), None);
         assert_eq!(
-            profiles.record_success("p/m", Step::Images),
+            profiles.record_success("p/m", Step::Images, &[3]),
             Some(vec![Step::Images, Step::Effort])
         );
 

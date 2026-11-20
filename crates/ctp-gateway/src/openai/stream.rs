@@ -118,10 +118,20 @@ impl StreamTranslator {
         }
         if chunk.get("error").is_some() {
             self.done = true;
-            return vec![Self::error_event(&error::clean_error_text(
-                &chunk.to_string(),
-                &self.secret,
-            ))];
+            // Статуса у ошибки в потоке нет: берём числовой `code`, а переполнение окна
+            // опознаётся по тексту и приводится к 400.
+            let text = chunk.to_string();
+            let status = chunk
+                .pointer("/error/code")
+                .and_then(Value::as_u64)
+                .and_then(|code| u16::try_from(code).ok())
+                .unwrap_or(if crate::openai::adapt::is_overflow(&text) {
+                    400
+                } else {
+                    502
+                });
+            let (_, kind, message) = error::classify(status, &text, &self.secret);
+            return vec![Self::error_event_of(kind, &message)];
         }
 
         if let Some(output) = chunk
