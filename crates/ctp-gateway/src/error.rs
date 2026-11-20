@@ -32,7 +32,7 @@ pub fn classify(status: u16, text: &str, secret: &str) -> (u16, &'static str, St
     };
     let message = clean_error_text(text, secret);
     let provider_said = crate::openai::adapt::error_message(text);
-    if matches!(code, 400 | 413 | 422) && crate::openai::adapt::context_overflow(&provider_said) {
+    if matches!(code, 400 | 413 | 422) && crate::openai::adapt::is_overflow(text) {
         // Так отвечает Anthropic, когда разговор не влез в окно, и Claude Code по этому
         // тексту сам сжимает его и повторяет, а не показывает ошибку. Числа он достаёт
         // из «N tokens > M maximum»: берём их из текста провайдера, если они там есть.

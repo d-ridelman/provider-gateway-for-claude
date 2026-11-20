@@ -80,6 +80,11 @@ async fn send(
     // Шаги, добавленные в этом вызове после отказов, и следующая ступень лесенки.
     let mut applied: Vec<adapt::Step> = Vec::new();
     let mut rung = 0usize;
+    // Картинки запроса: на успехе без упрощений — признак, что они модели не мешают.
+    let had_images = request::has_images(payload);
+    // Отпечатки убранных картинок и первый отказ (его текст и вернём, если не поможет).
+    let mut removed_images: Vec<u64> = Vec::new();
+    let mut first_refusal: Option<(u16, String)> = None;
     'send: loop {
         let request = state
             .clients
@@ -102,7 +107,12 @@ async fn send(
                     steps = %labels(&applied),
                     "the request went through after simplifying it"
                 );
-                if let Some(learned) = state.profiles.record_success(&key, flipped) {
+                let images: &[u64] = if flipped == adapt::Step::Images {
+                    &removed_images
+                } else {
+                    &[]
+                };
+                if let Some(learned) = state.profiles.record_success(&key, flipped, images) {
                     info!(
                         provider = %provider.id,
                         model = %upstream_model,
@@ -110,19 +120,21 @@ async fn send(
                         "learned: from now on the requests to this model are simplified up front"
                     );
                 }
+            } else if had_images && !known.contains(&adapt::Step::Images) {
+                state.profiles.images_are_fine(&key);
             }
             return Ok(response);
         }
 
-        let status = response.status().as_u16();
+        let mut status = response.status().as_u16();
         let retry_after = response
             .headers()
             .get("retry-after")
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
-        let text = response.text().await.unwrap_or_default();
+        let mut text = response.text().await.unwrap_or_default();
         if attempt == 0
-            && let Some(limit) = crate::util::parse_output_limit(&text)
+            && let Some(limit) = crate::util::parse_output_limit(&adapt::error_message(&text))
             && let Some(key) = provider.max_tokens_key(upstream_model)
             && let Some(current) = payload.get(key.as_str()).and_then(Value::as_u64)
             && current > limit
@@ -146,7 +158,11 @@ async fn send(
                 if known.contains(&step) {
                     continue;
                 }
+                if step == adapt::Step::Images {
+                    removed_images = adapt::image_ids(payload);
+                }
                 if adapt::apply(step, payload, provider) {
+                    first_refusal.get_or_insert((status, text.clone()));
                     info!(
                         provider = %provider.id,
                         model = %upstream_model,
@@ -159,11 +175,17 @@ async fn send(
                     continue 'send;
                 }
             }
-            // Ничего не помогло: это не капризы модели, а сам запрос.
+            // Ничего не помогло: это не капризы модели, а сам запрос. Клиенту и в журнал —
+            // отказ на исходный запрос, а не на упрощённый до неузнаваемости.
             if !applied.is_empty() {
                 state.profiles.cool(&key);
             }
+            if let Some((first_status, first_text)) = first_refusal {
+                status = first_status;
+                text = first_text;
+            }
         }
+        let reason = error::clean_error_text(&text, &provider.api_key);
         warn!(
             provider = %provider.id,
             model = %upstream_model,

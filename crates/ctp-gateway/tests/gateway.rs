@@ -890,17 +890,19 @@ async fn a_model_that_rejects_images_gets_the_request_without_them_and_is_rememb
         .await;
 
     let state = state_with(&upstream.uri(), "openai", "glm-5.3");
-    let ask = || {
+    // Каждый запрос — с новой картинкой: одну и ту же (из истории) за подтверждение
+    // не считаем, см. `the_same_picture_in_the_history_is_not_a_second_confirmation`.
+    let ask = |size: u32| {
         post_messages(json!({
             "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
             "messages": [{"role": "user", "content": [
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png",
-                                             "data": screenshot_png(64, 64)}},
+                                             "data": screenshot_png(size, size)}},
                 {"type": "text", "text": "what is this"}
             ]}]
         }))
     };
-    let first = app(state.clone()).oneshot(ask()).await.unwrap();
+    let first = app(state.clone()).oneshot(ask(64)).await.unwrap();
     assert_eq!(first.status(), StatusCode::OK);
     let body = text_body(first).await;
     assert!(body.contains("\"text\":\"seen\""), "{body}");
@@ -914,13 +916,13 @@ async fn a_model_that_rejects_images_gets_the_request_without_them_and_is_rememb
 
     // Один случай ещё не приговор: второй запрос снова пробует с картинкой (отказ и успех
     // без неё) и этим подтверждает, что дело в картинках.
-    let second = app(state.clone()).oneshot(ask()).await.unwrap();
+    let second = app(state.clone()).oneshot(ask(65)).await.unwrap();
     assert_eq!(second.status(), StatusCode::OK);
     text_body(second).await;
     assert_eq!(upstream.received_requests().await.unwrap().len(), 4);
 
     // Теперь модель выучена: запрос уходит сразу без картинки, без лишнего отказа.
-    let third = app(state).oneshot(ask()).await.unwrap();
+    let third = app(state).oneshot(ask(66)).await.unwrap();
     assert_eq!(third.status(), StatusCode::OK);
     text_body(third).await;
     assert_eq!(upstream.received_requests().await.unwrap().len(), 5);
@@ -1707,5 +1709,93 @@ async fn anthropic_provider_gets_no_advisor_tool_or_blocks() {
     assert_eq!(
         sent["messages"][1]["content"],
         json!([{"type": "text", "text": "asking"}])
+    );
+}
+
+#[tokio::test]
+async fn the_same_picture_in_the_history_is_not_a_second_confirmation() {
+    let upstream = MockServer::start().await;
+    // Битая картинка: провайдер отказывает на ней в любом ходе, где она есть в истории.
+    refuse_when_body_has("image_url", "You uploaded an unsupported image")
+        .mount(&upstream)
+        .await;
+    answer_ok().mount(&upstream).await;
+    let state = state_with(&upstream.uri(), "openai", "gpt-x");
+    let turn = |text: &str| {
+        post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
+            "messages": [
+                {"role": "user", "content": [
+                    {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                                 "data": screenshot_png(40, 40)}},
+                    {"type": "text", "text": "look"}]},
+                {"role": "assistant", "content": "ok"},
+                {"role": "user", "content": text}
+            ]
+        }))
+    };
+    for text in ["one", "two", "three"] {
+        let response = app(state.clone()).oneshot(turn(text)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        text_body(response).await;
+    }
+    assert!(state.profiles.snapshot().is_empty());
+}
+
+#[tokio::test]
+async fn an_echoing_422_does_not_cut_max_tokens_to_a_number_from_the_echo() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("reasoning_effort"))
+        .respond_with(ResponseTemplate::new(422).set_body_json(json!({"detail": [{
+            "type": "extra_forbidden", "loc": ["body", "reasoning_effort"],
+            "msg": "Extra inputs are not permitted",
+            "input": {"max_tokens": 32000, "note": "line 120 of the context"}
+        }]})))
+        .with_priority(1)
+        .mount(&upstream)
+        .await;
+    answer_ok().mount(&upstream).await;
+    let response = app(effort_state(&upstream.uri()))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32000, "stream": true,
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    text_body(response).await;
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    let retried: Value = serde_json::from_slice(&requests[1].body).unwrap();
+    assert!(retried.get("reasoning_effort").is_none());
+    let sent = retried
+        .get("max_tokens")
+        .or_else(|| retried.get("max_completion_tokens"))
+        .and_then(Value::as_u64);
+    assert_eq!(sent, Some(32000));
+}
+
+#[tokio::test]
+async fn an_overflow_error_inside_the_stream_reaches_claude_code_as_prompt_too_long() {
+    let upstream = MockServer::start().await;
+    let sse = r#"data: {"error":{"message":"This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens."}}
+
+"#;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+        .mount(&upstream)
+        .await;
+    let response = app(state_with(&upstream.uri(), "openai", "m"))
+        .oneshot(plain_ask())
+        .await
+        .unwrap();
+    let body = text_body(response).await;
+    assert!(body.contains("invalid_request_error"), "{body}");
+    assert!(
+        body.contains("prompt is too long: 9000 tokens > 8192 maximum"),
+        "{body}"
     );
 }
