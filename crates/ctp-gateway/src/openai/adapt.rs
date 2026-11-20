@@ -440,10 +440,8 @@ pub fn adaptable(status: u16, text: &str) -> bool {
     let missing_model = lower.contains("model")
         && (lower.contains("not found") || lower.contains("does not exist"));
     !missing_model
-        && !rate_wording(&lower)
+        && !rate_wording(&unquoted(&lower))
         && ![
-            "rate limit",
-            "quota",
             "balance",
             "credit",
             "billing",
@@ -461,6 +459,22 @@ pub fn adaptable(status: u16, text: &str) -> bool {
         ]
         .iter()
         .any(|marker| lower.contains(marker))
+}
+
+/// Текст без того, что в кавычках: имена инструментов и полей в ошибках схемы
+/// (`Invalid schema for function 'mcp__cal__get_daily_events'`) не про частоту.
+fn unquoted(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut quote: Option<char> = None;
+    for c in text.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '\'' || c == '"' => quote = Some(c),
+            None => out.push(c),
+        }
+    }
+    out
 }
 
 /// Текст про частоту, квоты и суточные лимиты: подождать или показать ошибку, а не сжимать
@@ -1124,13 +1138,22 @@ mod tests {
             let body = json!({"error": {"message": text}}).to_string();
             assert!(!adaptable(400, &body) && !adaptable(422, &body), "{text}");
         }
-        // Сильные слова про окно сильнее «try again» и «tpm» в том же тексте.
+        // Сильные слова про окно сильнее «try again», «daily» и «quota» в том же тексте.
         for text in [
             "maximum context length is 8192 tokens, reduce the length and try again",
+            "maximum context length is 8192 tokens; your daily quota is fine",
             "Range of input length should be [1, 30720]",
+            // Двусмысленные слова без rate-слов — тоже окно.
+            "Too many tokens in the request",
+            "total tokens exceed the model limit",
         ] {
             assert!(context_overflow(text), "{text}");
         }
+        // Имя инструмента с «daily» в ошибке схемы — не про частоту: лесенка нужна.
+        let schema = json!({"error": {"message":
+            "Invalid schema for function 'mcp__cal__get_daily_events': 'additionalProperties' is required"}})
+        .to_string();
+        assert!(adaptable(400, &schema));
         // Лимит вывода — не окно.
         assert!(!context_overflow(
             "max_tokens is too large: 100000 for this model"
