@@ -866,6 +866,78 @@ async fn session_id_and_user_agent_reach_provider() {
     assert_eq!(second.status(), StatusCode::OK);
 }
 
+#[tokio::test]
+async fn a_model_that_rejects_images_gets_the_request_without_them_and_is_remembered() {
+    let upstream = MockServer::start().await;
+    // Как `glm-5.3` на OpenCode: любая картинка — 400 «the request is invalid».
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("image_url"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": {"message": "[invalid_request] the request is invalid"}
+        })))
+        .with_priority(1)
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"seen\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+            "text/event-stream",
+        ))
+        .with_priority(10)
+        .mount(&upstream)
+        .await;
+
+    let state = state_with(&upstream.uri(), "openai", "glm-5.3");
+    let ask = || {
+        post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
+            "messages": [{"role": "user", "content": [
+                {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                             "data": screenshot_png(64, 64)}},
+                {"type": "text", "text": "what is this"}
+            ]}]
+        }))
+    };
+    let first = app(state.clone()).oneshot(ask()).await.unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let body = text_body(first).await;
+    assert!(body.contains("\"text\":\"seen\""), "{body}");
+    let requests = upstream.received_requests().await.unwrap();
+    // Отказ на запрос с картинкой и успех без неё.
+    assert_eq!(requests.len(), 2);
+    let retried = String::from_utf8_lossy(&requests[1].body).to_string();
+    assert!(!retried.contains("image_url"));
+    assert!(retried.contains("[image omitted"));
+    assert!(retried.contains("what is this"));
+
+    // Модель запомнена: следующий запрос уходит сразу без картинки, без лишнего отказа.
+    let second = app(state).oneshot(ask()).await.unwrap();
+    assert_eq!(second.status(), StatusCode::OK);
+    text_body(second).await;
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 3);
+
+    // Другая причина 400 (картинок нет) — ошибка как есть, без повторов.
+    let plain = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": {"message": "bad request"}
+        })))
+        .mount(&plain)
+        .await;
+    let response = app(state_with(&plain.uri(), "openai", "gpt-5.2"))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(plain.received_requests().await.unwrap().len(), 1);
+}
+
 /// Base64 PNG `width`×`height` весом с настоящий скриншот (~300 КБ).
 fn screenshot_png(width: u32, height: u32) -> String {
     let mut bytes = b"\x89PNG\r\n\x1a\n\0\0\0\x0dIHDR".to_vec();

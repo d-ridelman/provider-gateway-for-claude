@@ -349,6 +349,9 @@ pub struct AppState {
     pub oauth_scope: String,
     pub debug_prompts: bool,
     pub clients: Clients,
+    /// Модели (`провайдер/модель`), которые ответили 400 на запрос с картинками и приняли
+    /// его без них: дальше картинки им не шлются, не тратя запрос на отказ.
+    pub image_blind: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 #[derive(Clone)]
@@ -388,6 +391,7 @@ impl AppState {
             oauth_scope,
             debug_prompts: false,
             clients: Clients::new()?,
+            image_blind: Default::default(),
         })
     }
 }

@@ -57,18 +57,35 @@ impl SendError {
     }
 }
 
-/// Запрос к провайдеру; один повтор, если он ругается на слишком большой max_tokens.
+/// Запрос к провайдеру; один повтор, если он ругается на слишком большой max_tokens, и
+/// один — без картинок, если на запрос с ними он отвечает 400.
 async fn send(
-    client: &reqwest::Client,
+    state: &AppState,
     provider: &Provider,
     headers: &HeaderMap,
     upstream_model: &str,
     payload: &mut Value,
 ) -> Result<reqwest::Response, SendError> {
     let url = provider.chat_url();
+    let blind_key = format!("{}/{}", provider.id, upstream_model);
+    let known_blind = state
+        .image_blind
+        .lock()
+        .unwrap_or_else(|exc| exc.into_inner())
+        .contains(&blind_key);
+    if known_blind {
+        request::strip_images(payload);
+    }
     let mut attempt = 0u8;
+    // Картинки убраны после отказа 400: примет без них — модель запоминается слепой.
+    let mut stripped_after_400 = false;
     loop {
-        let request = client.post(&url).headers(headers.clone()).json(&*payload);
+        let request = state
+            .clients
+            .stream
+            .post(&url)
+            .headers(headers.clone())
+            .json(&*payload);
         let response = match request.send().await {
             Ok(response) => response,
             Err(exc) => {
@@ -77,6 +94,18 @@ async fn send(
             }
         };
         if response.status().is_success() {
+            if stripped_after_400 {
+                info!(
+                    provider = %provider.id,
+                    model = %upstream_model,
+                    "the model accepts the request only without images: they are left out from now on"
+                );
+                state
+                    .image_blind
+                    .lock()
+                    .unwrap_or_else(|exc| exc.into_inner())
+                    .insert(blind_key);
+            }
             return Ok(response);
         }
 
@@ -102,6 +131,17 @@ async fn send(
             );
             payload[key.as_str()] = json!(limit);
             attempt = 1;
+            continue;
+        }
+        if status == 400 && !stripped_after_400 && request::has_images(payload) {
+            let removed = request::strip_images(payload);
+            info!(
+                provider = %provider.id,
+                model = %upstream_model,
+                images = removed,
+                "400 on a request with images, retrying without them"
+            );
+            stripped_after_400 = true;
             continue;
         }
         warn!(
@@ -158,15 +198,7 @@ pub async fn messages(
     let headers = upstream_headers(provider, session);
     let input_tokens = ctp_core::tokens::count_json_tokens(&body);
 
-    let upstream = match send(
-        &state.clients.stream,
-        provider,
-        &headers,
-        upstream_model,
-        &mut payload,
-    )
-    .await
-    {
+    let upstream = match send(state, provider, &headers, upstream_model, &mut payload).await {
         Ok(upstream) => upstream,
         Err(exc) => return exc.response(provider),
     };
@@ -369,7 +401,7 @@ pub async fn messages(
                 }
             }
             translator.next_segment();
-            match send(&state.clients.stream, &provider, &headers, &upstream_model, &mut payload).await {
+            match send(&state, &provider, &headers, &upstream_model, &mut payload).await {
                 Ok(next) => upstream = next,
                 Err(exc) => {
                     yield Ok::<Bytes, Infallible>(sse::frame(&exc.event(&provider)));
