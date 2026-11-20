@@ -10,7 +10,12 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Fixed
 
-- **A model that rejects images broke the whole session.** `glm-5.3` (unlike `glm-5.3-flash` and DeepSeek) answers any picture with a 400 "the request is invalid", and once a screenshot is in the conversation, every later request failed, whatever you retried. Now, when a provider answers 400 to a request with images, the gateway sends it once more with the images replaced by a short note, and remembers that this model takes no images (until the gateway restarts).
+- **Picky models no longer break the session.** `glm-5.3` (unlike `glm-5.3-flash` and DeepSeek) answers any picture with a bare 400 "the request is invalid", and once a screenshot was in the conversation every later request failed, whatever you retried. The gateway now handles this class of trouble:
+  - on an unexplained 400 it retries the request simplified, one step at a time: images replaced by a note, optional fields dropped (`reasoning_effort`, `stream_options`, `parallel_tool_calls`, `top_p`, `stop`, `temperature`), tool names shortened to the 64-character `[A-Za-z0-9_-]` form (restored in the answer), consecutive messages merged, tool schemas simplified, tools capped at 128;
+  - what helped on two different requests is remembered in `model-profiles.json` next to the settings (expires after 30 days; delete to forget), so the next requests are simplified up front;
+  - a conversation that no longer fits the model's window is reported to Claude Code as Anthropic's "prompt is too long", so it compacts and retries by itself; provider errors keep their kind (rate limit, overloaded, authentication…), so Claude Code retries what it should;
+  - repeated tool names, which providers refuse, are sent once;
+  - the gateway log now carries what the provider answered to every refusal, and what the gateway did about it.
 - **Context compaction kicked in far too early with screenshots.** The gateway counted an image by its base64 text: one 1920×1140 screenshot came out as ~250 thousand tokens instead of ~1.5 thousand, so Claude Code saw the 1M window as full and compacted the conversation again and again. Images are now counted by their pixel size, as Claude counts them (PNG, JPEG, GIF, WebP), PDFs by pages.
 - When the provider reports usage in the stream, its real input size (`prompt_tokens`) now reaches Claude Code at the end of the reply, instead of the gateway's estimate; cached tokens are no longer counted twice.
 

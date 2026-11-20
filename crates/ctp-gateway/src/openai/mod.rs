@@ -12,6 +12,7 @@ use std::convert::Infallible;
 use std::time::Instant;
 use tracing::{info, warn};
 
+pub mod adapt;
 pub mod advisor;
 pub mod request;
 pub mod response;
@@ -57,8 +58,9 @@ impl SendError {
     }
 }
 
-/// Запрос к провайдеру; один повтор, если он ругается на слишком большой max_tokens, и
-/// один — без картинок, если на запрос с ними он отвечает 400.
+/// Запрос к провайдеру. Один повтор, если он ругается на слишком большой max_tokens.
+/// Неясный 400 — лесенка упрощений (`adapt`): шаги по одному, пока не примет; помогало
+/// дважды — модель выучена и запрос упрощается заранее.
 async fn send(
     state: &AppState,
     provider: &Provider,
@@ -67,19 +69,16 @@ async fn send(
     payload: &mut Value,
 ) -> Result<reqwest::Response, SendError> {
     let url = provider.chat_url();
-    let blind_key = format!("{}/{}", provider.id, upstream_model);
-    let known_blind = state
-        .image_blind
-        .lock()
-        .unwrap_or_else(|exc| exc.into_inner())
-        .contains(&blind_key);
-    if known_blind {
-        request::strip_images(payload);
+    let key = format!("{}/{}", provider.id, upstream_model);
+    let known = state.profiles.steps(&key);
+    for step in &known {
+        adapt::apply(*step, payload, provider);
     }
     let mut attempt = 0u8;
-    // Картинки убраны после отказа 400: примет без них — модель запоминается слепой.
-    let mut stripped_after_400 = false;
-    loop {
+    // Шаги, добавленные в этом вызове после отказов, и следующая ступень лесенки.
+    let mut applied: Vec<adapt::Step> = Vec::new();
+    let mut rung = 0usize;
+    'send: loop {
         let request = state
             .clients
             .stream
@@ -94,17 +93,22 @@ async fn send(
             }
         };
         if response.status().is_success() {
-            if stripped_after_400 {
+            if !applied.is_empty() {
+                let steps = [known.as_slice(), applied.as_slice()].concat();
                 info!(
                     provider = %provider.id,
                     model = %upstream_model,
-                    "the model accepts the request only without images: they are left out from now on"
+                    steps = %labels(&applied),
+                    "the request went through after simplifying it"
                 );
-                state
-                    .image_blind
-                    .lock()
-                    .unwrap_or_else(|exc| exc.into_inner())
-                    .insert(blind_key);
+                if let Some(learned) = state.profiles.record_success(&key, &steps) {
+                    info!(
+                        provider = %provider.id,
+                        model = %upstream_model,
+                        steps = %labels(&learned),
+                        "learned: from now on the requests to this model are simplified up front"
+                    );
+                }
             }
             return Ok(response);
         }
@@ -133,21 +137,37 @@ async fn send(
             attempt = 1;
             continue;
         }
-        if status == 400 && !stripped_after_400 && request::has_images(payload) {
-            let removed = request::strip_images(payload);
-            info!(
-                provider = %provider.id,
-                model = %upstream_model,
-                images = removed,
-                "400 on a request with images, retrying without them"
-            );
-            stripped_after_400 = true;
-            continue;
+        let reason = error::clean_error_text(&text, &provider.api_key);
+        if adapt::adaptable(status, &text) && !state.profiles.cooling(&key) {
+            while rung < adapt::LADDER.len() {
+                let step = adapt::LADDER[rung];
+                rung += 1;
+                if known.contains(&step) {
+                    continue;
+                }
+                if adapt::apply(step, payload, provider) {
+                    info!(
+                        provider = %provider.id,
+                        model = %upstream_model,
+                        status,
+                        step = step.label(),
+                        provider_said = %snippet(&reason),
+                        "the provider refused the request, retrying simplified"
+                    );
+                    applied.push(step);
+                    continue 'send;
+                }
+            }
+            // Ничего не помогло: это не капризы модели, а сам запрос.
+            if !applied.is_empty() {
+                state.profiles.cool(&key);
+            }
         }
         warn!(
             provider = %provider.id,
             model = %upstream_model,
             status,
+            provider_said = %snippet(&reason),
             "OpenAI upstream error"
         );
         return Err(SendError::Status {
@@ -156,6 +176,20 @@ async fn send(
             retry_after,
         });
     }
+}
+
+fn labels(steps: &[adapt::Step]) -> String {
+    steps
+        .iter()
+        .map(|step| step.label())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Начало ответа провайдера для строки журнала.
+fn snippet(text: &str) -> String {
+    let text: String = text.chars().take(240).collect();
+    text.replace(['\n', '\r'], " ")
 }
 
 /// Вызов советника, пришедший не потоком (провайдер проигнорировал `stream`): исполнить
@@ -195,6 +229,8 @@ pub async fn messages(
         None
     };
     let mut payload = request::build(provider, &body, stream, advisor_route.is_some());
+    // Если провайдеру придётся сокращать имена инструментов, в ответе они вернутся прежними.
+    let names = adapt::name_map(&body);
     let headers = upstream_headers(provider, session);
     let input_tokens = ctp_core::tokens::count_json_tokens(&body);
 
@@ -218,10 +254,11 @@ pub async fn messages(
         if value.get("error").is_some() {
             return error::upstream_error(status.as_u16(), &text, &provider.api_key);
         }
-        let message = match response::translate(&value, client_model, input_tokens) {
+        let mut message = match response::translate(&value, client_model, input_tokens) {
             Ok(message) => message,
             Err(exc) => return error::anthropic_error(502, "api_error", exc.to_string()),
         };
+        response::restore_names(&mut message, &names);
         info!(
             provider = %provider.id,
             model = %upstream_model,
@@ -257,6 +294,7 @@ pub async fn messages(
             Ok(message) => message,
             Err(exc) => return error::anthropic_error(502, "api_error", exc.to_string()),
         };
+        response::restore_names(&mut message, &names);
         if advisor_route.is_some() {
             drop_advisor_calls(&mut message);
         }
@@ -269,7 +307,8 @@ pub async fn messages(
     }
 
     let mut translator = stream::StreamTranslator::new(client_model, input_tokens)
-        .with_secret(provider.api_key.clone());
+        .with_secret(provider.api_key.clone())
+        .with_names(names);
     let start = translator.start();
     let log = RequestLog::new(started, provider.id.clone(), "openai stream");
     // Для продолжений после советника поток живёт дольше этого вызова.

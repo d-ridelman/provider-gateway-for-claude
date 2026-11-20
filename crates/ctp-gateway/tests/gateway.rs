@@ -912,11 +912,18 @@ async fn a_model_that_rejects_images_gets_the_request_without_them_and_is_rememb
     assert!(retried.contains("[image omitted"));
     assert!(retried.contains("what is this"));
 
-    // Модель запомнена: следующий запрос уходит сразу без картинки, без лишнего отказа.
-    let second = app(state).oneshot(ask()).await.unwrap();
+    // Один случай ещё не приговор: второй запрос снова пробует с картинкой (отказ и успех
+    // без неё) и этим подтверждает, что дело в картинках.
+    let second = app(state.clone()).oneshot(ask()).await.unwrap();
     assert_eq!(second.status(), StatusCode::OK);
     text_body(second).await;
-    assert_eq!(upstream.received_requests().await.unwrap().len(), 3);
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 4);
+
+    // Теперь модель выучена: запрос уходит сразу без картинки, без лишнего отказа.
+    let third = app(state).oneshot(ask()).await.unwrap();
+    assert_eq!(third.status(), StatusCode::OK);
+    text_body(third).await;
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 5);
 
     // Другая причина 400 (картинок нет) — ошибка как есть, без повторов.
     let plain = MockServer::start().await;
@@ -936,6 +943,207 @@ async fn a_model_that_rejects_images_gets_the_request_without_them_and_is_rememb
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(plain.received_requests().await.unwrap().len(), 1);
+}
+
+const SSE_OK: &str = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n";
+
+fn refuse_when_body_has(needle: &str, message: &str) -> Mock {
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains(needle))
+        .respond_with(
+            ResponseTemplate::new(400).set_body_json(json!({"error": {"message": message}})),
+        )
+        .with_priority(1)
+}
+
+fn answer_ok() -> Mock {
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(SSE_OK, "text/event-stream"))
+        .with_priority(10)
+}
+
+/// Провайдер с уровнем рассуждения: в запросах есть `reasoning_effort`.
+fn effort_state(base_url: &str) -> AppState {
+    let file: ProvidersFile = serde_json::from_value(json!({"providers": [{
+        "id": "p", "type": "openai", "base_url": base_url, "api_key": "k",
+        "max_effort": "high", "default_effort": "high",
+        "models": {"claude-p-00000000": "some-model"}
+    }]}))
+    .unwrap();
+    AppState::new(
+        ModelRouter::new(file).unwrap(),
+        "local-token".into(),
+        false,
+        "user:inference".into(),
+    )
+    .unwrap()
+}
+
+fn plain_ask() -> Request<Body> {
+    post_messages(json!({
+        "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
+        "messages": [{"role": "user", "content": "hi"}]
+    }))
+}
+
+#[tokio::test]
+async fn an_unexplained_400_climbs_the_ladder_one_step_at_a_time() {
+    let upstream = MockServer::start().await;
+    // Провайдер не понимает `reasoning_effort` и отвечает общим 400.
+    refuse_when_body_has("reasoning_effort", "the request is invalid")
+        .mount(&upstream)
+        .await;
+    answer_ok().mount(&upstream).await;
+    let state = effort_state(&upstream.uri());
+
+    for expected_total in [2, 4] {
+        let response = app(state.clone()).oneshot(plain_ask()).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(text_body(response).await.contains("\"text\":\"ok\""));
+        assert_eq!(
+            upstream.received_requests().await.unwrap().len(),
+            expected_total
+        );
+    }
+    // Выучено: поле убирается заранее.
+    let response = app(state).oneshot(plain_ask()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    text_body(response).await;
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 5);
+    assert!(!String::from_utf8_lossy(&requests[4].body).contains("reasoning_effort"));
+}
+
+#[tokio::test]
+async fn long_tool_names_are_shortened_for_the_provider_and_restored_for_the_client() {
+    let long = format!("mcp__server__{}", "q".repeat(70));
+    let safe = ctp_gateway::openai::adapt::safe_name(&long);
+    let upstream = MockServer::start().await;
+    // Строгий провайдер: имя инструмента длиннее 64 — 400.
+    refuse_when_body_has(&"q".repeat(65), "the request is invalid")
+        .mount(&upstream)
+        .await;
+    let call = format!(
+        "data: {{\"choices\":[{{\"index\":0,\"delta\":{{\"tool_calls\":[{{\"index\":0,\"id\":\"call_1\",\"type\":\"function\",\"function\":{{\"name\":\"{safe}\",\"arguments\":\"{{}}\"}}}}]}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"
+    );
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(call, "text/event-stream"))
+        .with_priority(10)
+        .mount(&upstream)
+        .await;
+    let response = app(state_with(&upstream.uri(), "openai", "some-model"))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
+            "tools": [{"name": long, "description": "d", "input_schema": {"type": "object"}}],
+            "messages": [{"role": "user", "content": "go"}]
+        })))
+        .await
+        .unwrap();
+    let body = text_body(response).await;
+    let blocks = started_blocks(&body);
+    assert_eq!(blocks[0]["type"], "tool_use", "{body}");
+    assert_eq!(blocks[0]["name"], long.as_str());
+    assert!(!body.contains(&safe));
+}
+
+#[tokio::test]
+async fn context_overflow_becomes_anthropics_prompt_too_long_without_the_ladder() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({"error": {
+            "message": "This model's maximum context length is 8192 tokens, you sent 9000"
+        }})))
+        .mount(&upstream)
+        .await;
+    let response = app(effort_state(&upstream.uri()))
+        .oneshot(plain_ask())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = json_body(response).await;
+    assert_eq!(body["error"]["type"], "invalid_request_error");
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("prompt is too long: "),
+        "{body}"
+    );
+    // Это не капризы модели: лесенка не гоняется, запрос один.
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_ladder_that_helps_nothing_cools_down_and_forgets_nothing() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": {"message": "the request is invalid"}
+        })))
+        .mount(&upstream)
+        .await;
+    let state = effort_state(&upstream.uri());
+    let response = app(state.clone()).oneshot(plain_ask()).await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    // Основной запрос и упрощённый без `reasoning_effort`; дальше шагов нет.
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 2);
+    // Остужение: следующий отказ той же модели — без лесенки.
+    let again = app(state.clone()).oneshot(plain_ask()).await.unwrap();
+    assert_eq!(again.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 3);
+    assert!(state.profiles.snapshot().is_empty());
+}
+
+#[tokio::test]
+async fn provider_errors_keep_their_kind_for_claude_code() {
+    for (status, kind) in [
+        (401, "authentication_error"),
+        (403, "permission_error"),
+        (404, "not_found_error"),
+        (429, "rate_limit_error"),
+        (529, "overloaded_error"),
+        (503, "api_error"),
+    ] {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(status).set_body_json(json!({
+                "error": {"message": "nope"}
+            })))
+            .mount(&upstream)
+            .await;
+        let response = app(state_with(&upstream.uri(), "openai", "m"))
+            .oneshot(plain_ask())
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), status);
+        assert_eq!(json_body(response).await["error"]["type"], kind, "{status}");
+    }
+}
+
+#[tokio::test]
+async fn repeated_tool_names_are_sent_once() {
+    let upstream = MockServer::start().await;
+    answer_ok().mount(&upstream).await;
+    let tool = json!({"name": "same", "description": "d", "input_schema": {"type": "object"}});
+    let response = app(state_with(&upstream.uri(), "openai", "m"))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
+            "tools": [tool.clone(), tool],
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    text_body(response).await;
+    let sent: Value =
+        serde_json::from_slice(&upstream.received_requests().await.unwrap()[0].body).unwrap();
+    assert_eq!(sent["tools"].as_array().unwrap().len(), 1);
 }
 
 /// Base64 PNG `width`×`height` весом с настоящий скриншот (~300 КБ).

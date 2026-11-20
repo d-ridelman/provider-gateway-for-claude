@@ -2,6 +2,29 @@ use ctp_core::tokens::count_json_tokens;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
+/// Имена инструментов, которые шлюз сократил для провайдера (`adapt::safe_name`), —
+/// обратно настоящими: Claude Code знает только их.
+pub fn restore_names(message: &mut Value, names: &std::collections::HashMap<String, String>) {
+    if names.is_empty() {
+        return;
+    }
+    for block in message
+        .get_mut("content")
+        .and_then(Value::as_array_mut)
+        .into_iter()
+        .flatten()
+    {
+        if block.get("type").and_then(Value::as_str) == Some("tool_use")
+            && let Some(real) = block
+                .get("name")
+                .and_then(Value::as_str)
+                .and_then(|name| names.get(name))
+        {
+            block["name"] = Value::String(real.clone());
+        }
+    }
+}
+
 /// OpenAI Chat Completions (ответ) → Anthropic Messages (ответ).
 pub fn translate(
     value: &Value,

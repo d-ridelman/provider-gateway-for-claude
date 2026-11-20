@@ -23,7 +23,32 @@ pub fn upstream_error(status: u16, text: &str, secret: &str) -> Response {
     } else {
         502
     };
-    anthropic_error(code, "api_error", clean_error_text(text, secret))
+    let message = clean_error_text(text, secret);
+    if matches!(code, 400 | 413 | 422) && crate::openai::adapt::context_overflow(text) {
+        // Так отвечает Anthropic, когда разговор не влез в окно, и Claude Code по этому
+        // тексту сам сжимает его и повторяет, а не показывает ошибку.
+        return anthropic_error(
+            400,
+            "invalid_request_error",
+            format!("prompt is too long: {message}"),
+        );
+    }
+    anthropic_error(code, error_kind(code), message)
+}
+
+/// Тип ошибки Anthropic по статусу: по нему Claude Code решает, повторять ли запрос
+/// (лимит, перегрузка) и что показать.
+fn error_kind(status: u16) -> &'static str {
+    match status {
+        400 | 422 => "invalid_request_error",
+        401 => "authentication_error",
+        403 => "permission_error",
+        404 => "not_found_error",
+        413 => "request_too_large",
+        429 => "rate_limit_error",
+        529 => "overloaded_error",
+        _ => "api_error",
+    }
 }
 
 /// Текст ошибки провайдера для клиента: ключ вырезан и из сырого тела, и из
