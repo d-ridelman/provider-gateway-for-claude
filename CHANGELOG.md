@@ -10,6 +10,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Fixed
 
+- **A model that rejects images broke the whole session.** `glm-5.3` (unlike `glm-5.3-flash` and DeepSeek) answers any picture with a 400 "the request is invalid", and once a screenshot is in the conversation, every later request failed, whatever you retried. Now, when a provider answers 400 to a request with images, the gateway sends it once more with the images replaced by a short note, and remembers that this model takes no images (until the gateway restarts).
 - **Context compaction kicked in far too early with screenshots.** The gateway counted an image by its base64 text: one 1920×1140 screenshot came out as ~250 thousand tokens instead of ~1.5 thousand, so Claude Code saw the 1M window as full and compacted the conversation again and again. Images are now counted by their pixel size, as Claude counts them (PNG, JPEG, GIF, WebP), PDFs by pages.
 - When the provider reports usage in the stream, its real input size (`prompt_tokens`) now reaches Claude Code at the end of the reply, instead of the gateway's estimate; cached tokens are no longer counted twice.
 

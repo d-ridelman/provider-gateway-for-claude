@@ -2,6 +2,54 @@ use crate::state::Provider;
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
+const IMAGE_OMITTED: &str = "[image omitted: this model does not accept images]";
+
+/// Есть ли в сообщениях картинки (`image_url`).
+pub fn has_images(payload: &Value) -> bool {
+    payload
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|message| message.get("content").and_then(Value::as_array))
+        .flatten()
+        .any(|part| part.get("type").and_then(Value::as_str) == Some("image_url"))
+}
+
+/// Картинки заменяются пометкой в тексте (одной на подряд идущие). Часть `glm-5.3`,
+/// например, отвечает на любую картинку 400 «the request is invalid»: сессия со
+/// скриншотами в истории тогда не работает вовсе. Сколько картинок убрано.
+pub fn strip_images(payload: &mut Value) -> usize {
+    let mut removed = 0;
+    let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) else {
+        return 0;
+    };
+    for message in messages {
+        let Some(parts) = message.get("content").and_then(Value::as_array) else {
+            continue;
+        };
+        if !parts
+            .iter()
+            .any(|part| part.get("type").and_then(Value::as_str) == Some("image_url"))
+        {
+            continue;
+        }
+        let mut texts: Vec<String> = Vec::new();
+        for part in parts {
+            if part.get("type").and_then(Value::as_str) == Some("image_url") {
+                removed += 1;
+                if texts.last().map(String::as_str) != Some(IMAGE_OMITTED) {
+                    texts.push(IMAGE_OMITTED.to_string());
+                }
+            } else if let Some(text) = part.get("text").and_then(Value::as_str) {
+                texts.push(text.to_string());
+            }
+        }
+        message["content"] = Value::String(texts.join("\n\n"));
+    }
+    removed
+}
+
 /// Имя инструмента-советника у Claude Code и у модели (функция шлюза).
 pub const ADVISOR: &str = "advisor";
 
@@ -893,6 +941,29 @@ mod tests {
         assert_eq!(with["tools"][0]["function"]["name"], "advisor");
         let without = build(&provider(), &declared, true, false);
         assert!(without.get("tools").is_none());
+    }
+
+    #[test]
+    fn images_are_replaced_by_one_note_per_run() {
+        let mut payload = json!({"messages": [
+            {"role": "system", "content": "sys"},
+            {"role": "user", "content": [
+                {"type": "text", "text": "look"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,BBBB"}},
+                {"type": "text", "text": "and tell me"}
+            ]},
+            {"role": "user", "content": "no images here"}
+        ]});
+        assert!(has_images(&payload));
+        assert_eq!(strip_images(&mut payload), 2);
+        assert!(!has_images(&payload));
+        assert_eq!(
+            payload["messages"][1]["content"],
+            "look\n\n[image omitted: this model does not accept images]\n\nand tell me"
+        );
+        assert_eq!(payload["messages"][2]["content"], "no images here");
+        assert_eq!(strip_images(&mut payload), 0);
     }
 
     #[test]
