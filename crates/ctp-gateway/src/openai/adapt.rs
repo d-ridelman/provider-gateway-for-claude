@@ -440,6 +440,7 @@ pub fn adaptable(status: u16, text: &str) -> bool {
     let missing_model = lower.contains("model")
         && (lower.contains("not found") || lower.contains("does not exist"));
     !missing_model
+        && !rate_wording(&lower)
         && ![
             "rate limit",
             "quota",
@@ -462,12 +463,10 @@ pub fn adaptable(status: u16, text: &str) -> bool {
         .any(|marker| lower.contains(marker))
 }
 
-/// Провайдер говорит, что разговор не влез в окно модели (а не что слишком велик вывод).
-pub fn context_overflow(text: &str) -> bool {
-    let lower = text.to_ascii_lowercase();
-    // Лимиты и квоты («too many tokens per minute», «monthly token limit») — не окно:
-    // подождать или показать ошибку, а не сжимать разговор.
-    if [
+/// Текст про частоту, квоты и суточные лимиты: подождать или показать ошибку, а не сжимать
+/// разговор и не упрощать запрос.
+fn rate_wording(lower: &str) -> bool {
+    [
         "per minute",
         "per day",
         "per hour",
@@ -475,16 +474,17 @@ pub fn context_overflow(text: &str) -> bool {
         "daily",
         "quota",
         "rate limit",
-        "try again",
-        "tpm",
     ]
     .iter()
     .any(|marker| lower.contains(marker))
-    {
-        return false;
-    }
-    // Эти слова о окне, даже если рядом упомянут вывод (vLLM: «maximum context length
-    // is N tokens. However, you requested M output tokens and your prompt contains…»).
+}
+
+/// Провайдер говорит, что разговор не влез в окно модели (а не что слишком велик вывод).
+pub fn context_overflow(text: &str) -> bool {
+    let lower = text.to_ascii_lowercase();
+    // Эти слова о окне, даже если рядом упомянут вывод или «try again» (vLLM: «maximum
+    // context length is N tokens. However, you requested M output tokens and your
+    // prompt contains…»).
     if [
         "context length",
         "context_length",
@@ -497,8 +497,8 @@ pub fn context_overflow(text: &str) -> bool {
         "prompt is too long",
         "input is too long",
         "input token count",
-        "too many tokens",
         "too many input tokens",
+        "range of input length",
         "reduce the length",
     ]
     .iter()
@@ -506,19 +506,22 @@ pub fn context_overflow(text: &str) -> bool {
     {
         return true;
     }
-    if [
-        "max_tokens",
-        "max_completion_tokens",
-        "max_new_tokens",
-        "output token",
-        "completion token",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
+    // Остальные формулировки двусмысленны: «too many tokens per minute» — это частота,
+    // «max_tokens is too large» — вывод.
+    if rate_wording(&lower)
+        || [
+            "max_tokens",
+            "max_completion_tokens",
+            "max_new_tokens",
+            "output token",
+            "completion token",
+        ]
+        .iter()
+        .any(|marker| lower.contains(marker))
     {
         return false;
     }
-    ["token limit", "tokens exceed"]
+    ["token limit", "tokens exceed", "too many tokens"]
         .iter()
         .any(|marker| lower.contains(marker))
 }
@@ -678,8 +681,8 @@ impl Profiles {
     /// навсегда отняло бы у модели то, что она принимает). Тот же новый шаг на втором
     /// запросе — выучено; результат — все шаги модели. `images` — отпечатки убранных
     /// картинок: Claude Code шлёт всю историю каждый раз, и один битый скриншот
-    /// отказывал бы на каждом ходе. Подтверждение засчитывается, только если среди
-    /// картинок есть ещё не виденные (пусто — шаг не про картинки).
+    /// отказывал бы на каждом ходе. Подтверждение засчитывается, только если ни одной из
+    /// картинок ещё не было среди подтверждений (пусто — шаг не про картинки).
     pub fn record_success(&self, key: &str, flipped: Step, images: &[u64]) -> Option<Vec<Step>> {
         let mut inner = self.lock();
         let known: Vec<Step> = inner
@@ -1110,6 +1113,23 @@ mod tests {
             "Input length validation failed for field name",
         ] {
             assert!(!context_overflow(text), "{text}");
+        }
+        // Частота и квоты в 400/422 лесенку тоже не запускают (иначе до 8 повторов
+        // в лимит и случайное «выучивание»).
+        for text in [
+            "monthly token limit reached",
+            "Too many tokens per minute, please wait",
+            "daily request limit exceeded",
+        ] {
+            let body = json!({"error": {"message": text}}).to_string();
+            assert!(!adaptable(400, &body) && !adaptable(422, &body), "{text}");
+        }
+        // Сильные слова про окно сильнее «try again» и «tpm» в том же тексте.
+        for text in [
+            "maximum context length is 8192 tokens, reduce the length and try again",
+            "Range of input length should be [1, 30720]",
+        ] {
+            assert!(context_overflow(text), "{text}");
         }
         // Лимит вывода — не окно.
         assert!(!context_overflow(
