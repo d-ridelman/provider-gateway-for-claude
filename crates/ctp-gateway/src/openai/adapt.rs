@@ -465,6 +465,24 @@ pub fn adaptable(status: u16, text: &str) -> bool {
 /// Провайдер говорит, что разговор не влез в окно модели (а не что слишком велик вывод).
 pub fn context_overflow(text: &str) -> bool {
     let lower = text.to_ascii_lowercase();
+    // Лимиты и квоты («too many tokens per minute», «monthly token limit») — не окно:
+    // подождать или показать ошибку, а не сжимать разговор.
+    if [
+        "per minute",
+        "per day",
+        "per hour",
+        "monthly",
+        "daily",
+        "quota",
+        "rate limit",
+        "try again",
+        "tpm",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+    {
+        return false;
+    }
     // Эти слова о окне, даже если рядом упомянут вывод (vLLM: «maximum context length
     // is N tokens. However, you requested M output tokens and your prompt contains…»).
     if [
@@ -500,14 +518,9 @@ pub fn context_overflow(text: &str) -> bool {
     {
         return false;
     }
-    [
-        "token limit",
-        "tokens exceed",
-        "maximum number of tokens",
-        "input length",
-    ]
-    .iter()
-    .any(|marker| lower.contains(marker))
+    ["token limit", "tokens exceed"]
+        .iter()
+        .any(|marker| lower.contains(marker))
 }
 
 /// Переполнение по сообщению и по коду ошибки в теле: у одних провайдеров текст
@@ -700,7 +713,9 @@ impl Profiles {
                     at: Instant::now(),
                 };
             }
-            let fresh = images.is_empty() || images.iter().any(|id| !entry.seen.contains(id));
+            // Только набор, целиком состоящий из невиденных картинок: пока в истории
+            // остаётся прежняя битая, отказ полностью объясняется ею, а не новыми.
+            let fresh = images.is_empty() || images.iter().all(|id| !entry.seen.contains(id));
             if fresh {
                 entry.count += 1;
                 entry.seen.extend_from_slice(images);
@@ -1052,9 +1067,11 @@ mod tests {
         assert_eq!(profiles.record_success("p/m", Step::Images, &[7]), None);
         assert_eq!(profiles.record_success("p/m", Step::Images, &[7]), None);
         assert!(profiles.steps("p/m").is_empty());
-        // Новый скриншот, который тоже не принят, — вот второе подтверждение.
+        // Новый скриншот рядом с прежним битым ничего не доказывает: отказ объясняется 7.
+        assert_eq!(profiles.record_success("p/m", Step::Images, &[7, 8]), None);
+        // А запрос, где все картинки новые (другая сессия), — второе подтверждение.
         assert_eq!(
-            profiles.record_success("p/m", Step::Images, &[7, 8]),
+            profiles.record_success("p/m", Step::Images, &[9]),
             Some(vec![Step::Images])
         );
         // Запрос с картинками, прошедший как есть, обнуляет накопленное.
@@ -1072,7 +1089,6 @@ mod tests {
             "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575).",
             "exceeded model token limit: 8192",
             "This model's maximum context length is 32768 tokens. However, you requested 2000 output tokens and your prompt contains at least 30769 input tokens",
-            "Input length (9000) exceeds the maximum",
         ] {
             assert!(context_overflow(text), "{text}");
             assert!(is_overflow(
@@ -1086,6 +1102,15 @@ mod tests {
         // Код в теле при невнятном тексте.
         let coded = r#"{"error":{"message":"Bad Request","code":"context_length_exceeded"}}"#;
         assert!(is_overflow(coded) && !adaptable(400, coded));
+        // Квоты и частота — не окно: Claude Code не должен из-за них сжимать разговор.
+        for text in [
+            "monthly token limit reached",
+            "Too many tokens per minute, please wait",
+            "Requested output exceeds the maximum number of tokens allowed for output",
+            "Input length validation failed for field name",
+        ] {
+            assert!(!context_overflow(text), "{text}");
+        }
         // Лимит вывода — не окно.
         assert!(!context_overflow(
             "max_tokens is too large: 100000 for this model"
