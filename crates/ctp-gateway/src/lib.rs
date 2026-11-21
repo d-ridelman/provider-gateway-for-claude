@@ -7,8 +7,10 @@ pub mod probe;
 pub mod sse;
 pub mod state;
 pub mod util;
+pub mod websearch;
 
 use crate::state::{AppState, ModelRouter};
+use crate::websearch::search;
 use anyhow::{Context, bail};
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -24,6 +26,7 @@ pub fn app(state: AppState) -> Router {
         .route("/v1/messages/count_tokens", post(handlers::count_tokens))
         .route("/v1/oauth/{org}/authorize", post(handlers::oauth_authorize))
         .route("/v1/oauth/token", post(handlers::oauth_token))
+        .route("/search", post(search))
         .route("/api/{*tail}", any(handlers::api_stub))
         .fallback(handlers::not_found)
         .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
