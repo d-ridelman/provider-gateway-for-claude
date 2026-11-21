@@ -212,18 +212,26 @@ async fn fetch_through_browser(
     query: &str,
     language: &str,
 ) -> Result<Vec<Value>, String> {
-    let request = http
-        .post(endpoint)
-        .timeout(BROWSER_TIMEOUT)
-        .json(&json!({"url": ddg_url(query, language)}))
-        .send();
-    let response = request.await.map_err(|exc| exc.to_string())?;
-    let status = response.status();
-    let text = response.text().await.map_err(|exc| exc.to_string())?;
-    if !status.is_success() {
-        return Err(format!("HTTP {} {}", status.as_u16(), truncate(&text, 200)));
+    // Brave первым, DuckDuckGo запасным: первый поисковик, отдавший настоящую выдачу.
+    for source in sources() {
+        let request = http
+            .post(endpoint)
+            .timeout(BROWSER_TIMEOUT)
+            .json(&json!({"url": (source.url)(query, language)}))
+            .send();
+        let response = request.await.map_err(|exc| exc.to_string())?;
+        let status = response.status();
+        let text = response.text().await.map_err(|exc| exc.to_string())?;
+        if !status.is_success() {
+            continue;
+        }
+        let results = (source.parse)(&text);
+        if !results.is_empty() {
+            info!(source = source.name, query = %query, "websearch browser ok");
+            return Ok(results);
+        }
     }
-    Ok(parse_ddg(&text))
+    Err("no results".into())
 }
 
 fn remember(key: String, value: Result<Vec<Value>, String>) {
@@ -311,11 +319,15 @@ fn accept_language(language: &str) -> String {
     }
 }
 
-/// Порядок взят по живому опыту: у DuckDuckGo настоящие адреса одним запросом, но
-/// основная страница быстро отдаёт проверку, а lite ещё отвечает; Brave держится долго,
-/// зато адрес — только домен.
+/// Порядок: Brave первым — за ним настоящие адреса результатов, DuckDuckGo запасным
+/// (он быстро отдаёт проверку на бота, зато его страницу умеет проходить браузер).
 fn sources() -> Vec<Source> {
     vec![
+        Source {
+            name: "brave",
+            url: brave_url,
+            parse: parse_brave,
+        },
         Source {
             name: "ddg",
             url: ddg_url,
@@ -325,11 +337,6 @@ fn sources() -> Vec<Source> {
             name: "ddg-lite",
             url: ddg_lite_url,
             parse: parse_ddg,
-        },
-        Source {
-            name: "brave",
-            url: brave_url,
-            parse: parse_brave,
         },
     ]
 }
@@ -472,6 +479,8 @@ fn parse_brave(html: &str) -> Vec<Value> {
     static DESC: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r#"(?s)<div class="content[^"]*"[^>]*>(.*?)</div>"#).expect("brave desc regex")
     });
+    static DIRECT: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r#"href="(https?://[^"]+)"#).expect("brave direct regex"));
 
     let starts: Vec<usize> = SNIPPET.find_iter(html).map(|found| found.start()).collect();
     let mut out = Vec::new();
@@ -485,7 +494,13 @@ fn parse_brave(html: &str) -> Vec<Value> {
             .captures(block)
             .map(|caps| clean(&caps[1]))
             .unwrap_or_default();
-        let url = cite_url(&cited_origin(&cite));
+        // Настоящий адрес — в самой ссылке результата (`https://host/path` или `/go/v1/<id>`);
+        // `cite` показывает лишь начало пути, поэтому он только запасной.
+        let url = DIRECT
+            .captures(block)
+            .and_then(|caps| target_url(&caps[1]))
+            .filter(|url| !url.contains("search.brave.com"))
+            .unwrap_or_else(|| cite_url(&cited_origin(&cite)));
         let snippet = DESC
             .captures(block)
             .map(|caps| clean(&caps[1]))
@@ -566,7 +581,55 @@ fn clean(fragment: &str) -> String {
     static SPACES: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\s+").expect("spaces regex"));
     let text = TAG.replace_all(fragment, " ");
     let text = html_unescape(&text);
-    SPACES.replace_all(text.trim(), " ").into_owned()
+    let text = repair_mojibake(text.trim());
+    SPACES.replace_all(&text, " ").into_owned()
+}
+
+/// Двойная кодировка из выдачи: сайт отдал cp1252, страница поиска прочитала её как UTF-8,
+/// и в сниппете вместо `—` стоит `â€”`. Обратное преобразование возможно, только когда все
+/// символы влезают в cp1252, а полученные байты — корректный UTF-8: настоящий UTF-8
+/// (в том числе русский текст) его не проходит и остаётся как был.
+fn repair_mojibake(text: &str) -> String {
+    let mut bytes = Vec::with_capacity(text.len());
+    for ch in text.chars() {
+        match ch {
+            '\u{80}'..='\u{9F}' => bytes.push(ch as u8),
+            '\u{A0}'..='\u{FF}' => bytes.push(ch as u8),
+            '€' => bytes.push(0x80),
+            '‚' => bytes.push(0x82),
+            'ƒ' => bytes.push(0x83),
+            '„' => bytes.push(0x84),
+            '…' => bytes.push(0x85),
+            '†' => bytes.push(0x86),
+            '‡' => bytes.push(0x87),
+            'ˆ' => bytes.push(0x88),
+            '‰' => bytes.push(0x89),
+            'Š' => bytes.push(0x8A),
+            '‹' => bytes.push(0x8B),
+            'Œ' => bytes.push(0x8C),
+            'Ž' => bytes.push(0x8E),
+            '‘' => bytes.push(0x91),
+            '’' => bytes.push(0x92),
+            '“' => bytes.push(0x93),
+            '”' => bytes.push(0x94),
+            '•' => bytes.push(0x95),
+            '–' => bytes.push(0x96),
+            '—' => bytes.push(0x97),
+            '˜' => bytes.push(0x98),
+            '™' => bytes.push(0x99),
+            'š' => bytes.push(0x9A),
+            '›' => bytes.push(0x9B),
+            'œ' => bytes.push(0x9C),
+            'ž' => bytes.push(0x9E),
+            'Ÿ' => bytes.push(0x9F),
+            ' '..='~' => bytes.push(ch as u8),
+            _ => return text.to_string(),
+        }
+    }
+    match String::from_utf8(bytes) {
+        Ok(repaired) => repaired,
+        Err(_) => text.to_string(),
+    }
 }
 
 fn html_unescape(text: &str) -> String {
@@ -681,6 +744,23 @@ mod tests {
             assert!(!url.contains(' '), "space left in url: {url:?}");
             assert!(url.contains('.'), "not a host: {url:?}");
         }
+    }
+
+    #[test]
+    fn brave_link_beats_its_cite_start() {
+        let html = include_str!("../tests/fixtures/brave.html");
+        let results = parse_brave(html);
+        let url = results[0]["url"].as_str().unwrap_or_default();
+        assert!(
+            url.matches('/').count() > 3,
+            "the cite start instead of the real link: {url:?}"
+        );
+    }
+
+    #[test]
+    fn mojibake_is_repaired_but_utf8_is_left_alone() {
+        assert_eq!(repair_mojibake("scaryâ€”not"), "scary—not");
+        assert_eq!(repair_mojibake("«Проверка» — текст"), "«Проверка» — текст");
     }
 
     #[test]
