@@ -494,13 +494,19 @@ fn parse_brave(html: &str) -> Vec<Value> {
             .captures(block)
             .map(|caps| clean(&caps[1]))
             .unwrap_or_default();
-        // Настоящий адрес — в самой ссылке результата (`https://host/path` или `/go/v1/<id>`);
-        // `cite` показывает лишь начало пути, поэтому он только запасной.
-        let url = DIRECT
-            .captures(block)
-            .and_then(|caps| target_url(&caps[1]))
-            .filter(|url| !url.contains("search.brave.com"))
-            .unwrap_or_else(|| cite_url(&cited_origin(&cite)));
+        // Адрес: путь из `cite` (хлебные крошки — это путь страницы), иначе прямая ссылка,
+        // иначе домен. `/go/v1/<id>` без сессионных cookies Brave не открывает
+        // («Link could not be opened»), поэтому в адрес он не годится.
+        let path = cited_url(&cite);
+        let url = if path.matches('/').count() > 2 {
+            path
+        } else {
+            DIRECT
+                .captures(block)
+                .and_then(|caps| target_url(&caps[1]))
+                .filter(|url| !url.contains("search.brave.com"))
+                .unwrap_or_else(|| cite_url(&path))
+        };
         let snippet = DESC
             .captures(block)
             .map(|caps| clean(&caps[1]))
@@ -561,6 +567,29 @@ fn cite_url(cite: &str) -> String {
         return cite.trim_end_matches('/').to_string();
     }
     String::new()
+}
+
+/// Адрес из `cite` целиком: `https://docs.rs › axum › latest › axum › middleware › index.html`
+/// → `https://docs.rs/axum/latest/axum/middleware/index.html`. `›` — хлебные крошки,
+/// то есть тот же путь; хвост после второй стрелки (`all collections › release notes`)
+/// к адресу не относится и отбрасывается, если у него нет вида пути.
+fn cited_url(cite: &str) -> String {
+    let origin = cited_origin(cite);
+    if origin.is_empty() {
+        return String::new();
+    }
+    let mut path = String::new();
+    let crumb = cite.split(['›', '\u{203a}']).skip(1);
+    for part in crumb {
+        let part = part.trim();
+        // Крошки — это путь страницы: слова с пробелами и без `/` — уже не путь.
+        if part.is_empty() || part.contains(' ') || part.contains('/') {
+            break;
+        }
+        path.push('/');
+        path.push_str(part);
+    }
+    format!("{origin}{path}")
 }
 
 fn is_http(url: &str) -> bool {
@@ -754,6 +783,18 @@ mod tests {
         assert!(
             url.matches('/').count() > 3,
             "the cite start instead of the real link: {url:?}"
+        );
+    }
+
+    #[test]
+    fn brave_cite_gives_the_page_path() {
+        assert_eq!(
+            cited_url("https://docs.rs › axum › latest › axum › middleware › index.html"),
+            "https://docs.rs/axum/latest/axum/middleware/index.html"
+        );
+        assert_eq!(
+            cited_url("https://support.claude.com all collections › release notes"),
+            "https://support.claude.com"
         );
     }
 
