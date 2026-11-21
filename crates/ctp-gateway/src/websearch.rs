@@ -215,13 +215,17 @@ impl Source {
         if !status.is_success() {
             return Err(format!("HTTP {}", status.as_u16()));
         }
-        // Проверку на бота поисковики отдают страницей с кодом `200`/`202`: без блоков
-        // выдачи. Это блокировка, а не «ничего не нашлось», и ей нужна пауза.
-        let results = (self.parse)(&text);
-        if results.is_empty() && !text.contains("result__a") && !text.contains("result-link") {
+        // Проверку на бота поисковики отдают страницей с кодом `200`/`202`: выдачи нет,
+        // и характерных блоков результата тоже (пустая честная выдача их содержит).
+        // Это блокировка, а не «ничего не нашлось», и ей нужна пауза.
+        if !text.contains("result__a")
+            && !text.contains("result-link")
+            && !text.contains("data-type=\"web\"")
+            && !text.contains("data-type=web")
+        {
             return Err(format!("blocked (HTTP {})", status.as_u16()));
         }
-        Ok(results)
+        Ok((self.parse)(&text))
     }
 }
 
@@ -275,7 +279,7 @@ fn ddg_url(query: &str, language: &str) -> String {
         "https://html.duckduckgo.com/html/?q={}",
         encode_query(query)
     );
-    if let Some(region) = region(language) {
+    if let Some(region) = ddg_region(language) {
         url.push_str(&format!("&kl={region}"));
     }
     url
@@ -286,7 +290,7 @@ fn ddg_lite_url(query: &str, language: &str) -> String {
         "https://lite.duckduckgo.com/lite/?q={}",
         encode_query(query)
     );
-    if let Some(region) = region(language) {
+    if let Some(region) = ddg_region(language) {
         url.push_str(&format!("&kl={region}"));
     }
     url
@@ -315,6 +319,21 @@ fn region(language: &str) -> Option<String> {
     (tag.len() == 2).then_some(tag)
 }
 
+/// DuckDuckGo ждёт регион парой «страна-язык» (`ru-ru`, `us-en`), а не одной меткой:
+/// `kl=ru` он молча игнорирует.
+fn ddg_region(language: &str) -> Option<String> {
+    let first = language.split(',').next().unwrap_or("").trim();
+    let mut parts = first.split('-');
+    let lang = parts.next()?.trim().to_ascii_lowercase();
+    if lang.len() != 2 || !lang.chars().all(|c| c.is_ascii_alphabetic()) {
+        return None;
+    }
+    let country = parts.next().map(|part| part.trim().to_ascii_lowercase());
+    let country =
+        country.filter(|part| part.len() == 2 && part.chars().all(|c| c.is_ascii_alphabetic()));
+    Some(format!("{}-{lang}", country.as_deref().unwrap_or(&lang)))
+}
+
 /// DuckDuckGo HTML и lite: ссылка в `class='result-link'`/`class="result__a"` (адрес — в
 /// параметре `uddg`), описание — в следующем `result-snippet`/`result__snippet`.
 fn parse_ddg(html: &str) -> Vec<Value> {
@@ -330,9 +349,14 @@ fn parse_ddg(html: &str) -> Vec<Value> {
         Regex::new(r#"(?s)class=['"]result[-_]{1,2}snippet['"][^>]*>(.*?)</(?:a|td)>"#)
             .expect("ddg snippet regex")
     });
-    let snippets: Vec<String> = SNIPPET
+    // Описание принадлежит ссылке, за которой оно стоит: рекламные и служебные ссылки,
+    // отброшенные `target_url`, не должны сдвигать очередь описаний.
+    let snippets: Vec<(usize, String)> = SNIPPET
         .captures_iter(html)
-        .map(|caps| clean(&caps[1]))
+        .filter_map(|caps| {
+            let found = caps.get(0)?;
+            Some((found.start(), clean(&caps[1])))
+        })
         .collect();
     let links = if LINK.is_match(html) {
         &LINK
@@ -345,7 +369,12 @@ fn parse_ddg(html: &str) -> Vec<Value> {
             continue;
         };
         let title = clean(&caps[2]);
-        let snippet = snippets.get(out.len()).cloned().unwrap_or_default();
+        let position = caps.get(0).map_or(0, |found| found.start());
+        let snippet = snippets
+            .iter()
+            .find(|(at, _)| *at > position)
+            .map(|(_, text)| text.clone())
+            .unwrap_or_default();
         out.push(result(title, url, snippet));
     }
     out
@@ -382,7 +411,7 @@ fn parse_brave(html: &str) -> Vec<Value> {
             .captures(block)
             .map(|caps| clean(&caps[1]))
             .unwrap_or_default();
-        let url = cite_url(&cite);
+        let url = cite_url(&cited_origin(&cite));
         let snippet = DESC
             .captures(block)
             .map(|caps| clean(&caps[1]))
@@ -413,16 +442,34 @@ fn target_url(href: &str) -> Option<String> {
     is_http(&href).then_some(href)
 }
 
-/// `cite` Brave: `https://support.claude.com › all collections › release notes`.
-/// Домен с путём схемы не содержит, поэтому адрес — только корень.
-fn cite_url(cite: &str) -> String {
+/// Хост из `cite`. В разметке Brave схема разорвана HTML-комментариями
+/// (`https://<!--[0-->support.claude.com`), и после `clean` в строке остаётся пробел:
+/// `https:// support.claude.com`. Схему и хост собираем без пробелов.
+fn cited_origin(cite: &str) -> String {
     let cite = cite.trim();
     let head = cite.split(['›', '\u{203a}']).next().unwrap_or(cite).trim();
-    if head.starts_with("http://") || head.starts_with("https://") {
-        return head.trim_end_matches('/').to_string();
+    let (scheme, rest) = if let Some(rest) = head.strip_prefix("https://") {
+        ("https://", rest)
+    } else if let Some(rest) = head.strip_prefix("http://") {
+        ("http://", rest)
+    } else {
+        ("https://", head)
+    };
+    let host = rest
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('/');
+    if host.is_empty() || !host.contains('.') {
+        return String::new();
     }
-    if head.contains('.') {
-        return format!("https://{}", head.trim_end_matches('/'));
+    format!("{scheme}{host}")
+}
+
+/// `cite` Brave уже без разорванной схемы: адрес и есть корень.
+fn cite_url(cite: &str) -> String {
+    if is_http(cite) && cite.contains('.') {
+        return cite.trim_end_matches('/').to_string();
     }
     String::new()
 }
@@ -532,11 +579,19 @@ mod tests {
 
     #[test]
     fn cite_becomes_origin() {
+        // Схема в разметке Brave разорвана комментарием: после `clean` там пробел.
+        let origin = cited_origin("https:// support.claude.com \u{203a} all collections");
+        assert_eq!(origin, "https://support.claude.com");
+        assert_eq!(cite_url(&origin), "https://support.claude.com");
         assert_eq!(
-            cite_url("https://support.claude.com \u{203a} all collections"),
-            "https://support.claude.com"
+            cited_origin("https://instagram.com\u{203a} some post"),
+            "https://instagram.com"
         );
-        assert_eq!(cite_url("example.com \u{203a} docs"), "https://example.com");
+        assert_eq!(
+            cited_origin("example.com \u{203a} docs"),
+            "https://example.com"
+        );
+        assert_eq!(cited_origin("not a host"), "");
         assert_eq!(cite_url("not a host"), "");
     }
 
@@ -545,12 +600,26 @@ mod tests {
         let html = include_str!("../tests/fixtures/brave.html");
         let results = parse_brave(html);
         assert!(results.len() >= 3, "brave results: {}", results.len());
-        assert!(
-            results[0]["url"]
-                .as_str()
-                .unwrap_or_default()
-                .starts_with("https://")
-        );
+        for item in &results {
+            let url = item["url"].as_str().unwrap_or_default();
+            assert!(url.starts_with("https://"), "bad url: {url:?}");
+            assert!(!url.contains(' '), "space left in url: {url:?}");
+            assert!(url.contains('.'), "not a host: {url:?}");
+        }
+    }
+
+    #[test]
+    fn ddg_snippets_follow_their_link_not_the_count() {
+        // Ссылка-редирект рекламы отбрасывается `target_url`, но её описание не должно
+        // достаться настоящему результату.
+        let html = r#"<a class="result__a" href="//duckduckgo.com/y.js?ad=1">Ad</a>
+            <a class="result__snippet">Buy this</a>
+            <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fexample.com%2Fa&amp;rut=1">Real</a>
+            <a class="result__snippet">About A</a>"#;
+        let results = parse_ddg(html);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0]["url"], "https://example.com/a");
+        assert_eq!(results[0]["snippet"], "About A");
     }
 
     #[test]
@@ -569,5 +638,21 @@ mod tests {
         assert_eq!(region("ru-RU").as_deref(), Some("ru"));
         assert_eq!(region("en-US,en;q=0.9").as_deref(), Some("en"));
         assert_eq!(region(""), None);
+    }
+
+    #[test]
+    fn ddg_wants_country_and_language() {
+        assert_eq!(ddg_region("ru-RU").as_deref(), Some("ru-ru"));
+        assert_eq!(ddg_region("en-US,en;q=0.9").as_deref(), Some("us-en"));
+        assert_eq!(ddg_region("de").as_deref(), Some("de-de"));
+        assert_eq!(ddg_region(""), None);
+    }
+
+    #[test]
+    fn an_empty_page_reads_as_a_block() {
+        // Страница проверки на бота: выдачи нет и характерных блоков тоже.
+        let page = "<html><body><form id=\"challenge-form\">anomaly</form></body></html>";
+        assert!(!page.contains("result__a") && !page.contains("result-link"));
+        assert!(parse_ddg(page).is_empty());
     }
 }
