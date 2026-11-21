@@ -182,25 +182,10 @@ async fn find(
             Ok(_) => reasons.push(format!("{}: no results", source.name)),
             Err(why) => {
                 // Проверка на бота: тихий HTTP её не пройдёт, нужен браузер приложения.
-                let refused = why.starts_with("blocked") || why.starts_with("HTTP 429");
-                if refused {
+                if why.starts_with("blocked") || why.starts_with("HTTP 429") {
                     blocked = true;
                 }
                 source.rest(&why);
-                // Источник ещё не «отдыхает», значит браузер ему поможет прямо сейчас;
-                // без этого Brave, ответивший 429, уступал бы DDG до браузерной попытки.
-                if refused && let Some(endpoint) = browser {
-                    match browser_fetch(&source, http, endpoint, query, language).await {
-                        Ok(mut results) if !results.is_empty() => {
-                            results.truncate(RESULTS);
-                            remember(key, Ok(results.clone()));
-                            info!(source = source.name, query = %query, "websearch ok (browser)");
-                            return Ok(results);
-                        }
-                        Ok(_) => {}
-                        Err(note) => reasons.push(format!("{} (browser): {note}", source.name)),
-                    }
-                }
                 reasons.push(format!("{}: {why}", source.name));
             }
         }
