@@ -171,6 +171,7 @@ pub fn save_settings(
         .map(|path| path.trim().to_string())
         .filter(|path| !path.is_empty());
     next.russian_ui = input.russian_ui;
+    next.builtin_browser = input.builtin_browser;
     next.code_dir = input
         .code_dir
         .map(|dir| dir.trim().to_string())

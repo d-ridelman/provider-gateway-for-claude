@@ -290,6 +290,7 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
         detected_claude: crate::claude::detect(config).map(|path| path.display().to_string()),
         providers,
         russian_ui: config.russian_ui,
+        builtin_browser: config.builtin_browser,
         code_dir: config.code_dir.clone(),
         language: crate::i18n::current().to_string(),
         language_pref: config

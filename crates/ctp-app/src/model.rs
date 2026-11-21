@@ -17,6 +17,10 @@ pub struct Config {
     /// Запускать русскую копию Claude (см. `ruui`); по умолчанию — оригинал.
     #[serde(default)]
     pub russian_ui: bool,
+    /// Включить встроенный браузер Claude (`builtinBrowserEnabled` в 3p-конфиге):
+    /// в третьестороннем режиме он по умолчанию выключен.
+    #[serde(default)]
+    pub builtin_browser: bool,
     /// Папка, в которой открывается Claude Code CLI; `None` — домашняя.
     #[serde(default)]
     pub code_dir: Option<String>,
@@ -68,6 +72,7 @@ impl Default for Config {
             providers: Vec::new(),
             claude_path: None,
             russian_ui: false,
+            builtin_browser: false,
             code_dir: None,
             language: None,
             auto_update: true,
@@ -117,6 +122,8 @@ pub struct UiConfig {
     pub detected_claude: Option<String>,
     pub providers: Vec<UiProvider>,
     pub russian_ui: bool,
+    /// Включён ли встроенный браузер в 3p-профиле Claude.
+    pub builtin_browser: bool,
     /// Есть ли файл перевода `claude-ru.json` в папке настроек.
     pub russian_file: bool,
     pub config_dir: String,
@@ -242,6 +249,8 @@ pub struct SettingsInput {
     pub claude_path: Option<String>,
     #[serde(default)]
     pub russian_ui: bool,
+    #[serde(default)]
+    pub builtin_browser: bool,
     #[serde(default)]
     pub code_dir: Option<String>,
     #[serde(default)]

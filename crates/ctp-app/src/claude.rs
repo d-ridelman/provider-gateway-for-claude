@@ -339,6 +339,26 @@ pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String>
     ))
 }
 
+/// Запись конфигурации Claude (3p): шлюз, ключ и модели. Отдельной функцией — её проверяет тест.
+fn library_entry(
+    config: &Config,
+    status: &UiStatus,
+    models: &[serde_json::Value],
+) -> serde_json::Value {
+    json!({
+        "inferenceProvider": "gateway",
+        "inferenceGatewayBaseUrl": format!("http://127.0.0.1:{}", status.port),
+        "inferenceGatewayApiKey": status.token,
+        "inferenceGatewayAuthScheme": "x-api-key",
+        "inferenceCredentialKind": "static",
+        "deploymentDisplayName": "Provider Gateway",
+        "inferenceModels": models,
+        // В 3p встроенный браузер выключен по умолчанию; галочка в настройках
+        // включает его там же, где Claude читает остальные поля.
+        "builtinBrowserEnabled": config.builtin_browser,
+    })
+}
+
 pub fn launch(
     config: &Config,
     status: &UiStatus,
@@ -405,15 +425,7 @@ pub fn launch(
     }
     let id = LIBRARY_ID;
     let models = inference_models(&status.models, &role_aliases(config));
-    let entry = json!({
-        "inferenceProvider": "gateway",
-        "inferenceGatewayBaseUrl": format!("http://127.0.0.1:{}", status.port),
-        "inferenceGatewayApiKey": status.token,
-        "inferenceGatewayAuthScheme": "x-api-key",
-        "inferenceCredentialKind": "static",
-        "deploymentDisplayName": "Provider Gateway",
-        "inferenceModels": models
-    });
+    let entry = library_entry(config, status, &models);
     write_json(&library.join(format!("{id}.json")), &entry)?;
     write_json(
         &library.join("_meta.json"),
@@ -649,6 +661,32 @@ mod tests {
             openai,
             label: None,
         }
+    }
+
+    #[test]
+    fn library_entry_carries_the_browser_switch() {
+        let status = UiStatus {
+            running: true,
+            port: 17899,
+            token: "tok".into(),
+            models: vec![info("claude-p-1", None, true)],
+            log_path: String::new(),
+            claude: None,
+            update: None,
+        };
+        let mut config = crate::model::Config::default();
+        assert_eq!(
+            library_entry(&config, &status, &[]).get("builtinBrowserEnabled"),
+            Some(&serde_json::Value::Bool(false)),
+            "по умолчанию браузер в 3p выключен"
+        );
+        config.builtin_browser = true;
+        let entry = library_entry(&config, &status, &[]);
+        assert_eq!(
+            entry["builtinBrowserEnabled"],
+            serde_json::Value::Bool(true)
+        );
+        assert_eq!(entry["inferenceGatewayBaseUrl"], "http://127.0.0.1:17899");
     }
 
     #[test]
