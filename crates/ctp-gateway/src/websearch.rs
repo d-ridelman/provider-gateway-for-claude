@@ -179,10 +179,25 @@ async fn find(
             Ok(_) => reasons.push(format!("{}: no results", source.name)),
             Err(why) => {
                 // Проверка на бота: тихий HTTP её не пройдёт, нужен браузер приложения.
-                if why.starts_with("blocked") || why.starts_with("HTTP 429") {
+                let refused = why.starts_with("blocked") || why.starts_with("HTTP 429");
+                if refused {
                     blocked = true;
                 }
                 source.rest(&why);
+                // Источник ещё не «отдыхает», значит браузер ему поможет прямо сейчас;
+                // без этого Brave, ответивший 429, уступал бы DDG до браузерной попытки.
+                if refused && let Some(endpoint) = browser {
+                    match browser_fetch(&source, http, endpoint, query, language).await {
+                        Ok(mut results) if !results.is_empty() => {
+                            results.truncate(RESULTS);
+                            remember(key, Ok(results.clone()));
+                            info!(source = source.name, query = %query, "websearch ok (browser)");
+                            return Ok(results);
+                        }
+                        Ok(_) => {}
+                        Err(note) => reasons.push(format!("{} (browser): {note}", source.name)),
+                    }
+                }
                 reasons.push(format!("{}: {why}", source.name));
             }
         }
@@ -213,25 +228,41 @@ async fn fetch_through_browser(
     language: &str,
 ) -> Result<Vec<Value>, String> {
     // Brave первым, DuckDuckGo запасным: первый поисковик, отдавший настоящую выдачу.
+    let mut notes = Vec::new();
     for source in sources() {
-        let request = http
-            .post(endpoint)
-            .timeout(BROWSER_TIMEOUT)
-            .json(&json!({"url": (source.url)(query, language)}))
-            .send();
-        let response = request.await.map_err(|exc| exc.to_string())?;
-        let status = response.status();
-        let text = response.text().await.map_err(|exc| exc.to_string())?;
-        if !status.is_success() {
-            continue;
-        }
-        let results = (source.parse)(&text);
-        if !results.is_empty() {
-            info!(source = source.name, query = %query, "websearch browser ok");
-            return Ok(results);
+        match browser_fetch(&source, http, endpoint, query, language).await {
+            Ok(results) if !results.is_empty() => {
+                info!(source = source.name, query = %query, "websearch browser ok");
+                return Ok(results);
+            }
+            Ok(_) => notes.push(format!("{}: no results", source.name)),
+            Err(note) => notes.push(format!("{}: {note}", source.name)),
         }
     }
-    Err("no results".into())
+    Err(notes.join("; "))
+}
+
+/// Один источник через встроенный браузер: страница открывается как визит человека.
+async fn browser_fetch(
+    source: &Source,
+    http: &reqwest::Client,
+    endpoint: &str,
+    query: &str,
+    language: &str,
+) -> Result<Vec<Value>, String> {
+    let response = http
+        .post(endpoint)
+        .timeout(BROWSER_TIMEOUT)
+        .json(&json!({"url": (source.url)(query, language)}))
+        .send()
+        .await
+        .map_err(|exc| exc.to_string())?;
+    let status = response.status();
+    let text = response.text().await.map_err(|exc| exc.to_string())?;
+    if !status.is_success() {
+        return Err(format!("HTTP {}", status.as_u16()));
+    }
+    Ok((source.parse)(&text))
 }
 
 fn remember(key: String, value: Result<Vec<Value>, String>) {
