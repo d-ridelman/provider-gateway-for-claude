@@ -68,13 +68,13 @@ pub fn run() {
             webfetch::init(app.handle());
             // Адрес для шлюза: поисковики отвечают проверкой на бота, а проходит её
             // встроенный браузер. Окно показывает себя само, если проверка просит галочку.
-            match fetch::serve(true) {
-                Ok(url) => {
-                    tracing::info!(url = %url, "browser fetch endpoint");
-                    // SAFETY: `setup` идёт до запуска потоков, которые читают окружение.
-                    unsafe { std::env::set_var("CTP_FETCH_URL", &url) };
-                }
-                Err(exc) => tracing::warn!(error = %exc, "browser fetch endpoint not started"),
+            if let Ok(url) = fetch::serve(true) {
+                tracing::info!(url = %url, "browser fetch endpoint");
+                // SAFETY: `setup` идёт до запуска потоков, которые читают окружение.
+                unsafe { std::env::set_var("CTP_FETCH_URL", &url) };
+                fetch::spawn_watchdog();
+            } else {
+                tracing::warn!("browser fetch endpoint not started");
             }
             // После журнала и языка: предупреждение есть куда записать, меню — на нужном языке.
             if let Err(exc) = tray::build(app.handle()) {

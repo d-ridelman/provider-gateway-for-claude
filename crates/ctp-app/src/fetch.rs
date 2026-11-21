@@ -26,9 +26,44 @@ struct Fetching {
     show: bool,
 }
 
+/// Живой ли последний запущенный сервер: перезапуск, если он умер. Адрес общий с шлюзом
+/// (`CTP_FETCH_URL` обновляется на месте), поэтому тот продолжает ходить по новому порту.
+/// Бывает нужно после того, как окно WebView2 уронило процесс.
+pub fn spawn_watchdog() {
+    std::thread::spawn(|| {
+        loop {
+            std::thread::sleep(Duration::from_secs(60));
+            let Some(address) = current_address() else {
+                continue;
+            };
+            if std::net::TcpStream::connect_timeout(&address, Duration::from_secs(2)).is_ok() {
+                continue;
+            }
+            // SAFETY: адрес читают только потоки, созданные после этой записи.
+            match serve(true) {
+                Ok(url) => {
+                    tracing::warn!(url = %url, "browser fetch endpoint restarted");
+                    unsafe { std::env::set_var("CTP_FETCH_URL", &url) };
+                }
+                Err(exc) => tracing::warn!(error = %exc, "browser fetch endpoint not restarted"),
+            }
+        }
+    });
+}
+
+/// Адрес для проверки живости: порт из `CTP_FETCH_URL`.
+fn current_address() -> Option<std::net::SocketAddr> {
+    let url = std::env::var("CTP_FETCH_URL").ok()?;
+    let host = url.trim_start_matches("http://").split('/').next()?;
+    host.parse().ok()
+}
+
 /// Сервер на 127.0.0.1:0, адрес которого отдаётся шлюзу. Живёт до конца приложения.
 pub fn serve(show: bool) -> Result<String, std::io::Error> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    // `tokio::net::TcpListener::from_std` ждёт неблокирующий сокет: с блокирующим
+    // accept виснет, и запросы к `/fetch` не получают ответа вовсе.
+    listener.set_nonblocking(true)?;
     let port = listener.local_addr()?.port();
     let router = Router::new()
         .route("/fetch", post(handle))
@@ -67,16 +102,17 @@ async fn handle(State(fetching): State<Fetching>, body: Bytes) -> Response {
             .into_response();
     };
     let show = fetching.show;
-    // Окно WebView2 — на своём потоке: здесь живёт tokio, а сборке окна нужен цикл событий.
+    // Окно WebView2 — на своём потоке, как `upkeep` зовёт перевод: в пуле tokio сборка окна
+    // может ждать главный поток бесконечно.
     let started = std::time::Instant::now();
+    let (sender, receiver) = tokio::sync::oneshot::channel();
     let target = url.clone();
-    let waiting = tokio::time::timeout(
-        TIMEOUT,
-        tokio::task::spawn_blocking(move || crate::webfetch::fetch_html(&target, show)),
-    )
-    .await;
-    let result = match waiting {
-        Ok(result) => result,
+    std::thread::spawn(move || {
+        let _ = sender.send(crate::webfetch::fetch_html(&target, show));
+    });
+    let result = match tokio::time::timeout(TIMEOUT, receiver).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Err(anyhow::anyhow!("the browser thread stopped")),
         Err(_) => {
             tracing::warn!(url = %url, "browser fetch timed out");
             return (
@@ -87,7 +123,7 @@ async fn handle(State(fetching): State<Fetching>, body: Bytes) -> Response {
         }
     };
     match result {
-        Ok(Ok(html)) => {
+        Ok(html) => {
             tracing::info!(
                 url = %url,
                 ms = started.elapsed().as_millis(),
@@ -96,7 +132,7 @@ async fn handle(State(fetching): State<Fetching>, body: Bytes) -> Response {
             );
             (StatusCode::OK, html).into_response()
         }
-        Ok(Err(exc)) => {
+        Err(exc) => {
             tracing::warn!(url = %url, error = %format!("{exc:#}"), "browser fetch failed");
             (
                 StatusCode::BAD_GATEWAY,
@@ -104,11 +140,6 @@ async fn handle(State(fetching): State<Fetching>, body: Bytes) -> Response {
             )
                 .into_response()
         }
-        Err(exc) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({"error": exc.to_string()})),
-        )
-            .into_response(),
     }
 }
 
