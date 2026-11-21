@@ -351,6 +351,8 @@ pub struct AppState {
     pub clients: Clients,
     /// Выученные капризы моделей (`провайдер/модель` → упрощения запроса), см. `openai::adapt`.
     pub profiles: std::sync::Arc<crate::openai::adapt::Profiles>,
+    /// Адрес браузерного загрузчика приложения (`ctp-app`), если шлюз запущен из него.
+    pub browser: Option<String>,
 }
 
 #[derive(Clone)]
@@ -391,6 +393,7 @@ impl AppState {
             debug_prompts: false,
             clients: Clients::new()?,
             profiles: Default::default(),
+            browser: None,
         })
     }
 }

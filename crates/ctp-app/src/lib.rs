@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod cc_settings;
 pub mod claude;
 pub mod commands;
+pub mod fetch;
 pub mod i18n;
 pub mod model;
 pub mod runtime;
@@ -65,6 +66,16 @@ pub fn run() {
             let config = store::load_or_create(&dir)?;
             i18n::apply(config.language.as_deref());
             webfetch::init(app.handle());
+            // Адрес для шлюза: поисковики отвечают проверкой на бота, а проходит её
+            // встроенный браузер. Окно показывает себя само, если проверка просит галочку.
+            match fetch::serve(true) {
+                Ok(url) => {
+                    tracing::info!(url = %url, "browser fetch endpoint");
+                    // SAFETY: `setup` идёт до запуска потоков, которые читают окружение.
+                    unsafe { std::env::set_var("CTP_FETCH_URL", &url) };
+                }
+                Err(exc) => tracing::warn!(error = %exc, "browser fetch endpoint not started"),
+            }
             // После журнала и языка: предупреждение есть куда записать, меню — на нужном языке.
             if let Err(exc) = tray::build(app.handle()) {
                 tracing::warn!(error = %exc, "tray icon not created, closing the window will exit");

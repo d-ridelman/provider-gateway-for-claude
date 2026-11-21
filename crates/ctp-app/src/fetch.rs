@@ -1,0 +1,140 @@
+//! Внутренний адрес для шлюза: загрузить одну страницу через встроенный браузер.
+//!
+//! Зачем: поисковики отвечают проверкой на бота (DuckDuckGo — `202` с капчей, Brave —
+//! `429`), и тихий HTTP её не проходит. WebView2 проходит её сам, как живой посетитель,
+//! а если она просит галочку — окно показывается, и человек её нажимает. Шлюз ходит
+//! сюда `POST {"url"}`, получает HTML страницы и разбирает его своим парсером.
+//!
+//! Слушает только петля на случайном порту, и порт шлюз узнаёт из окружения
+//! (`CTP_FETCH_URL`), которое задаёт `runtime::start`, — чужие туда не постучатся.
+
+use axum::body::Bytes;
+use axum::extract::State;
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::routing::post;
+use axum::{Json, Router};
+use serde_json::{Value, json};
+use std::time::Duration;
+
+/// Ожидание одним куском: обычная страница — секунды; проверка с галочкой — сколько
+/// человек сидит у окна (внутри `webfetch` свой срок и таймауты).
+const TIMEOUT: Duration = Duration::from_secs(120);
+
+#[derive(Clone)]
+struct Fetching {
+    show: bool,
+}
+
+/// Сервер на 127.0.0.1:0, адрес которого отдаётся шлюзу. Живёт до конца приложения.
+pub fn serve(show: bool) -> Result<String, std::io::Error> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0))?;
+    let port = listener.local_addr()?.port();
+    let router = Router::new()
+        .route("/fetch", post(handle))
+        .with_state(Fetching { show });
+    // Свой поток с циклом tokio: `setup` у Tauri не живёт внутри асинхронного рантайма.
+    let started = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("fetch-endpoint".into())
+        .spawn(move || {
+            let Ok(rt) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            else {
+                let _ = started.0.send(Err(std::io::Error::other("tokio runtime")));
+                return;
+            };
+            let _ = started.0.send(Ok(()));
+            let _ = rt.block_on(async move {
+                let listener = tokio::net::TcpListener::from_std(listener)?;
+                if let Err(exc) = axum::serve(listener, router).await {
+                    tracing::warn!(error = %exc, "the fetch server stopped with an error");
+                }
+                Ok::<(), std::io::Error>(())
+            });
+        })?;
+    let _ = started.1.recv();
+    Ok(format!("http://127.0.0.1:{port}/fetch"))
+}
+
+async fn handle(State(fetching): State<Fetching>, body: Bytes) -> Response {
+    let Some(url) = wanted_url(&body) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": "url is required"})),
+        )
+            .into_response();
+    };
+    let show = fetching.show;
+    // Окно WebView2 — на своём потоке: здесь живёт tokio, а сборке окна нужен цикл событий.
+    let started = std::time::Instant::now();
+    let target = url.clone();
+    let waiting = tokio::time::timeout(
+        TIMEOUT,
+        tokio::task::spawn_blocking(move || crate::webfetch::fetch_html(&target, show)),
+    )
+    .await;
+    let result = match waiting {
+        Ok(result) => result,
+        Err(_) => {
+            tracing::warn!(url = %url, "browser fetch timed out");
+            return (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(json!({"error": "the browser did not finish in time"})),
+            )
+                .into_response();
+        }
+    };
+    match result {
+        Ok(Ok(html)) => {
+            tracing::info!(
+                url = %url,
+                ms = started.elapsed().as_millis(),
+                bytes = html.len(),
+                "fetched through the built-in browser"
+            );
+            (StatusCode::OK, html).into_response()
+        }
+        Ok(Err(exc)) => {
+            tracing::warn!(url = %url, error = %format!("{exc:#}"), "browser fetch failed");
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({"error": format!("{exc:#}")})),
+            )
+                .into_response()
+        }
+        Err(exc) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": exc.to_string()})),
+        )
+            .into_response(),
+    }
+}
+
+fn wanted_url(body: &[u8]) -> Option<String> {
+    let value: Value = serde_json::from_slice(body).ok()?;
+    let url = value.get("url")?.as_str()?.trim();
+    // Только обычный веб: загружаем страницу, а не файл на диске и не служебную схему.
+    let ok = ["https://", "http://"]
+        .iter()
+        .any(|prefix| url.starts_with(prefix));
+    (ok && url.len() > 8).then(|| url.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_web_addresses_are_fetched() {
+        assert_eq!(
+            wanted_url(br#"{"url":"https://search.brave.com/search?q=a"}"#).as_deref(),
+            Some("https://search.brave.com/search?q=a")
+        );
+        assert_eq!(wanted_url(br#"{"url":"file:///C:/Windows/win.ini"}"#), None);
+        assert_eq!(wanted_url(br#"{"url":"javascript:alert(1)"}"#), None);
+        assert_eq!(wanted_url(br#"{}"#), None);
+        assert_eq!(wanted_url(b"not json"), None);
+    }
+}

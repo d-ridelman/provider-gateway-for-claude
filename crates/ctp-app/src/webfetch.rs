@@ -50,6 +50,87 @@ pub fn fetch_json(_url: &str, _show: bool) -> Result<String> {
     bail!("no built-in browser in tests")
 }
 
+/// HTML всей страницы: для поиска нужен её текст и ссылки, а не ответ API.
+const SCRIPT_HTML: &str = "(() => document.contentType === 'text/html' \
+    ? document.documentElement.outerHTML : null)()";
+
+/// HTML страницы глазами браузера — для браузерного прохода проверки на бота в поиске.
+/// Отличается от `fetch_json` только тем, что отдаёт обычный HTML, а не требует JSON:
+/// окно по-прежнему видно, только если проверка не прошла сама.
+#[cfg(not(test))]
+pub fn fetch_html(url: &str, show: bool) -> Result<String> {
+    let app = APP.get().context(tr!(
+        "встроенный браузер недоступен",
+        "built-in browser is not available"
+    ))?;
+    let label = "webfetch-search";
+    if let Some(stale) = app.get_webview_window(label) {
+        let _ = stale.destroy();
+    }
+    let window = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url.parse()?))
+        .title(tr!("Поиск — проверка", "Search — check"))
+        .inner_size(720.0, 780.0)
+        .center()
+        .visible(false)
+        .build()?;
+    struct Close(tauri::WebviewWindow);
+    impl Drop for Close {
+        fn drop(&mut self) {
+            let _ = self.0.destroy();
+        }
+    }
+    let window = Close(window);
+
+    let started = Instant::now();
+    let mut shown = false;
+    loop {
+        if app.get_webview_window(label).is_none() {
+            bail!(
+                "{}",
+                tr!("окно поиска закрыто", "the search window was closed")
+            );
+        }
+        if started.elapsed() > TIMEOUT {
+            bail!(
+                "{}",
+                tr!(
+                    "проверка поисковика не пройдена за 2 минуты",
+                    "the search engine's check was not passed within 2 minutes"
+                )
+            );
+        }
+        if !show && started.elapsed() > HIDDEN_LIMIT {
+            bail!(
+                "{}",
+                tr!(
+                    "поисковик просит подтверждения — фоном не пройти",
+                    "the search engine asks for confirmation; cannot pass it in the background"
+                )
+            );
+        }
+        if show && !shown && started.elapsed() > SHOW_AFTER {
+            let _ = window.0.show();
+            let _ = window.0.set_focus();
+            shown = true;
+        }
+        let (tx, rx) = mpsc::channel();
+        window.0.eval_with_callback(SCRIPT_HTML, move |result| {
+            let _ = tx.send(result);
+        })?;
+        if let Ok(result) = rx.recv_timeout(Duration::from_secs(10))
+            && let Some(text) = page_text(&result)
+        {
+            return Ok(text);
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+}
+
+#[cfg(test)]
+pub fn fetch_html(_url: &str, _show: bool) -> Result<String> {
+    bail!("no built-in browser in tests")
+}
+
 /// Текст JSON по `url` глазами браузера. Блокирует: вызывать не из главного потока.
 /// `show` — можно показать окно, если проверка не прошла сама (человек рядом). Без него
 /// (фоновая подготовка) окно не появляется: не прошла за `HIDDEN_LIMIT` — отказ.

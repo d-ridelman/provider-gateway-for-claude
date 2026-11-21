@@ -40,6 +40,12 @@ static CACHE: LazyLock<Mutex<HashMap<String, Cached>>> =
 static RESTING: LazyLock<Mutex<HashMap<&'static str, Instant>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// Адрес внутреннего загрузчика приложения (см. `ctp-app`): только петля, случайный порт,
+/// который приложение сообщает шлюзу через `CTP_FETCH_URL`. Нет — значит шлюз запущен
+/// отдельно от приложения, и браузерного прохода у него нет.
+const BROWSER_ENV: &str = "CTP_FETCH_URL";
+const BROWSER_TIMEOUT: Duration = Duration::from_secs(90);
+
 /// `POST /search` — запрос встроенного веб-поиска Desktop.
 pub async fn search(
     State(state): State<AppState>,
@@ -51,7 +57,8 @@ pub async fn search(
     };
     let language = language_of(&headers);
     let http = search_client(&state);
-    match find(&http, &query, &language).await {
+    let browser = browser_endpoint(&state);
+    match find(&http, browser.as_deref(), &query, &language).await {
         Ok(results) => answer(
             StatusCode::OK,
             json!({
@@ -118,11 +125,36 @@ fn language_of(headers: &HeaderMap) -> String {
         .to_string()
 }
 
-/// Результаты по запросу: кэш → источники по порядку.
+/// Адрес браузерного загрузчика приложения: из состояния (его задаёт `ctp-app`), а для
+/// отдельно запущенного шлюза — из окружения. Только петля: наружу не ходим.
+fn browser_endpoint(state: &AppState) -> Option<String> {
+    let url = state
+        .browser
+        .clone()
+        .or_else(|| std::env::var(BROWSER_ENV).ok())?
+        .trim()
+        .to_string();
+    let is_loopback = url.starts_with("http://127.0.0.1:") || url.starts_with("http://[::1]:");
+    if url.is_empty() || !is_loopback {
+        return None;
+    }
+    Some(url.trim_end_matches('/').to_string())
+}
+
+/// Результаты по запросу: кэш → источники по порядку → браузер.
 ///
 /// Ошибку не кэшируем: DuckDuckGo после первых запросов отвечает `202` с проверкой на
 /// бота, а через минуту отпускает — иначе следующий вопрос модели получил бы её же.
-async fn find(http: &reqwest::Client, query: &str, language: &str) -> Result<Vec<Value>, String> {
+///
+/// Поисковики отвечают проверкой на бота страницей с кодом `200`/`202`; тихий HTTP её
+/// не проходит, а встроенный браузер приложения — проходит, как живой посетитель.
+/// Поэтому браузер идёт последним и только если хоть один источник её встретил.
+async fn find(
+    http: &reqwest::Client,
+    browser: Option<&str>,
+    query: &str,
+    language: &str,
+) -> Result<Vec<Value>, String> {
     let key = format!("{language}\u{0}{query}");
     if let Some((at, cached)) = CACHE.lock().ok().and_then(|cache| cache.get(&key).cloned())
         && at.elapsed() < CACHE_TTL
@@ -130,9 +162,11 @@ async fn find(http: &reqwest::Client, query: &str, language: &str) -> Result<Vec
         return cached;
     }
     let mut reasons = Vec::new();
+    let mut blocked = false;
     for source in sources() {
         if source.throttled() {
             reasons.push(format!("{}: resting", source.name));
+            blocked = true;
             continue;
         }
         match source.fetch(http, query, language).await {
@@ -144,12 +178,52 @@ async fn find(http: &reqwest::Client, query: &str, language: &str) -> Result<Vec
             }
             Ok(_) => reasons.push(format!("{}: no results", source.name)),
             Err(why) => {
+                // Проверка на бота: тихий HTTP её не пройдёт, нужен браузер приложения.
+                if why.starts_with("blocked") || why.starts_with("HTTP 429") {
+                    blocked = true;
+                }
                 source.rest(&why);
                 reasons.push(format!("{}: {why}", source.name));
             }
         }
     }
+    if blocked && let Some(endpoint) = browser {
+        match fetch_through_browser(http, endpoint, query, language).await {
+            Ok(mut results) if !results.is_empty() => {
+                results.truncate(RESULTS);
+                remember(key, Ok(results.clone()));
+                info!(source = "browser", query = %query, "websearch ok");
+                return Ok(results);
+            }
+            Ok(_) => reasons.push("browser: no results".into()),
+            Err(why) => reasons.push(format!("browser: {why}")),
+        }
+    } else if blocked {
+        reasons.push(format!("browser: not available ({BROWSER_ENV})"));
+    }
     Err(reasons.join("; "))
+}
+
+/// Один вопрос встроенному браузеру приложения: он откроет страницу выдачи, пройдёт
+/// проверку (человек рядом нажимает галочку, если она просит) и вернёт HTML.
+async fn fetch_through_browser(
+    http: &reqwest::Client,
+    endpoint: &str,
+    query: &str,
+    language: &str,
+) -> Result<Vec<Value>, String> {
+    let request = http
+        .post(endpoint)
+        .timeout(BROWSER_TIMEOUT)
+        .json(&json!({"url": ddg_url(query, language)}))
+        .send();
+    let response = request.await.map_err(|exc| exc.to_string())?;
+    let status = response.status();
+    let text = response.text().await.map_err(|exc| exc.to_string())?;
+    if !status.is_success() {
+        return Err(format!("HTTP {} {}", status.as_u16(), truncate(&text, 200)));
+    }
+    Ok(parse_ddg(&text))
 }
 
 fn remember(key: String, value: Result<Vec<Value>, String>) {
@@ -540,6 +614,7 @@ fn hex(byte: u8) -> Option<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::ModelRouter;
 
     const DDG: &str = include_str!("../tests/fixtures/ddg.html");
 
@@ -646,6 +721,39 @@ mod tests {
         assert_eq!(ddg_region("en-US,en;q=0.9").as_deref(), Some("us-en"));
         assert_eq!(ddg_region("de").as_deref(), Some("de-de"));
         assert_eq!(ddg_region(""), None);
+    }
+
+    #[test]
+    fn only_loopback_endpoints_are_trusted() {
+        let state = |url: Option<&str>| {
+            let file = serde_json::from_value(json!({"providers": [{
+                "id": "p", "type": "openai", "base_url": "https://example.invalid/v1",
+                "api_key": "sk-x", "models": {"claude-p-00000000": "m"}
+            }]}))
+            .unwrap();
+            let mut state = AppState::new(
+                ModelRouter::new(file).unwrap(),
+                "t".into(),
+                false,
+                String::new(),
+            )
+            .unwrap();
+            state.browser = url.map(str::to_string);
+            state
+        };
+        assert_eq!(
+            browser_endpoint(&state(Some("http://127.0.0.1:5000/fetch/"))).as_deref(),
+            Some("http://127.0.0.1:5000/fetch")
+        );
+        assert_eq!(
+            browser_endpoint(&state(Some("http://example.com/fetch"))),
+            None
+        );
+        assert_eq!(
+            browser_endpoint(&state(Some("http://127.0.0.1.evil/fetch"))),
+            None
+        );
+        assert_eq!(browser_endpoint(&state(Some(""))), None);
     }
 
     #[test]

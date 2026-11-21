@@ -77,6 +77,11 @@ pub async fn start(shared: &AppShared) -> Result<UiStatus, String> {
     for (model, steps) in gateway_state.profiles.snapshot() {
         tracing::info!(model = %model, steps = ?steps, "known quirks of this model");
     }
+    // Пока шлюз живёт в приложении, у него есть встроенный браузер: поисковики отвечают
+    // проверкой на бота, и пройти её может только он (см. `websearch`).
+    gateway_state.browser = std::env::var("CTP_FETCH_URL")
+        .ok()
+        .filter(|url| !url.trim().is_empty());
 
     let Some(listener) = bind(shared, config.port, epoch).await? else {
         tracing::info!("gateway start superseded by a later command");
