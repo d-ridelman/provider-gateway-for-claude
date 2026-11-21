@@ -45,6 +45,9 @@ static RESTING: LazyLock<Mutex<HashMap<&'static str, Instant>>> =
 /// отдельно от приложения, и браузерного прохода у него нет.
 const BROWSER_ENV: &str = "CTP_FETCH_URL";
 const BROWSER_TIMEOUT: Duration = Duration::from_secs(90);
+/// Сколько всего ждать браузерных попыток за один вопрос: проверка с галочкой у человека
+/// может простоять до своего срока, а ответ модели нужен заметно раньше.
+const BROWSER_BUDGET: Duration = Duration::from_secs(60);
 
 /// `POST /search` — запрос встроенного веб-поиска Desktop.
 pub async fn search(
@@ -203,43 +206,31 @@ async fn find(
         }
     }
     if blocked && let Some(endpoint) = browser {
-        match fetch_through_browser(http, endpoint, query, language).await {
-            Ok(mut results) if !results.is_empty() => {
+        // Дедлайн на браузерные попытки: иначе проверка, ждущая человека, держит ответ
+        // до таймаута каждого источника, а модель ждёт web_search не минутами.
+        let budget = async {
+            for source in sources() {
+                match browser_fetch(&source, http, endpoint, query, language).await {
+                    Ok(results) if !results.is_empty() => return Some((source.name, results)),
+                    _ => continue,
+                }
+            }
+            None
+        };
+        match tokio::time::timeout(BROWSER_BUDGET, budget).await {
+            Ok(Some((name, mut results))) => {
                 results.truncate(RESULTS);
                 remember(key, Ok(results.clone()));
-                info!(source = "browser", query = %query, "websearch ok");
+                info!(source = name, query = %query, "websearch ok (browser)");
                 return Ok(results);
             }
-            Ok(_) => reasons.push("browser: no results".into()),
-            Err(why) => reasons.push(format!("browser: {why}")),
+            Ok(None) => reasons.push("browser: no results".into()),
+            Err(_) => reasons.push("browser: timed out".into()),
         }
     } else if blocked {
         reasons.push(format!("browser: not available ({BROWSER_ENV})"));
     }
     Err(reasons.join("; "))
-}
-
-/// Один вопрос встроенному браузеру приложения: он откроет страницу выдачи, пройдёт
-/// проверку (человек рядом нажимает галочку, если она просит) и вернёт HTML.
-async fn fetch_through_browser(
-    http: &reqwest::Client,
-    endpoint: &str,
-    query: &str,
-    language: &str,
-) -> Result<Vec<Value>, String> {
-    // Brave первым, DuckDuckGo запасным: первый поисковик, отдавший настоящую выдачу.
-    let mut notes = Vec::new();
-    for source in sources() {
-        match browser_fetch(&source, http, endpoint, query, language).await {
-            Ok(results) if !results.is_empty() => {
-                info!(source = source.name, query = %query, "websearch browser ok");
-                return Ok(results);
-            }
-            Ok(_) => notes.push(format!("{}: no results", source.name)),
-            Err(note) => notes.push(format!("{}: {note}", source.name)),
-        }
-    }
-    Err(notes.join("; "))
 }
 
 /// Один источник через встроенный браузер: страница открывается как визит человека.
