@@ -510,8 +510,12 @@ fn parse_brave(html: &str) -> Vec<Value> {
     static DESC: LazyLock<Regex> = LazyLock::new(|| {
         Regex::new(r#"(?s)<div class="content[^"]*"[^>]*>(.*?)</div>"#).expect("brave desc regex")
     });
+    // Только ссылка с тем же хостом, что и `cite`: в блоке лежат чужие абсолютные ссылки
+    // (сайтлинки, встроенное видео, реклама), и первая из них — не адрес результата.
     static DIRECT: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r#"href="(https?://[^"]+)"#).expect("brave direct regex"));
+    static HOST: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"^https?://([^/]+)").expect("brave host regex"));
 
     let starts: Vec<usize> = SNIPPET.find_iter(html).map(|found| found.start()).collect();
     let mut out = Vec::new();
@@ -529,6 +533,7 @@ fn parse_brave(html: &str) -> Vec<Value> {
         // иначе домен. `/go/v1/<id>` без сессионных cookies Brave не открывает
         // («Link could not be opened»), поэтому в адрес он не годится.
         let path = cited_url(&cite);
+        let host = HOST.captures(&path).map(|caps| caps[1].to_string());
         let url = if path.matches('/').count() > 2 {
             path
         } else {
@@ -536,6 +541,11 @@ fn parse_brave(html: &str) -> Vec<Value> {
                 .captures(block)
                 .and_then(|caps| target_url(&caps[1]))
                 .filter(|url| !url.contains("search.brave.com"))
+                // Своя ссылка результата: тот же хост, что у `cite`.
+                .filter(|url| match (&host, HOST.captures(url)) {
+                    (Some(wanted), Some(found)) => wanted == &found[1],
+                    _ => false,
+                })
                 .unwrap_or_else(|| cite_url(&path))
         };
         let snippet = DESC
@@ -646,10 +656,19 @@ fn clean(fragment: &str) -> String {
 }
 
 /// Двойная кодировка из выдачи: сайт отдал cp1252, страница поиска прочитала её как UTF-8,
-/// и в сниппете вместо `—` стоит `â€”`. Обратное преобразование возможно, только когда все
-/// символы влезают в cp1252, а полученные байты — корректный UTF-8: настоящий UTF-8
-/// (в том числе русский текст) его не проходит и остаётся как был.
+/// и в сниппете вместо `—` стоит `â€”`.
+///
+/// Распознаём её по свите: `Ã`, `Â`, `â`, `Ð` (то есть UTF-8-байты, прочитанные как cp1252).
+/// Без этого признака строка не трогается: `café‹›` иначе превратилось бы в случайный CJK.
+/// Обратное преобразование идёт, только если все символы влезают в cp1252 и полученные
+/// байты — корректный UTF-8; настоящий UTF-8 и русский текст его не проходят.
 fn repair_mojibake(text: &str) -> String {
+    let suspicious = ["Ã", "Â", "â", "Ð", "Ñ"]
+        .iter()
+        .any(|mark| text.contains(mark));
+    if !suspicious {
+        return text.to_string();
+    }
     let mut bytes = Vec::with_capacity(text.len());
     for ch in text.chars() {
         match ch {
@@ -815,6 +834,14 @@ mod tests {
             url.matches('/').count() > 3,
             "the cite start instead of the real link: {url:?}"
         );
+        // Чужие ссылки из блока (сайтлинки, видео, аккаунт Brave) не должны становиться адресом.
+        for item in &results {
+            let url = item["url"].as_str().unwrap_or_default();
+            assert!(
+                !url.contains("account.brave.com") && !url.contains("youtube.com"),
+                "foreign link as result: {url:?}"
+            );
+        }
     }
 
     #[test]
@@ -833,6 +860,9 @@ mod tests {
     fn mojibake_is_repaired_but_utf8_is_left_alone() {
         assert_eq!(repair_mojibake("scaryâ€”not"), "scary—not");
         assert_eq!(repair_mojibake("«Проверка» — текст"), "«Проверка» — текст");
+        // Без признака двойной кодировки строку не трогаем: иначе пострадал бы обычный текст.
+        assert_eq!(repair_mojibake("café‹›"), "café‹›");
+        assert_eq!(repair_mojibake("Zürich—café"), "Zürich—café");
     }
 
     #[test]
