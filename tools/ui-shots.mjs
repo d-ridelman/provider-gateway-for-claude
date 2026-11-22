@@ -132,6 +132,9 @@ const SCREENS = {
   hoverdanger: "hover:#deleteBtn",
   hoveravatar: "hover:#addBtn",
   hoverprovider: "hover:.provider-item",
+  // The dim lines inside a hovered list item are the worst case, not the item's own text.
+  hoverurl: "hover:.provider-item .url",
+  hovermeta: "hover:.provider-item .meta",
   hoversettings: "hover:#settingsBtn",
   hovertheme: "hover:#themeBtn",
   hoverlang: "hover:#langBtn",
@@ -159,7 +162,7 @@ add("empty", "hoverprimary", [1], ["light", "dark"]);
 add("normal", "hoverenabled", [1], ["light", "dark"]);
 add("normal", "hoverdanger", [1], ["light", "dark"]);
 add("normal", "hoveravatar", [1], ["light", "dark"]);
-for (const screen of ["hoverprovider", "hoversettings", "hovertheme", "hoverlang", "hoverlogs"]) add("normal", screen, [1], ["light", "dark"]);
+for (const screen of ["hoverprovider", "hoverurl", "hovermeta", "hoversettings", "hovertheme", "hoverlang", "hoverlogs"]) add("normal", screen, [1], ["light", "dark"]);
 add("long", "main", [1], ["light", "dark"]);
 add("long", "settings", [1], ["dark"]);
 add("error", "launch", [1], ["dark"]);
@@ -339,7 +342,10 @@ for (const shot of shots) {
     await sleep(300);
     const ratio = await evaluate(`(() => {
       const el = document.querySelector(${JSON.stringify(selector)}), s = getComputedStyle(el);
-      const rgb = (c) => c.match(/[\\d.]+/g).map(Number);
+      // Any CSS colour (rgb, color-mix, color(srgb ...)) as plain sRGB through a canvas pixel.
+      const px = document.createElement('canvas'); px.width = px.height = 1;
+      const g = px.getContext('2d', { willReadFrequently: true });
+      const rgb = (c) => { g.clearRect(0, 0, 1, 1); g.fillStyle = '#000'; g.fillStyle = c; g.fillRect(0, 0, 1, 1); const d = g.getImageData(0, 0, 1, 1).data; return [d[0], d[1], d[2], d[3] / 255]; };
       const over = (top, under) => { const a = top[3] ?? 1; return [0, 1, 2].map((i) => top[i] * a + under[i] * (1 - a)); };
       let bg = [255, 255, 255];
       const chain = []; for (let n = el; n; n = n.parentElement) chain.unshift(getComputedStyle(n).backgroundColor);
@@ -348,7 +354,8 @@ for (const shot of shots) {
       const fg = over(rgb(s.color), bg), l1 = lum(fg), l2 = lum(bg);
       return ((Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)).toFixed(2);
     })()`);
-    hoverNote = Number(ratio) < 3 ? `HOVER-CONTRAST ${ratio}:1` : `hover contrast ${ratio}:1`;
+    // 4.5:1 is the AA bar for the 12-13 px text of these controls.
+    hoverNote = Number(ratio) < 4.5 ? `HOVER-CONTRAST ${ratio}:1` : `hover contrast ${ratio}:1`;
   } else if (step) {
     await evaluate(step);
     await sleep(shot.screen === "launch" || shot.screen === "testconn" ? 500 : 250);
