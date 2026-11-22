@@ -359,6 +359,57 @@ fn library_entry(
     })
 }
 
+/// Поле записи с ключом шлюза: Claude сам шифрует его в файле, сравнивать его нельзя.
+const API_KEY_FIELD: &str = "inferenceGatewayApiKey";
+
+/// Наши ключи поверх существующей записи: то, что человек менял в окне Claude, остаётся.
+/// Второе значение — изменились ли наши ключи (кроме зашифрованного ключа шлюза).
+fn merge_entry(
+    existing: Option<serde_json::Value>,
+    entry: &serde_json::Value,
+) -> (serde_json::Value, bool) {
+    let ours = entry.as_object().cloned().unwrap_or_default();
+    let Some(mut merged) = existing.filter(serde_json::Value::is_object) else {
+        return (entry.clone(), true);
+    };
+    let changed = ours.iter().any(|(key, value)| {
+        if key == API_KEY_FIELD {
+            merged.get(key).is_none()
+        } else {
+            merged.get(key) != Some(value)
+        }
+    });
+    if let Some(object) = merged.as_object_mut() {
+        object.extend(ours);
+    }
+    (merged, changed)
+}
+
+/// Запущен ли уже Claude с этим профилем. Пока он работает, Chromium держит `lockfile` в папке
+/// профиля, а закрытый или упавший Claude его не оставляет (проверено): занятый файл — это
+/// «работает».
+fn profile_in_use(profile: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        // ERROR_SHARING_VIOLATION: файл открыт другим процессом.
+        const SHARING_VIOLATION: i32 = 32;
+        match fs::OpenOptions::new()
+            .read(true)
+            .share_mode(0)
+            .open(profile.join("lockfile"))
+        {
+            Err(exc) => exc.raw_os_error() == Some(SHARING_VIOLATION),
+            Ok(_) => false,
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = profile;
+        false
+    }
+}
+
 pub fn launch(
     config: &Config,
     status: &UiStatus,
@@ -385,9 +436,15 @@ pub fn launch(
             "AppData\\Local folder not found"
         )
     })?;
+    let profile = base.join("Claude-3p");
+    // Claude уже открыт в этом профиле: его не перезапускаем, русскую копию не пересобираем
+    // (она занята), запись настроек меняем только если изменились наши ключи.
+    let running = profile_in_use(&profile);
     let copies = base.join("claude-ru");
     let original = exe.clone();
-    let (exe, russian, note) = if config.russian_ui {
+    let (exe, russian, note) = if running {
+        (exe, false, String::new())
+    } else if config.russian_ui {
         match russian_copy(&exe, &copies, config_dir) {
             Ok(copy) => (
                 copy,
@@ -406,30 +463,42 @@ pub fn launch(
     } else {
         (exe, false, String::new())
     };
-    let profile = base.join("Claude-3p");
     let library = profile.join("configLibrary");
     fs::create_dir_all(&library)
         .map_err(|exc| tr!("Профиль Claude: {exc}", "Claude profile: {exc}"))?;
 
     set_deployment_mode(&profile.join("claude_desktop_config.json"))?;
 
-    // Профиль наш собственный: старые записи (в них локальный токен) убираем,
-    // чтобы не копились по одной на каждый запуск.
-    if let Ok(entries) = fs::read_dir(&library) {
-        for entry in entries.flatten() {
-            if entry.path().extension().is_some_and(|ext| ext == "json") {
-                let _ = fs::remove_file(entry.path());
-            }
-        }
-    }
     let id = LIBRARY_ID;
     let models = inference_models(&status.models, &role_aliases(config));
     let entry = library_entry(config, status, &models);
-    write_json(&library.join(format!("{id}.json")), &entry)?;
-    write_json(
-        &library.join("_meta.json"),
-        &json!({"entries": [{"id": id, "name": "Provider Gateway"}], "appliedId": id}),
-    )?;
+    let entry_path = library.join(format!("{id}.json"));
+    let existing = fs::read_to_string(&entry_path)
+        .ok()
+        .and_then(|text| serde_json::from_str(text.trim_start_matches('\u{feff}')).ok());
+    let (merged, changed) = merge_entry(existing, &entry);
+    // Работающему Claude запись не трогаем, пока наши ключи те же: он сам зашифровал ключ
+    // шлюза в файле, и лишняя запись ничего не даст.
+    if !running || changed {
+        // Профиль наш собственный: старые записи (в них локальный токен) убираем,
+        // чтобы не копились по одной на каждый запуск. Своя запись остаётся: в ней
+        // уцелеют ключи, которые человек менял в окне Claude.
+        if let Ok(entries) = fs::read_dir(&library) {
+            for other in entries.flatten() {
+                let path = other.path();
+                let ours =
+                    path == entry_path || path.file_name().is_some_and(|n| n == "_meta.json");
+                if !ours && path.extension().is_some_and(|ext| ext == "json") {
+                    let _ = fs::remove_file(path);
+                }
+            }
+        }
+        write_json(&entry_path, &merged)?;
+        write_json(
+            &library.join("_meta.json"),
+            &json!({"entries": [{"id": id, "name": "Provider Gateway"}], "appliedId": id}),
+        )?;
+    }
 
     let mut command = Command::new(&exe);
     command
@@ -447,6 +516,31 @@ pub fn launch(
     // если сильная модель на OpenAI-совместимом провайдере.
     if advisor_available(config) {
         command.env(ADVISOR_ENV, "1");
+    }
+    if running {
+        // Второй запуск с тем же профилем только показывает первый экземпляр и выходит;
+        // новых настроек он не подхватит — человек закрывает Claude сам, мы его не трогаем.
+        command.spawn().map_err(|exc| {
+            let exe = exe.display();
+            tr!(
+                "Не удалось запустить {exe}: {exc}",
+                "Could not start {exe}: {exc}"
+            )
+        })?;
+        return Ok(crate::model::LaunchResult {
+            message: if changed {
+                tr!(
+                    "Claude уже открыт, а настройки шлюза изменились (порт, модели или флажки). Закройте Claude и откройте снова — иначе он останется со старыми.",
+                    "Claude is already open, and the gateway settings have changed (port, models or switches). Close Claude and open it again, or it keeps the old ones."
+                )
+            } else {
+                tr!(
+                    "Claude уже открыт в этом профиле — показан существующий.",
+                    "Claude is already open in this profile; showing it."
+                )
+            },
+            warning: changed,
+        });
     }
     // Снимок до запуска: копия перепишет `claude://` и COM-класс на себя (проверено вживую).
     #[cfg(windows)]
@@ -708,6 +802,69 @@ fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn our_keys_overwrite_the_entry_and_the_rest_of_it_survives() {
+        let status = status_with(Vec::new());
+        let config = Config::default();
+        let ours = library_entry(&config, &status, &[]);
+        // Нет записи (или она не объект) — пишем свою, это «изменилось».
+        assert_eq!(merge_entry(None, &ours), (ours.clone(), true));
+        assert!(merge_entry(Some(json!([1])), &ours).1);
+
+        // Claude зашифровал ключ и добавил свою настройку: наши ключи те же — не изменилось,
+        // чужое осталось, ключ шлюза снова открытый (Claude зашифрует его сам).
+        let mut seen = ours.clone();
+        seen["inferenceGatewayApiKey"] = json!("__sealed__:v1:xxx");
+        seen["autoModeEnabled"] = json!(true);
+        let (merged, changed) = merge_entry(Some(seen), &ours);
+        assert!(!changed);
+        assert_eq!(merged["autoModeEnabled"], true);
+        assert_eq!(
+            merged["inferenceGatewayApiKey"],
+            ours["inferenceGatewayApiKey"]
+        );
+
+        // Изменился порт, флажок браузера или список моделей — изменилось.
+        let mut moved = ours.clone();
+        moved["inferenceGatewayBaseUrl"] = json!("http://127.0.0.1:1");
+        assert!(merge_entry(Some(moved), &ours).1);
+        let mut browser = ours.clone();
+        browser["builtinBrowserEnabled"] = json!(true);
+        assert!(merge_entry(Some(browser), &ours).1);
+        // Записи без ключа шлюза — тоже изменилось.
+        let mut keyless = ours.clone();
+        keyless
+            .as_object_mut()
+            .unwrap()
+            .remove("inferenceGatewayApiKey");
+        assert!(merge_entry(Some(keyless), &ours).1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_held_lockfile_means_claude_is_running_in_the_profile() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let dir = std::env::temp_dir()
+            .join("agents")
+            .join(format!("ctp-lock-{}", uuid::Uuid::new_v4().simple()));
+        fs::create_dir_all(&dir).unwrap();
+        // Нет файла — не запущен.
+        assert!(!profile_in_use(&dir));
+        let lock = dir.join("lockfile");
+        let held = fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .share_mode(0)
+            .open(&lock)
+            .unwrap();
+        assert!(profile_in_use(&dir));
+        // Закрыт (файл остался, но никто его не держит) — не запущен.
+        drop(held);
+        assert!(!profile_in_use(&dir));
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn deployment_mode_keeps_claudes_own_settings_and_does_not_rewrite_a_finished_file() {
