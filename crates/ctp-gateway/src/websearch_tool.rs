@@ -264,8 +264,8 @@ fn message(
     })
 }
 
-/// С `allowed_domains` ищем сразу по этим сайтам: один фильтр после поиска почти всегда
-/// оставил бы пустую выдачу.
+/// Запрос к поисковику. Один разрешённый домен ищем сразу как `site:` (один фильтр после
+/// поиска почти всегда оставил бы пустую выдачу); несколько — запрос как есть.
 fn searched_query(search: &Search) -> String {
     // shortcut: оператор `OR` у DuckDuckGo не проверен (проверка на бота не пустила), поэтому
     // `site:` только для одного домена; несколько — фильтр по хосту после поиска. Расширить,
@@ -409,7 +409,6 @@ mod tests {
             "allowed_domains": ["GitHub.com", "https://docs.rs/axum"], "blocked_domains": ["blog.example.org"]}]);
         let found = detect(&nested(tool, "Perform a web search for the query: x")).unwrap();
         assert_eq!(found.allowed, ["github.com", "docs.rs"]);
-        // Поиск сразу по разрешённым сайтам, а не только фильтр после него.
         // Несколько доменов — запрос как есть (фильтр по хосту после поиска), один — `site:`.
         assert_eq!(searched_query(&found), "x");
         assert_eq!(searched_query(&search(&["docs.rs"], &[])), "q site:docs.rs");
