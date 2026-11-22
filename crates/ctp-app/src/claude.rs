@@ -664,7 +664,10 @@ fn set_mcp_search(path: &Path, on: bool, exe: &Path, port: u16) -> Result<(), St
                 config["mcpServers"] = json!({});
             }
             config["mcpServers"][name] = crate::mcp_search::server_entry(exe, port);
-        } else if let Some(servers) = config["mcpServers"].as_object_mut() {
+        } else if let Some(servers) = config
+            .get_mut("mcpServers")
+            .and_then(serde_json::Value::as_object_mut)
+        {
             servers.remove(name);
         }
     })
@@ -757,11 +760,42 @@ mod tests {
             "17900"
         );
 
+        // Тот же порт ещё раз: файл не переписывается (метка времени и текст те же).
+        let stamp = || fs::metadata(&path).unwrap().modified().unwrap();
+        let (text, at) = (fs::read_to_string(&path).unwrap(), stamp());
+        std::thread::sleep(std::time::Duration::from_millis(30));
+        set_mcp_search(&path, true, exe, 17900).unwrap();
+        assert_eq!((fs::read_to_string(&path).unwrap(), stamp()), (text, at));
+
         set_mcp_search(&path, false, exe, 17900).unwrap();
         let off = read();
         assert!(off["mcpServers"][crate::mcp_search::SERVER_NAME].is_null());
         assert_eq!(off["mcpServers"]["mine"]["command"], "x");
+
+        // Выключено и серверов нет вовсе: ключ `mcpServers` не появляется, даже как null.
+        fs::write(&path, r#"{"deploymentMode":"3p"}"#).unwrap();
+        set_mcp_search(&path, false, exe, 17900).unwrap();
+        assert!(read().get("mcpServers").is_none());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn local_mcp_flag_follows_the_web_search_setting() {
+        let status = status_with(Vec::new());
+        let mut config = Config::default();
+        // Старый конфиг без `webSearch` читается как «включено».
+        let old: Config = serde_json::from_str(r#"{"port":17899}"#).unwrap();
+        assert!(old.web_search);
+        assert_eq!(
+            library_entry(&config, &status, &[])["isLocalDevMcpEnabled"],
+            true
+        );
+        config.web_search = false;
+        assert!(
+            library_entry(&config, &status, &[])
+                .get("isLocalDevMcpEnabled")
+                .is_none()
+        );
     }
 
     #[test]

@@ -41,7 +41,12 @@ pub fn run(port: Option<u16>) -> i32 {
     else {
         return 1;
     };
-    let Ok(client) = reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build() else {
+    // Шлюз на этой же машине: системный прокси (реестр, HTTP_PROXY) loopback не исключает.
+    let Ok(client) = reqwest::Client::builder()
+        .no_proxy()
+        .timeout(REQUEST_TIMEOUT)
+        .build()
+    else {
         return 1;
     };
     let url = format!("http://127.0.0.1:{port}/search");
