@@ -65,7 +65,7 @@ const STUB = String.raw`
   });
   let running = scenario !== "empty";
   const status = () => ({ running, port: 17899, token: cfg().token, models: running ? models() : [], logPath: "C:\\logs\\gateway.log",
-    claude: { version: "app-6.28899.6", items }, update: null });
+    claude: { version: "6.28899.6", items }, update: null });
   const delay = scenario === "slow" ? 1500 : 0;
   const fail = (msg) => Promise.reject(msg);
   const handlers = {

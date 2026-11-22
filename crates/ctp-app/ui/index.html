@@ -194,118 +194,131 @@
 
           <div class="settings-cols">
           <div>
-          <div class="grid two">
-            <label class="field">
-              <span data-i18n="settings.language"></span>
-              <select id="languageInput">
-                <option value="auto" data-i18n="settings.langAuto"></option>
-                <option value="ru">Русский</option>
-                <option value="en">English</option>
-              </select>
-            </label>
-            <label class="field">
-              <span data-i18n="settings.port"></span>
-              <input id="portInput" type="number" min="1" max="65535" placeholder="17899">
-              <small data-i18n="settings.portHint"></small>
-            </label>
-          </div>
-
-          <div class="field">
-            <label for="claudePathInput" data-i18n="settings.claudePath"></label>
-            <div class="key-row">
-              <input id="claudePathInput" spellcheck="false" data-i18n-placeholder="settings.claudePathPlaceholder">
-              <button type="button" id="browseClaudeBtn" class="ghost" data-i18n="settings.browse"></button>
+          <section class="group">
+            <h3 class="group-title" data-i18n="settings.groupDesktop"></h3>
+            <div class="field">
+              <label for="claudePathInput" data-i18n="settings.claudePath"></label>
+              <div class="key-row">
+                <input id="claudePathInput" spellcheck="false" data-i18n-placeholder="settings.claudePathPlaceholder">
+                <button type="button" id="browseClaudeBtn" class="ghost" data-i18n="settings.browse"></button>
+              </div>
+              <small id="detectedClaude"></small>
+              <small data-i18n="settings.profileNote"></small>
             </div>
-            <small id="detectedClaude"></small>
-          </div>
 
-          <div class="field">
-            <label for="codeDirInput" data-i18n="settings.codeDir"></label>
-            <div class="key-row">
-              <input id="codeDirInput" spellcheck="false" data-i18n-placeholder="settings.codeDirPlaceholder">
-              <button type="button" id="browseCodeBtn" class="ghost" data-i18n="settings.browse"></button>
+            <div class="field">
+              <label class="check">
+                <input id="russianInput" type="checkbox">
+                <span data-i18n="settings.russian"></span>
+              </label>
+              <small data-i18n-html="settings.russianHint"></small>
+              <small id="russianFileHint"></small>
             </div>
-            <small data-i18n-html="settings.codeDirHint"></small>
+
+            <div class="field">
+              <label class="check">
+                <input id="builtinBrowserInput" type="checkbox">
+                <span data-i18n="settings.builtinBrowser"></span>
+              </label>
+              <small data-i18n-html="settings.builtinBrowserHint"></small>
+              <small data-i18n-html="settings.webSearchNote"></small>
+            </div>
+
+            <div class="field">
+              <span class="field-label" data-i18n="settings.check"></span>
+              <ul id="claudeCheckList" class="check-list" aria-live="polite"></ul>
+              <small data-i18n="settings.checkHint"></small>
+            </div>
+          </section>
           </div>
 
-          <div class="field">
-            <span class="field-label" data-i18n="settings.roles" data-i18n-title="settings.rolesTitle"></span>
-            <div class="grid row-roles">
+          <div>
+          <section class="group">
+            <h3 class="group-title" data-i18n="settings.groupCode"></h3>
+            <div class="field">
+              <label for="codeDirInput" data-i18n="settings.codeDir"></label>
+              <div class="key-row">
+                <input id="codeDirInput" spellcheck="false" data-i18n-placeholder="settings.codeDirPlaceholder">
+                <button type="button" id="browseCodeBtn" class="ghost" data-i18n="settings.browse"></button>
+              </div>
+              <small data-i18n-html="settings.codeDirHint"></small>
+            </div>
+
+            <div class="field">
+              <span class="field-label" data-i18n="settings.roles" data-i18n-title="settings.rolesTitle"></span>
               <label class="field">
                 <span data-i18n="settings.roleSonnet"></span>
                 <select id="roleSonnet"></select>
               </label>
+              <div class="grid two">
+                <label class="field">
+                  <span data-i18n="settings.roleOpus"></span>
+                  <select id="roleOpus"></select>
+                </label>
+                <label class="field">
+                  <span data-i18n="settings.roleHaiku"></span>
+                  <select id="roleHaiku"></select>
+                </label>
+              </div>
+              <label class="check check-line" id="advisorRow">
+                <input id="advisorInput" type="checkbox">
+                <span data-i18n-html="settings.advisor"></span>
+              </label>
+              <div><button type="button" id="copyEnvBtn" class="ghost small" data-i18n="settings.copyEnv"></button></div>
+            </div>
+          </section>
+          </div>
+          </div>
+
+          <section class="group">
+            <h3 class="group-title" data-i18n="settings.groupApp"></h3>
+            <div class="settings-cols">
+            <div>
+            <div class="grid two">
               <label class="field">
-                <span data-i18n="settings.roleOpus"></span>
-                <select id="roleOpus"></select>
+                <span data-i18n="settings.language"></span>
+                <select id="languageInput">
+                  <option value="auto" data-i18n="settings.langAuto"></option>
+                  <option value="ru">Русский</option>
+                  <option value="en">English</option>
+                </select>
               </label>
               <label class="field">
-                <span data-i18n="settings.roleHaiku"></span>
-                <select id="roleHaiku"></select>
+                <span data-i18n="settings.port"></span>
+                <input id="portInput" type="number" min="1" max="65535" placeholder="17899">
+                <small data-i18n="settings.portHint"></small>
               </label>
             </div>
-            <!-- One line in place of the hint: Settings still fit 1200x800 without scrolling. -->
-            <label class="check check-line" id="advisorRow">
-              <input id="advisorInput" type="checkbox">
-              <span data-i18n-html="settings.advisor"></span>
-            </label>
-          </div>
 
-          <div class="field">
-            <label class="check">
-              <input id="russianInput" type="checkbox">
-              <span data-i18n="settings.russian"></span>
-            </label>
-            <small data-i18n-html="settings.russianHint"></small>
-            <small id="russianFileHint"></small>
-            <small data-i18n="settings.profileNote"></small>
-          </div>
-
-          </div>
-
-          <div>
-          <div class="field">
-            <span class="field-label" data-i18n="settings.check"></span>
-            <ul id="claudeCheckList" class="check-list" aria-live="polite"></ul>
-            <small data-i18n="settings.checkHint"></small>
-          </div>
-
-          <div class="field">
-            <span class="field-label" data-i18n="settings.internet"></span>
-            <small data-i18n-html="settings.webSearchNote"></small>
-            <label class="check check-line">
-              <input id="builtinBrowserInput" type="checkbox">
-              <span data-i18n="settings.builtinBrowser"></span>
-            </label>
-            <small data-i18n-html="settings.builtinBrowserHint"></small>
-          </div>
-
-          <div class="field">
-            <span class="field-label" data-i18n="update.section"></span>
-            <p id="versionText" class="muted small no-margin"></p>
-            <label class="check">
-              <input id="autoUpdateInput" type="checkbox">
-              <span data-i18n="update.auto"></span>
-            </label>
-            <small data-i18n="update.autoHint"></small>
-            <div><button type="button" id="checkUpdateBtn" class="ghost small" data-i18n="update.check"></button></div>
-          </div>
-
-          <div class="field">
-            <label for="tokenInput" data-i18n="settings.token"></label>
-            <div class="key-row">
-              <input id="tokenInput" class="mono" readonly>
-              <button type="button" id="copyTokenBtn" class="ghost" data-i18n="settings.copy"></button>
+            <div class="field">
+              <span class="field-label" data-i18n="update.section"></span>
+              <p id="versionText" class="muted small no-margin"></p>
+              <label class="check">
+                <input id="autoUpdateInput" type="checkbox">
+                <span data-i18n="update.auto"></span>
+              </label>
+              <small data-i18n="update.autoHint"></small>
+              <div><button type="button" id="checkUpdateBtn" class="ghost small" data-i18n="update.check"></button></div>
             </div>
-            <small data-i18n-html="settings.tokenHint"></small>
-          </div>
-          </div>
-          </div>
+            </div>
+
+            <div>
+            <div class="field">
+              <label for="tokenInput" data-i18n="settings.token"></label>
+              <div class="key-row">
+                <input id="tokenInput" class="mono" readonly>
+                <button type="button" id="copyTokenBtn" class="ghost" data-i18n="settings.copy"></button>
+              </div>
+              <small data-i18n-html="settings.tokenHint"></small>
+              <div><button type="button" id="openLogsFolderBtn" class="ghost small" data-i18n="settings.logsFolder"></button></div>
+            </div>
+            </div>
+            </div>
+          </section>
 
           <div class="form-actions settings-actions">
-            <button type="button" id="saveSettingsBtn" class="primary" data-i18n="settings.save"></button>
-            <button type="button" id="copyEnvBtn" class="ghost" data-i18n="settings.copyEnv"></button>
-            <button type="button" id="openLogsFolderBtn" class="ghost" data-i18n="settings.logsFolder"></button>
+            <button type="button" id="saveSettingsBtn" class="primary" disabled data-i18n="settings.save"></button>
+            <span id="settingsApplyHint" class="muted small" data-i18n="settings.applyHint"></span>
           </div>
         </div>
       </section>

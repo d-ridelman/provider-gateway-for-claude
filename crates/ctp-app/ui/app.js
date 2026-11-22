@@ -138,9 +138,17 @@ async function autostart() {
 // current settings. Stays on screen (unlike the toast after "Open Claude").
 function renderClaudeState() {
   const run = state.claudeRun;
-  el.claudeState.classList.toggle("hidden", !run?.running);
-  if (!run?.running) return;
-  el.claudeState.classList.toggle("stale", !!run.stale);
+  // A failed launch stays in the strip (the toast is gone in seconds) until Claude opens.
+  const failed = !run?.running && !!state.launchError;
+  el.claudeState.classList.toggle("hidden", !run?.running && !failed);
+  if (!run?.running && !failed) return;
+  el.claudeState.classList.toggle("error", failed);
+  el.claudeState.classList.toggle("stale", !failed && !!run.stale);
+  if (failed) {
+    el.claudeStateText.textContent = t("claudeState.failed");
+    el.claudeState.title = state.launchError;
+    return;
+  }
   el.claudeStateText.textContent = t(run.stale ? "claudeState.stale" : "claudeState.open");
   el.claudeState.title = t(run.stale ? "claudeState.staleTitle" : "claudeState.openTitle");
 }
@@ -167,6 +175,7 @@ function renderStatus() {
   const running = !!status?.running;
   el.statusDot.classList.toggle("on", running);
   el.statusText.textContent = t(running ? "status.running" : "status.stopped");
+  el.statusText.classList.toggle("bad", !running);
   el.portLabel.textContent = `127.0.0.1:${status?.port ?? state.config?.port ?? "—"}`;
   el.startBtn.textContent = t(running ? "actions.restart" : "actions.start");
   el.stopBtn.disabled = !running;
@@ -314,6 +323,8 @@ function renderForm() {
   el.kindInput.value = provider.kind;
   el.baseInput.value = provider.baseUrl;
   el.modelsInput.value = (provider.models || []).join("\n");
+  // Tall enough for the whole list (4 to 10 lines): no half-cut last line.
+  el.modelsInput.rows = Math.min(10, Math.max(4, (provider.models || []).length + 1));
   labels = { ...(provider.labels ?? {}) };
   el.maxEffortInput.value = provider.maxEffort ?? "";
   el.defaultEffortInput.value = provider.defaultEffort ?? "";
@@ -510,6 +521,12 @@ function renderSettings() {
   el.russianFileHint.classList.toggle("hidden", !!state.config.russianFile);
   el.versionText.textContent = t("update.current", { version: state.config.version });
   el.autoUpdateInput.checked = state.config.autoUpdate !== false;
+  syncSettingsSave();
+}
+
+// "Save settings" is active only when something differs from what is saved.
+function syncSettingsSave() {
+  $("saveSettingsBtn").disabled = !settingsDirty();
 }
 
 // Self-check of the installed Claude: the list in Settings and a badge in the title bar.
@@ -523,6 +540,15 @@ function renderClaudeCheck() {
     const li = document.createElement("li");
     li.className = "muted";
     li.textContent = t("settings.checking");
+    el.claudeCheckList.append(li);
+    return;
+  }
+  // Everything fine: one line (the list is in the tooltip); a problem opens the whole list.
+  if (items.length && items.every((item) => item.ok)) {
+    const li = document.createElement("li");
+    li.className = "ok";
+    li.textContent = `✓ ${t("settings.checkOk", { version: check.version })}`;
+    li.title = items.map((item) => item.text).join("\n");
     el.claudeCheckList.append(li);
     return;
   }
@@ -594,6 +620,8 @@ function bind() {
   $("closeLogsBtn").addEventListener("click", () => setLogs(false));
 
   $("saveSettingsBtn").addEventListener("click", saveSettings);
+  el.settingsPanel.addEventListener("input", syncSettingsSave);
+  el.settingsPanel.addEventListener("change", syncSettingsSave);
   el.roleOpus.addEventListener("change", renderAdvisor);
   el.advisorInput.addEventListener("change", () => {
     advisorTouched = true;
@@ -926,9 +954,11 @@ async function launchClaude() {
     await busy(el.launchBtn, label, async () => {
       try {
         const result = await invoke("launch_claude");
+        state.launchError = null;
         toast(result.message, result.warning ? "error" : "good");
       } catch (exc) {
-        toast(formatError(exc), "error");
+        state.launchError = formatError(exc);
+        toast(state.launchError, "error");
       }
     });
   } finally {
