@@ -89,6 +89,7 @@
             </div>
           </div>
 
+          <div class="card-body">
           <label id="presetField" class="field hidden">
             <span data-i18n="form.preset"></span>
             <select id="presetInput">
@@ -180,6 +181,7 @@
             <summary id="aliasSummary" class="alias-title"></summary>
             <div id="aliasList" class="alias-list"></div>
           </details>
+          </div>
 
           <div class="form-actions">
             <button type="submit" id="saveBtn" class="primary" data-i18n="form.save"></button>
@@ -198,6 +200,7 @@
             <button type="button" id="closeSettings" class="ghost" data-i18n="settings.close"></button>
           </div>
 
+          <div class="card-body">
           <div class="settings-cols">
           <div>
           <section class="group">
@@ -329,9 +332,11 @@
             </div>
             </div>
           </section>
+          </div>
 
           <div class="form-actions settings-actions">
             <button type="button" id="saveSettingsBtn" class="primary" disabled data-i18n="settings.save"></button>
+            <span id="settingsDirty" class="notice dirty small hidden" aria-live="polite" data-i18n="form.unsaved"></span>
             <span id="settingsApplyHint" class="muted small" data-i18n="settings.applyHint"></span>
           </div>
         </div>

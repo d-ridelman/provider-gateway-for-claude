@@ -141,6 +141,12 @@ const SCREENS = {
   hoverlogs: "hover:#logsBtn",
   // An unsaved edit, then the language switch in the title bar: it must ask before it drops the edit.
   dirtylang: "(() => { const n = document.getElementById('nameInput'); n.value = 'Edited name'; n.dispatchEvent(new Event('input', { bubbles: true })); document.getElementById('langBtn').click(); })()",
+  // The scrolled-to-the-end card: head and action bar stay, only the middle moves.
+  // (Settings fills its fields after the click: wait for that, or the edit is overwritten.)
+  settingsbottom: "(async () => { document.getElementById('settingsBtn').click(); await new Promise((r) => setTimeout(r, 400)); const b = document.querySelector('#settingsPanel .card-body'); b.scrollTop = b.scrollHeight; })()",
+  formbottom: "(async () => { const b = document.querySelector('#providerForm .card-body'); b.scrollTop = b.scrollHeight; })()",
+  // An edited port: Save wakes up and the bar says there is something to save.
+  settingsdirty: "(async () => { document.getElementById('settingsBtn').click(); await new Promise((r) => setTimeout(r, 400)); const p = document.getElementById('portInput'); p.value = '18000'; p.dispatchEvent(new Event('input', { bubbles: true })); })()",
   testconn: "[...document.querySelectorAll('button')].find((b) => /Проверить связь|Test connection/.test(b.textContent))?.click()",
 };
 const W = [[1920, 1080], [1280, 800], [900, 700]];
@@ -152,6 +158,10 @@ add("normal", "main", [0, 1, 2], ["light", "dark"]);
 add("empty", "main", [0, 1], ["light", "dark"]);
 add("normal", "settings", [0, 1, 2], ["light", "dark"]);
 add("normal", "settings", [1], ["light", "dark"], "en");
+add("normal", "settingsbottom", [1, 2], ["light", "dark"]);
+add("normal", "settingsdirty", [1], ["light", "dark"]);
+add("normal", "formbottom", [2], ["dark"]);
+add("long", "settingsbottom", [2], ["dark"]);
 add("normal", "new", [1], ["dark"]);
 add("normal", "dialog", [1], ["dark"]);
 add("normal", "dirtylang", [1], ["dark"]);
@@ -225,7 +235,16 @@ const MEASURE = `(() => {
   const panel = document.getElementById('settingsPanel');
   const scrollers = [...document.querySelectorAll('main, .card, .shell, #settingsPanel, .main, .content')].filter((el) => el.scrollHeight > el.clientHeight + 1 && getComputedStyle(el).overflowY !== 'visible')
     .map((el) => (el.id ? '#' + el.id : '.' + String(el.className).split(' ')[0]) + ' ' + el.scrollHeight + '>' + el.clientHeight);
-  return { hscroll: doc.scrollWidth > innerWidth + 1, docH: doc.scrollHeight, winH: innerHeight, clipped: clipped.slice(0, 8), scrollers,
+  // The open card must sit whole inside the content area: its head and its action bar are never cut
+  // (the bar used to be pushed past the bottom edge by a sticky offset).
+  const card = [...document.querySelectorAll('.card')].find((c) => !c.classList.contains('hidden'));
+  let cardClipped = false;
+  if (card) {
+    const host = card.parentElement.getBoundingClientRect();
+    const r = card.getBoundingClientRect(), bar = card.querySelector('.form-actions').getBoundingClientRect();
+    cardClipped = r.top < host.top - 1 || r.bottom > host.bottom + 1 || bar.bottom > r.bottom + 1 || bar.bottom > innerHeight;
+  }
+  return { hscroll: doc.scrollWidth > innerWidth + 1, docH: doc.scrollHeight, winH: innerHeight, clipped: clipped.slice(0, 8), scrollers, cardClipped,
            settingsVisible: !!panel && !panel.classList.contains('hidden') };
 })()`;
 
@@ -364,7 +383,7 @@ for (const shot of shots) {
   const png = await cdp("Page.captureScreenshot", { format: "png" });
   fs.writeFileSync(path.join(outDir, name + ".png"), Buffer.from(png.data, "base64"));
   report.push({ name, ...m });
-  const flags = [hoverNote, m.hscroll && "HSCROLL", m.clipped.length && "CLIPPED " + m.clipped.join(", "), m.scrollers.length && "SCROLL " + m.scrollers.join(", ")].filter(Boolean);
+  const flags = [hoverNote, m.cardClipped && "CARD-CLIPPED", m.hscroll && "HSCROLL", m.clipped.length && "CLIPPED " + m.clipped.join(", "), m.scrollers.length && "SCROLL " + m.scrollers.join(", ")].filter(Boolean);
   console.log(name.padEnd(42), flags.join(" | ") || "ok");
 }
 fs.writeFileSync(path.join(outDir, "report.json"), JSON.stringify(report, null, 1));

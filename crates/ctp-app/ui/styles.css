@@ -300,18 +300,25 @@ code {
 
 .sidebar-foot { padding: 10px 12px 14px; border-top: 1px solid var(--line-soft); }
 
+/* A card is a column: the head and the action bar stay put, only the middle scrolls. */
 .content {
   min-width: 0;
-  overflow-y: auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto; /* the empty state on a very short window */
   padding: 20px;
 }
 .card {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-height: 0;
   max-width: 1080px;
   margin: 0 auto;
   background: var(--card-bg);
   border: 1px solid var(--line);
   border-radius: var(--radius);
-  padding: 20px 22px;
   box-shadow: var(--shadow);
   container-type: inline-size;
 }
@@ -319,8 +326,19 @@ code {
 .card-head-text h2, .card-head-text p { overflow-wrap: anywhere; }
 .card-head {
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
-  margin-bottom: 14px;
+  flex: 0 0 auto;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--line-soft);
 }
+/* The scrollbar sits at the card edge; a stable gutter keeps the text from jumping when it appears. */
+.card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+  padding: 18px 12px 8px 22px;
+}
+.card-body::-webkit-scrollbar-track { background: transparent; }
 .card-head h2 { margin: 0; font-size: var(--fs-xl); font-weight: 650; letter-spacing: 0; }
 .card-head p { margin: 4px 0 0; font-size: var(--fs-sm); }
 .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
@@ -348,7 +366,11 @@ code {
 .group-title { margin: 0 0 14px; font-size: var(--fs-lg); font-weight: 650; color: var(--text); }
 .settings-actions { gap: 14px; flex-wrap: nowrap; }
 .settings-actions .small { line-height: 16px; flex: 1 1 0; min-width: 0; }
-@container (max-width: 700px) {
+.settings-actions .notice { margin-left: 0; }
+/* No native steppers: they are the one control the page style does not reach. */
+input[type="number"] { appearance: textfield; }
+input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+@container (max-width: 744px) {
   .row-ident, .row-endpoint, .row-models, .grid.two { grid-template-columns: 1fr; }
   .settings-cols { grid-template-columns: minmax(0, 1fr); }
 }
@@ -430,17 +452,12 @@ select {
 .alias-row .from { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .alias-row .arrow { color: var(--dim); }
 .alias-row .to { font-family: var(--mono); color: var(--accent-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.form-actions { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; padding-top: 4px; }
 /* Save and the unsaved-changes mark stay in view while a long form scrolls. */
-#providerForm .form-actions, .settings-actions {
-  position: sticky;
-  bottom: -24px;
-  margin: 0 -22px -22px;
-  padding: 12px 22px 16px;
-  background: var(--panel);
+.form-actions {
+  display: flex; align-items: center; gap: 9px; flex-wrap: wrap;
+  flex: 0 0 auto;
+  padding: 12px 22px 14px;
   border-top: 1px solid var(--line-soft);
-  border-radius: 0 0 var(--radius) var(--radius);
-  z-index: 2;
 }
 .key-row button { white-space: nowrap; flex: 0 0 auto; }
 #settingsBtn[aria-current="page"] { background: var(--accent-soft); border-color: rgba(201, 100, 66, .3); color: var(--accent-2); }
@@ -515,6 +532,7 @@ button.wide { width: 100%; }
 button.small { padding: 4px 10px; font-size: var(--fs-xs); line-height: 16px; }
 
 .empty {
+  width: 100%;
   max-width: 520px;
   margin: 8vh auto 0;
   text-align: center;

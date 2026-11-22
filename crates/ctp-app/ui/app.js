@@ -581,7 +581,11 @@ function renderSettings() {
 
 // "Save settings" is active only when something differs from what is saved.
 function syncSettingsSave() {
-  $("saveSettingsBtn").disabled = !settingsDirty();
+  const dirty = settingsDirty();
+  $("saveSettingsBtn").disabled = !dirty;
+  // The bar says why Save is grey, and what is waiting once it is active.
+  $("settingsDirty").classList.toggle("hidden", !dirty);
+  $("settingsApplyHint").classList.toggle("hidden", dirty);
 }
 
 // Self-check of the installed Claude: the list in Settings and a badge in the title bar.
