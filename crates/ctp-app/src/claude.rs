@@ -376,7 +376,12 @@ fn merge_entry(
         if key == API_KEY_FIELD {
             merged.get(key).is_none()
         } else {
-            merged.get(key) != Some(value)
+            // Claude сам убирает из записи ключи со значением по умолчанию
+            // (`builtinBrowserEnabled: false`): нет ключа — то же, что `false`.
+            match merged.get(key) {
+                Some(seen) => seen != value,
+                None => *value != serde_json::Value::Bool(false),
+            }
         }
     });
     if let Some(object) = merged.as_object_mut() {
@@ -871,6 +876,17 @@ mod tests {
         let mut browser = ours.clone();
         browser["builtinBrowserEnabled"] = json!(true);
         assert!(merge_entry(Some(browser), &ours).1);
+        // Claude убрал из записи `builtinBrowserEnabled: false` (умолчание) — не изменилось;
+        // а вот включённый флажок без ключа в записи — изменилось.
+        let mut trimmed = ours.clone();
+        trimmed
+            .as_object_mut()
+            .unwrap()
+            .remove("builtinBrowserEnabled");
+        assert!(!merge_entry(Some(trimmed.clone()), &ours).1);
+        let mut on = ours.clone();
+        on["builtinBrowserEnabled"] = json!(true);
+        assert!(merge_entry(Some(trimmed), &on).1);
         // Записи без ключа шлюза — тоже изменилось.
         let mut keyless = ours.clone();
         keyless
