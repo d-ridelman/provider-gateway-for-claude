@@ -40,10 +40,15 @@ if ($Installer) {
     try {
         # The identifier is compiled in: without it the portable exe would be the release
         # (same settings folder, same Claude profile) under another file name.
+        $savedConfig = $env:TAURI_CONFIG
         $env:TAURI_CONFIG = Get-Content (Join-Path $root 'crates\ctp-app\tauri.dev.conf.json') -Raw
         & cargo build --release -p ctp-app
         if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
-    } finally { Pop-Location }
+    } finally {
+        # Not left in the session: a later release build here would come out as dev.
+        $env:TAURI_CONFIG = $savedConfig
+        Pop-Location
+    }
     $target = Join-Path $dist 'Provider Gateway for Claude (dev).exe'
     Copy-Item (Join-Path $root 'target\release\ctp-app.exe') $target -Force
     Write-Host "Portable DEV: $target ($([math]::Round((Get-Item $target).Length / 1MB, 1)) MB)"

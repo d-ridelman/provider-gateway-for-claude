@@ -152,6 +152,9 @@ async fn bind(
                 let mut free = None;
                 if last != 0 {
                     for _ in 0..20 {
+                        if shared.epoch.load(Ordering::SeqCst) != epoch {
+                            return Ok(None);
+                        }
                         if let Ok(listener) =
                             tokio::net::TcpListener::bind(("127.0.0.1", last)).await
                         {
