@@ -6,6 +6,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Added
 
+- **Free web search for Claude Desktop's built-in `web_search` (dev branch `dev/search`).** The gateway answers Desktop's `custom` web-search contract (`POST {"q"}`, `{results: [{title, url, snippet}]}`) from ordinary search pages, with no API keys: Brave first, DuckDuckGo HTML and lite as fallbacks. Answers are cached for 10 minutes; a source that shows a bot check rests for 5 minutes. When a search engine asks for a human check, the page is opened in the app's own WebView2 as a real visit, so the check is passed (the window shows itself after 8 s if it needs a tick). The browser pass has one 60 s deadline per question. Details and measurements: `docs/websearch-work.md`.
+- **Built-in browser switch in Settings** ("Claude Desktop built-in browser"): third-party Claude turns its built-in browser off by default; the app now writes `builtinBrowserEnabled` into the 3p configuration entry, so it can be switched on from the gateway. Default off.
+- **The full list of 3p settings** (222 keys in 8 categories, from the decompiled app) is in `docs/claude-3p-settings.md`, with the ones worth surfacing next (auto mode, browser domains, model pricing, default effort).
+
 - **Advisor switch in Settings** ("Strong is the advisor (/advisor)"): the app writes `advisorModel` to Claude Code's shared settings (`~/.claude/settings.json`, or `CLAUDE_CONFIG_DIR`), so `/advisor` is no longer needed. One line changes, the rest of the file stays byte for byte; the first original is kept as `settings.json.bak`. Ticked by default until you decide, and the first save writes it once; after that the app never turns it on by itself. A model already chosen with `/advisor` is kept; an unreadable settings file is left alone, and the other settings are saved anyway. The tooltip says what it affects (the regular Claude Code too).
 
 ### Fixed
