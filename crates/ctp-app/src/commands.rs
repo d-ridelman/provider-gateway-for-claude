@@ -176,13 +176,8 @@ pub fn save_settings(
         .code_dir
         .map(|dir| dir.trim().to_string())
         .filter(|dir| !dir.is_empty());
-    next.language = input
-        .language
-        .map(|lang| lang.trim().to_string())
-        .filter(|lang| lang == "ru" || lang == "en");
-    next.theme = input
-        .theme
-        .filter(|theme| theme == "light" || theme == "dark");
+    next.language = pick(input.language, LANGUAGES);
+    next.theme = pick(input.theme, THEMES);
     next.auto_update = input.auto_update;
     // Роль без провайдера или модели — не выбрана (пустой выбор в окне).
     let keep = |role: Option<crate::model::ModelRef>| {
@@ -211,6 +206,16 @@ pub fn save_settings(
     Ok(ui)
 }
 
+const LANGUAGES: &[&str] = &["ru", "en"];
+const THEMES: &[&str] = &["light", "dark"];
+
+/// Выбор из допустимых значений; «auto», пусто и чужое — `None` («как в Windows»).
+fn pick(value: Option<String>, allowed: &[&str]) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| allowed.contains(&value.as_str()))
+}
+
 /// Быстрые переключатели в заголовке окна: тема и язык, без остальных настроек.
 /// `theme`: `light` / `dark` / `auto`; `language`: `ru` / `en` / `auto`; `None` — не менять.
 #[tauri::command]
@@ -222,11 +227,11 @@ pub fn set_ui(
 ) -> Result<UiConfig, String> {
     let mut config = shared.config.lock().unwrap();
     let mut next = config.clone();
-    if let Some(theme) = theme {
-        next.theme = Some(theme).filter(|theme| theme == "light" || theme == "dark");
+    if theme.is_some() {
+        next.theme = pick(theme, THEMES);
     }
-    if let Some(language) = language {
-        next.language = Some(language).filter(|lang| lang == "ru" || lang == "en");
+    if language.is_some() {
+        next.language = pick(language, LANGUAGES);
     }
     store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
     *config = next;
@@ -425,4 +430,24 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn app_exit(app: tauri::AppHandle) {
     app.exit(0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_and_language_choices_keep_only_known_values() {
+        let pick = |value: &str, allowed| pick(Some(value.to_string()), allowed);
+        assert_eq!(pick("dark", THEMES).as_deref(), Some("dark"));
+        assert_eq!(pick(" light ", THEMES).as_deref(), Some("light"));
+        // «auto», пусто и чужое — как в Windows.
+        assert_eq!(pick("auto", THEMES), None);
+        assert_eq!(pick("", LANGUAGES), None);
+        assert_eq!(pick("neon", THEMES), None);
+        // Язык и тема не путаются между собой.
+        assert_eq!(pick("ru", LANGUAGES).as_deref(), Some("ru"));
+        assert_eq!(pick("ru", THEMES), None);
+        assert_eq!(super::pick(None, THEMES), None);
+    }
 }

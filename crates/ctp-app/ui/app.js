@@ -134,11 +134,22 @@ function renderUiSwitches() {
 }
 
 async function setUi(patch) {
+  // A language switch re-labels and re-renders the whole window: unsaved edits would be lost,
+  // so it asks first, like leaving the form does. The theme switch changes colours only.
+  if (patch.language && !(await leaveForm())) return;
   try {
-    state.config = await invoke("set_ui", patch);
-    if (state.config.language !== LANG) applyLanguage(state.config.language);
-    applyTheme(state.config.themePref);
-    render();
+    const config = await invoke("set_ui", patch);
+    if (patch.language) {
+      state.config = config;
+      applyLanguage(config.language);
+      applyTheme(config.themePref);
+      render();
+    } else {
+      state.config.themePref = config.themePref;
+      el.themeInput.value = config.themePref;
+      applyTheme(config.themePref);
+      syncSettingsSave();
+    }
   } catch (exc) {
     toast(formatError(exc), "error");
   }

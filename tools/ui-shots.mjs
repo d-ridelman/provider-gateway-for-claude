@@ -124,6 +124,8 @@ const SCREENS = {
   settings: "document.getElementById('settingsBtn').click()",
   dialog: "document.getElementById('deleteBtn').click()",
   launch: "document.getElementById('launchBtn').click()",
+  // An unsaved edit, then the language switch in the title bar: it must ask before it drops the edit.
+  dirtylang: "(() => { const n = document.getElementById('nameInput'); n.value = 'Edited name'; n.dispatchEvent(new Event('input', { bubbles: true })); document.getElementById('langBtn').click(); })()",
   testconn: "[...document.querySelectorAll('button')].find((b) => /Проверить связь|Test connection/.test(b.textContent))?.click()",
 };
 const W = [[1920, 1080], [1280, 800], [900, 700]];
@@ -137,6 +139,7 @@ add("normal", "settings", [0, 1, 2], ["light", "dark"]);
 add("normal", "settings", [1], ["light", "dark"], "en");
 add("normal", "new", [1], ["dark"]);
 add("normal", "dialog", [1], ["dark"]);
+add("normal", "dirtylang", [1], ["dark"]);
 add("long", "main", [1], ["light", "dark"]);
 add("long", "settings", [1], ["dark"]);
 add("error", "launch", [1], ["dark"]);
@@ -269,8 +272,10 @@ if (args.includes("--detect")) {
   let failed = 0;
   for (const page of pages) {
     const url = `${base}/?s=${page}`;
+    // cmd.exe needs the whole command line in quotes, or it cuts the URL at "&" and runs the rest
+    // (`view=settings`) as a command of its own.
     const out = await new Promise((resolve) => {
-      const p = spawn(bin, ["detect", "--no-advisory", url], { shell: true });
+      const p = spawn("cmd.exe", ["/d", "/s", "/c", `""${bin}" detect --no-advisory "${url}""`], { windowsVerbatimArguments: true });
       let text = "";
       p.stdout.on("data", (d) => (text += d));
       p.stderr.on("data", (d) => (text += d));
@@ -278,8 +283,11 @@ if (args.includes("--detect")) {
     });
     const found = /(\d+) anti-patterns? found/.exec(out);
     const count = found ? Number(found[1]) : 0;
-    failed += count;
-    console.log(page.padEnd(34), count ? `${count} finding(s)\n${out.trim()}` : "clean");
+    // A clean page prints nothing. Anything else without a findings count is a broken run, not "clean".
+    const clean = !out.trim() || /\b0 anti-patterns? found/.test(out);
+    if (count) failed += count;
+    else if (!clean) failed += 1;
+    console.log(page.padEnd(34), count ? `${count} finding(s)\n${out.trim()}` : clean ? "clean" : `UNEXPECTED OUTPUT\n${out.trim()}`);
   }
   server.close();
   fs.rmSync(profile, { recursive: true, force: true });
