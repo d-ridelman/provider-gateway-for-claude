@@ -37,7 +37,9 @@ pub struct Search {
     blocked: Vec<String>,
 }
 
-/// Чистая форма: в `tools` ровно один инструмент `web_search_*`. Всё остальное — не наше.
+/// Чистая форма: в `tools` ровно один инструмент `web_search_*`, а последнее сообщение
+/// пользователя начинается с просьбы Claude «Perform a web search for the query: …».
+/// Всё остальное — не наше.
 pub fn detect(body: &Value) -> Option<Search> {
     let [tool] = body.get("tools")?.as_array()?.as_slice() else {
         return None;
@@ -265,16 +267,13 @@ fn message(
 /// С `allowed_domains` ищем сразу по этим сайтам: один фильтр после поиска почти всегда
 /// оставил бы пустую выдачу.
 fn searched_query(search: &Search) -> String {
-    if search.allowed.is_empty() {
-        return search.query.clone();
+    // shortcut: оператор `OR` у DuckDuckGo не проверен (проверка на бота не пустила), поэтому
+    // `site:` только для одного домена; несколько — фильтр по хосту после поиска. Расширить,
+    // когда будет проверено, как оба источника разбирают `site:a OR site:b`.
+    match search.allowed.as_slice() {
+        [domain] => format!("{} site:{domain}", search.query),
+        _ => search.query.clone(),
     }
-    let sites: Vec<String> = search
-        .allowed
-        .iter()
-        .take(5)
-        .map(|domain| format!("site:{domain}"))
-        .collect();
-    format!("{} {}", search.query, sites.join(" OR "))
 }
 
 async fn run(state: &AppState, search: &Search, language: &str) -> Result<Vec<Value>, String> {
@@ -411,7 +410,9 @@ mod tests {
         let found = detect(&nested(tool, "Perform a web search for the query: x")).unwrap();
         assert_eq!(found.allowed, ["github.com", "docs.rs"]);
         // Поиск сразу по разрешённым сайтам, а не только фильтр после него.
-        assert_eq!(searched_query(&found), "x site:github.com OR site:docs.rs");
+        // Несколько доменов — запрос как есть (фильтр по хосту после поиска), один — `site:`.
+        assert_eq!(searched_query(&found), "x");
+        assert_eq!(searched_query(&search(&["docs.rs"], &[])), "q site:docs.rs");
         assert_eq!(searched_query(&search(&[], &[])), "q");
         let kept: Vec<String> = filter(rows(), &found)
             .iter()

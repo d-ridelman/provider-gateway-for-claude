@@ -649,7 +649,8 @@ fn set_deployment_mode(path: &Path) -> Result<(), String> {
             .get_mut("mcpServers")
             .and_then(serde_json::Value::as_object_mut)
         {
-            servers.remove("PGC Web search");
+            // shift_remove: порядок серверов человека в файле не меняется.
+            servers.shift_remove("PGC Web search");
         }
     })
 }
@@ -718,7 +719,7 @@ mod tests {
         // Старая запись MCP-поиска уходит, чужой MCP-сервер человека остаётся.
         fs::write(
             &path,
-            r#"{"preferences":{"a":1},"mcpServers":{"PGC Web search":{"command":"x"},"mine":{"command":"y"}}}"#,
+            r#"{"preferences":{"a":1},"mcpServers":{"first":{"command":"f"},"PGC Web search":{"command":"x"},"mine":{"command":"y"},"last":{"command":"l"}}}"#,
         )
         .unwrap();
         set_deployment_mode(&path).unwrap();
@@ -729,6 +730,13 @@ mod tests {
         assert_eq!(read()["preferences"]["a"], 1);
         assert!(read()["mcpServers"]["PGC Web search"].is_null());
         assert_eq!(read()["mcpServers"]["mine"]["command"], "y");
+        let order: Vec<String> = read()["mcpServers"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect();
+        assert_eq!(order, ["first", "mine", "last"]);
         // Уже 3p: файл не переписывается (метка времени и текст те же).
         let stamp = || fs::metadata(&path).unwrap().modified().unwrap();
         let (text, at) = (fs::read_to_string(&path).unwrap(), stamp());
