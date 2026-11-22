@@ -639,9 +639,19 @@ fn inference_models(
         .collect()
 }
 
-/// `deploymentMode: "3p"` в `claude_desktop_config.json`.
+/// `deploymentMode: "3p"` в `claude_desktop_config.json`. Заодно убирается запись MCP-поиска
+/// `PGC Web search`, которую писали ранние dev-сборки: её exe больше не MCP-сервер, и Claude
+/// при каждом старте поднимал бы окно шлюза. Чужие серверы человека остаются.
 fn set_deployment_mode(path: &Path) -> Result<(), String> {
-    update_desktop_config(path, |config| config["deploymentMode"] = json!("3p"))
+    update_desktop_config(path, |config| {
+        config["deploymentMode"] = json!("3p");
+        if let Some(servers) = config
+            .get_mut("mcpServers")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            servers.remove("PGC Web search");
+        }
+    })
 }
 
 /// Правка `claude_desktop_config.json`. Claude хранит в этом же файле свои настройки
@@ -705,13 +715,20 @@ mod tests {
             .join(format!("ctp-dm-{}", uuid::Uuid::new_v4().simple()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("claude_desktop_config.json");
-        fs::write(&path, r#"{"preferences":{"a":1}}"#).unwrap();
+        // Старая запись MCP-поиска уходит, чужой MCP-сервер человека остаётся.
+        fs::write(
+            &path,
+            r#"{"preferences":{"a":1},"mcpServers":{"PGC Web search":{"command":"x"},"mine":{"command":"y"}}}"#,
+        )
+        .unwrap();
         set_deployment_mode(&path).unwrap();
         let read = || {
             serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap()
         };
         assert_eq!(read()["deploymentMode"], "3p");
         assert_eq!(read()["preferences"]["a"], 1);
+        assert!(read()["mcpServers"]["PGC Web search"].is_null());
+        assert_eq!(read()["mcpServers"]["mine"]["command"], "y");
         // Уже 3p: файл не переписывается (метка времени и текст те же).
         let stamp = || fs::metadata(&path).unwrap().modified().unwrap();
         let (text, at) = (fs::read_to_string(&path).unwrap(), stamp());

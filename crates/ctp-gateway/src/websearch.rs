@@ -1,9 +1,6 @@
-//! Бесплатный веб-поиск для встроенного инструмента Desktop `web_search`.
-//!
-//! Desktop объявляет встроенный сервер как `managedMcpServers: [{name, server: "websearch",
-//! provider: "custom", customUrl}]`; на каждый инструмент он делает `POST {"q": "…"}` и
-//! показывает модели `results: [{title, url, snippet}]`. Здесь этот ответ и собирается:
-//! источники — обычные страницы поиска (DuckDuckGo HTML, запасной — Brave SERP), без ключей.
+//! Бесплатный веб-поиск шлюза: выдача из обычных страниц поиска (Brave, DuckDuckGo HTML и
+//! lite), без ключей. Её используют `POST /search` (`{"q"}` → `{results: [{title, url,
+//! snippet}]}`) и серверный инструмент `web_search` (см. `websearch_tool`).
 //!
 //! Бесплатность — на своей стороне: чужой лимит запросов не ускорить, поэтому ответ
 //! кэшируется, а выдача ограничена.
@@ -106,7 +103,7 @@ pub(crate) async fn lookup(
 }
 
 /// Маршрут без ключа: страница в браузере человека не должна гонять через него поиск.
-/// Браузер всегда добавляет `Origin` или `Sec-Fetch-Site`, MCP-сервер и curl — нет.
+/// Браузер всегда добавляет `Origin` или `Sec-Fetch-Site`, curl и локальные клиенты — нет.
 fn from_web_page(headers: &HeaderMap) -> bool {
     headers.contains_key("origin") || headers.contains_key("sec-fetch-site")
 }

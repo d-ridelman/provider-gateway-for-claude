@@ -45,13 +45,11 @@ pub fn detect(body: &Value) -> Option<Search> {
     if !tool.get("type")?.as_str()?.starts_with("web_search_") {
         return None;
     }
+    // Только просьба Claude с её привычным началом: обычный разговор, где у клиента один
+    // `web_search`, должен дойти до модели. Без хвостового пробела: после `trim` пустая
+    // просьба тоже теряет префикс.
     let text = last_user_text(body)?;
-    let query = text.trim();
-    // Без хвостового пробела: после `trim` пустая просьба тоже теряет префикс.
-    let query = query
-        .strip_prefix(PREFIX.trim_end())
-        .unwrap_or(query)
-        .trim();
+    let query = text.trim().strip_prefix(PREFIX.trim_end())?.trim();
     if query.is_empty() {
         return None;
     }
@@ -264,8 +262,23 @@ fn message(
     })
 }
 
+/// С `allowed_domains` ищем сразу по этим сайтам: один фильтр после поиска почти всегда
+/// оставил бы пустую выдачу.
+fn searched_query(search: &Search) -> String {
+    if search.allowed.is_empty() {
+        return search.query.clone();
+    }
+    let sites: Vec<String> = search
+        .allowed
+        .iter()
+        .take(5)
+        .map(|domain| format!("site:{domain}"))
+        .collect();
+    format!("{} {}", search.query, sites.join(" OR "))
+}
+
 async fn run(state: &AppState, search: &Search, language: &str) -> Result<Vec<Value>, String> {
-    let outcome = websearch::lookup(state, &search.query, language)
+    let outcome = websearch::lookup(state, &searched_query(search), language)
         .await
         .map(|rows| filter(rows, search));
     match &outcome {
@@ -358,12 +371,17 @@ mod tests {
         ))
         .unwrap();
         assert_eq!(found.query, "rust axum");
-        // Без привычного начала — весь текст запросом.
+        // Обычный разговор с одним `web_search` и без привычного начала — не наше.
+        assert!(detect(&nested(tool.clone(), "  just words ")).is_none());
+        // Просьба без пробела после двоеточия всё же читается.
         assert_eq!(
-            detect(&nested(tool.clone(), "  just words "))
-                .unwrap()
-                .query,
-            "just words"
+            detect(&nested(
+                tool.clone(),
+                "Perform a web search for the query:tokio"
+            ))
+            .unwrap()
+            .query,
+            "tokio"
         );
         // Пустой запрос, нет инструмента, чужой инструмент, смешанный набор — не наше.
         assert!(
@@ -390,8 +408,11 @@ mod tests {
     fn domain_filters_follow_the_tool_definition() {
         let tool = json!([{"type": "web_search_20250305", "name": "web_search",
             "allowed_domains": ["GitHub.com", "https://docs.rs/axum"], "blocked_domains": ["blog.example.org"]}]);
-        let found = detect(&nested(tool, "x")).unwrap();
+        let found = detect(&nested(tool, "Perform a web search for the query: x")).unwrap();
         assert_eq!(found.allowed, ["github.com", "docs.rs"]);
+        // Поиск сразу по разрешённым сайтам, а не только фильтр после него.
+        assert_eq!(searched_query(&found), "x site:github.com OR site:docs.rs");
+        assert_eq!(searched_query(&search(&[], &[])), "q");
         let kept: Vec<String> = filter(rows(), &found)
             .iter()
             .map(|r| r["title"].as_str().unwrap().to_string())
