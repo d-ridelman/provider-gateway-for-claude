@@ -28,7 +28,9 @@ const STUB = String.raw`
 (() => {
   const q = new URLSearchParams(location.search);
   const scenario = q.get("s") || "normal";
-  const lang = q.get("lang") || "ru";
+  let lang = q.get("lang") || "ru";
+  // forcedlight / forceddark: the user chose a theme in the app, whatever Windows says.
+  let themePref = scenario === "forcedlight" ? "light" : scenario === "forceddark" ? "dark" : "auto";
   const long = scenario === "long";
   const alias = (p, m, i) => ({ model: m, alias: "claude-" + p + "-" + (1000 + i), supports1m: m.includes("[1m]"), label: m.replace("[1m]", "") });
   const mk = (id, name, base, models, key = true) => ({
@@ -59,7 +61,7 @@ const STUB = String.raw`
   const cfg = () => ({
     port: 17899, token: "ctp-0000000000000000000000000000000000000", claudePath: null, detectedClaude: home, providers,
     russianUi: false, builtinBrowser: false, russianFile: true, configDir: "C:\\Users\\user\\AppData\\Roaming\\app.provider-gateway-for-claude",
-    codeDir: null, language: lang, languagePref: "auto", autoUpdate: true, version: "0.2.2",
+    codeDir: null, language: lang, languagePref: "auto", themePref, autoUpdate: true, version: "0.2.2",
     modelRoles: providers.length ? { sonnet: { provider: providers[0].id, model: providers[0].models[0] }, opus: null, haiku: null } : { sonnet: null, opus: null, haiku: null },
     advisorModel: "opus", advisorDecided: true, claudeSettings: "C:\\Users\\user\\.claude\\settings.json", claudeSettingsError: null, advisorNotice: null,
   });
@@ -70,6 +72,7 @@ const STUB = String.raw`
   const fail = (msg) => Promise.reject(msg);
   const handlers = {
     get_config: () => cfg(), status: () => status(),
+    set_ui: (a) => { if (a?.theme) themePref = a.theme; if (a?.language) lang = a.language; return cfg(); },
     claude_state: () => ({ running: scenario === "open" || scenario === "stale", stale: scenario === "stale" }),
     save_provider: () => scenario === "error" ? fail("HTTP 500: Internal Server Error (stubbed)") : cfg(),
     delete_provider: () => cfg(), fetch_models: () => ({ ids: ["m1", "m2"], catalog: {} }),
@@ -87,6 +90,8 @@ const STUB = String.raw`
     return h(a);
   };
   window.__TAURI__ = { core: { invoke } };
+  // ?view=settings opens Settings by itself (for scanners that only load the URL).
+  if (q.get("view") === "settings") window.addEventListener("load", () => setTimeout(() => document.getElementById("settingsBtn")?.click(), 500));
 })();
 `;
 
@@ -139,6 +144,9 @@ add("error", "testconn", [1], ["light"]);
 add("slow", "main", [1], ["light"], "ru", { settleMs: 400 });
 add("warn", "main", [1], ["light"]);
 add("open", "main", [1], ["dark"]);
+// The user's own theme wins over Windows: dark window on a light system and the other way round.
+add("forceddark", "main", [1], ["light"]);
+add("forcedlight", "settings", [1], ["dark"]);
 add("stale", "main", [0, 1, 2], ["light", "dark"]);
 
 // ---- Chrome over the DevTools protocol -----------------------------------------------------
@@ -195,8 +203,66 @@ const MEASURE = `(() => {
            settingsVisible: !!panel && !panel.classList.contains('hidden') };
 })()`;
 
+// --audit: how consistent is the styling? Every visible button grouped by its variant classes with
+// the distinct height / radius / font / padding found, plus the inventory of radii and font sizes.
+const AUDIT = `(() => {
+  const vis = (el) => { const r = el.getBoundingClientRect(); const s = getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && s.visibility !== 'hidden' && s.display !== 'none'; };
+  const buttons = {};
+  for (const el of document.querySelectorAll('button')) {
+    if (!vis(el)) continue;
+    const s = getComputedStyle(el);
+    const kind = [...el.classList].filter((c) => !['hidden','show'].includes(c)).sort().join('.') || '(plain)';
+    const v = [Math.round(el.getBoundingClientRect().height), s.borderRadius, s.fontSize, s.fontWeight, s.padding].join(' | ');
+    (buttons[kind] ??= {})[v] = (buttons[kind][v] ?? 0) + 1;
+    const h = Math.round(el.getBoundingClientRect().height);
+    if (!['win-btn','close.win-btn','icon-btn','provider-item','active.provider-item'].includes(kind) && h !== 34 && h !== 26)
+      (window.__odd ??= []).push(kind + ' ' + h + ' "' + el.textContent.trim().slice(0, 30) + '"');
+  }
+  const radii = {}, sizes = {};
+  for (const el of document.querySelectorAll('body *')) {
+    if (!vis(el)) continue;
+    const s = getComputedStyle(el);
+    if (s.borderRadius !== '0px') radii[s.borderRadius] = (radii[s.borderRadius] ?? 0) + 1;
+    if (el.childNodes.length && [...el.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim()))
+      sizes[s.fontSize] = (sizes[s.fontSize] ?? 0) + 1;
+  }
+  return { buttons, radii, sizes, odd: window.__odd ?? [] };
+})()`;
+
 fs.mkdirSync(outDir, { recursive: true });
 await cdp("Page.enable");
+if (args.includes("--audit")) {
+  const merged = { buttons: {}, radii: {}, sizes: {} };
+  const screens = [["normal", "main"], ["normal", "settings"], ["normal", "new"], ["normal", "dialog"], ["empty", "main"], ["stale", "main"]];
+  await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
+  for (const [scenario, screen] of screens) {
+    await cdp("Page.navigate", { url: `${base}/?s=${scenario}&lang=ru` });
+    for (let i = 0; i < 40 && (await evaluate("document.body?.dataset?.ready")) !== "1"; i++) await sleep(100);
+    await sleep(300);
+    if (SCREENS[screen]) { await evaluate(SCREENS[screen]); await sleep(300); }
+    const a = await evaluate(AUDIT);
+    for (const o of a.odd) console.log(`  odd height [${scenario}/${screen}]: ${o}`);
+    for (const [kind, variants] of Object.entries(a.buttons)) for (const [v, n] of Object.entries(variants)) ((merged.buttons[kind] ??= {})[v] = (merged.buttons[kind][v] ?? 0) + n);
+    for (const key of ["radii", "sizes"]) for (const [v, n] of Object.entries(a[key])) merged[key][v] = (merged[key][v] ?? 0) + n;
+  }
+  console.log("BUTTONS (height | radius | font | weight | padding): count");
+  for (const [kind, variants] of Object.entries(merged.buttons)) {
+    console.log(`  ${kind}`);
+    for (const [v, n] of Object.entries(variants)) console.log(`      ${v}: ${n}`);
+  }
+  console.log("RADII:", JSON.stringify(merged.radii));
+  console.log("FONT SIZES:", JSON.stringify(merged.sizes));
+  chrome.kill(); server.close(); await sleep(500);
+  fs.rmSync(profile, { recursive: true, force: true });
+  process.exit(0);
+}
+// --serve: keep the stub server up so that `impeccable detect http://127.0.0.1:<port>/?s=normal` can scan it.
+if (args.includes("--serve")) {
+  console.log(`serving ${base}/?s=normal  (also ?s=empty, ?view=settings); Ctrl+C to stop`);
+  chrome.kill();
+  await new Promise(() => {});
+}
 const report = [];
 for (const shot of shots) {
   const name = `${shot.scenario}-${shot.screen}-${shot.size[0]}-${shot.scheme}-${shot.lang}`;

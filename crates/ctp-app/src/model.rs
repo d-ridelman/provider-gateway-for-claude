@@ -27,6 +27,9 @@ pub struct Config {
     /// Язык интерфейса: `ru`, `en` или `auto`/нет — язык Windows.
     #[serde(default)]
     pub language: Option<String>,
+    /// Тема окна: `light` или `dark`; нет — как в Windows.
+    #[serde(default)]
+    pub theme: Option<String>,
     /// Проверять обновления на GitHub при старте и раз в сутки.
     #[serde(default = "default_true")]
     pub auto_update: bool,
@@ -75,6 +78,7 @@ impl Default for Config {
             builtin_browser: false,
             code_dir: None,
             language: None,
+            theme: None,
             auto_update: true,
             model_roles: ModelRoles::default(),
             advisor_decided: false,
@@ -132,6 +136,8 @@ pub struct UiConfig {
     pub language: String,
     /// Выбор пользователя: `auto`, `ru` или `en`.
     pub language_pref: String,
+    /// Выбор темы: `auto`, `light` или `dark`.
+    pub theme_pref: String,
     pub auto_update: bool,
     /// Версия этой сборки (`Cargo.toml`).
     pub version: String,
@@ -255,6 +261,8 @@ pub struct SettingsInput {
     pub code_dir: Option<String>,
     #[serde(default)]
     pub language: Option<String>,
+    #[serde(default)]
+    pub theme: Option<String>,
     #[serde(default = "default_true")]
     pub auto_update: bool,
     #[serde(default)]

@@ -297,6 +297,7 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
             .language
             .clone()
             .unwrap_or_else(|| "auto".to_string()),
+        theme_pref: config.theme.clone().unwrap_or_else(|| "auto".to_string()),
         auto_update: config.auto_update,
         version: env!("CARGO_PKG_VERSION").to_string(),
         russian_file: dir.join(crate::ruui::TRANSLATION_FILE).is_file(),
@@ -594,6 +595,16 @@ mod tests {
         delete_key(&id);
         assert_eq!(read.as_deref(), Some("sk-test-persist"));
         assert_eq!(read_key(&id), Ok(None));
+    }
+
+    #[test]
+    fn theme_is_auto_until_it_is_chosen() {
+        let dir = temp_dir("theme");
+        let old: Config = serde_json::from_str(r#"{"port":17899}"#).unwrap();
+        assert_eq!(ui_config(&old, &dir).theme_pref, "auto");
+        let dark: Config = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
+        assert_eq!(ui_config(&dark, &dir).theme_pref, "dark");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

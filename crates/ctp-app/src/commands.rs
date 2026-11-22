@@ -180,6 +180,9 @@ pub fn save_settings(
         .language
         .map(|lang| lang.trim().to_string())
         .filter(|lang| lang == "ru" || lang == "en");
+    next.theme = input
+        .theme
+        .filter(|theme| theme == "light" || theme == "dark");
     next.auto_update = input.auto_update;
     // Роль без провайдера или модели — не выбрана (пустой выбор в окне).
     let keep = |role: Option<crate::model::ModelRef>| {
@@ -206,6 +209,30 @@ pub fn save_settings(
         runtime::stop(&shared);
     }
     Ok(ui)
+}
+
+/// Быстрые переключатели в заголовке окна: тема и язык, без остальных настроек.
+/// `theme`: `light` / `dark` / `auto`; `language`: `ru` / `en` / `auto`; `None` — не менять.
+#[tauri::command]
+pub fn set_ui(
+    app: tauri::AppHandle,
+    shared: State<'_, AppShared>,
+    theme: Option<String>,
+    language: Option<String>,
+) -> Result<UiConfig, String> {
+    let mut config = shared.config.lock().unwrap();
+    let mut next = config.clone();
+    if let Some(theme) = theme {
+        next.theme = Some(theme).filter(|theme| theme == "light" || theme == "dark");
+    }
+    if let Some(language) = language {
+        next.language = Some(language).filter(|lang| lang == "ru" || lang == "en");
+    }
+    store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
+    *config = next;
+    crate::i18n::apply(config.language.as_deref());
+    crate::tray::relabel(&app);
+    Ok(store::ui_config(&config, &shared.config_dir))
 }
 
 /// Галочка советника → общий файл настроек Claude Code. Решение запоминается, только

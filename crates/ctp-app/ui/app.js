@@ -48,7 +48,7 @@ const el = Object.fromEntries(
     "keyInput", "keyHint", "clearKeyBtn", "modelsInput", "maxEffortInput", "defaultEffortInput",
     "aliasBox", "aliasList", "deleteBtn", "formNotice", "settingsPanel", "portInput", "languageInput",
     "claudePathInput", "codeDirInput", "launchCodeBtn", "detectedClaude", "tokenInput", "russianInput",
-    "builtinBrowserInput", "claudeState", "claudeStateText",
+    "builtinBrowserInput", "claudeState", "claudeStateText", "langBtn", "themeBtn", "themeInput",
     "russianFileHint", "claudeWarn", "claudeCheckList", "startBtn", "stopBtn", "launchBtn", "modelCount",
     "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
@@ -101,6 +101,47 @@ function applyLanguage(lang) {
   setLanguage(lang);
   applyI18n();
   fillPresets();
+  renderUiSwitches();
+}
+
+// Theme: "auto" follows Windows, "light" / "dark" are the user's own choice. The page is
+// painted by theme.js before the first frame; this keeps it in step with the saved setting.
+const lightQuery = matchMedia("(prefers-color-scheme: light)");
+function effectiveTheme(pref) {
+  return pref === "light" || (pref !== "dark" && lightQuery.matches) ? "light" : "dark";
+}
+function applyTheme(pref) {
+  state.themePref = pref || "auto";
+  document.documentElement.dataset.theme = effectiveTheme(state.themePref);
+  try {
+    localStorage.setItem("pgc-theme", state.themePref);
+  } catch {
+    /* the next start follows the system */
+  }
+  renderUiSwitches();
+}
+lightQuery.addEventListener("change", () => {
+  if ((state.themePref ?? "auto") === "auto") applyTheme("auto");
+});
+
+// The two quick switches in the title bar: language shows the current one, the theme button
+// shows what a click gives (sun in the dark theme, moon in the light one).
+function renderUiSwitches() {
+  const dark = document.documentElement.dataset.theme !== "light";
+  el.langBtn.textContent = LANG.toUpperCase();
+  el.langBtn.title = el.langBtn.ariaLabel = t(LANG === "ru" ? "ui.langToEn" : "ui.langToRu");
+  el.themeBtn.title = el.themeBtn.ariaLabel = t(dark ? "ui.themeToLight" : "ui.themeToDark");
+}
+
+async function setUi(patch) {
+  try {
+    state.config = await invoke("set_ui", patch);
+    if (state.config.language !== LANG) applyLanguage(state.config.language);
+    applyTheme(state.config.themePref);
+    render();
+  } catch (exc) {
+    toast(formatError(exc), "error");
+  }
 }
 
 async function refresh() {
@@ -112,6 +153,7 @@ async function refresh() {
       applyLanguage(config.language);
       document.body.dataset.ready = "1";
     }
+    applyTheme(config.themePref);
     if (state.selectedId && !state.isNew) {
       if (!config.providers.some((p) => p.id === state.selectedId)) {
         state.selectedId = config.providers[0]?.id ?? null;
@@ -379,6 +421,7 @@ function settingsDirty() {
   if (!c) return false;
   return (
     el.languageInput.value !== (c.languagePref ?? "auto") ||
+    el.themeInput.value !== (c.themePref ?? "auto") ||
     Number(el.portInput.value) !== c.port ||
     el.claudePathInput.value.trim() !== (c.claudePath ?? "") ||
     el.codeDirInput.value.trim() !== (c.codeDir ?? "") ||
@@ -501,6 +544,7 @@ function renderNotice() {
 function renderSettings() {
   if (!state.config) return;
   el.languageInput.value = state.config.languagePref ?? "auto";
+  el.themeInput.value = state.config.themePref ?? "auto";
   el.portInput.value = state.config.port;
   el.claudePathInput.value = state.config.claudePath ?? "";
   el.codeDirInput.value = state.config.codeDir ?? "";
@@ -574,6 +618,10 @@ function bind() {
   $("winClose").addEventListener("click", closeToTray);
 
   el.claudeWarn.addEventListener("click", openSettings);
+  el.langBtn.addEventListener("click", () => setUi({ language: LANG === "ru" ? "en" : "ru" }));
+  el.themeBtn.addEventListener("click", () => {
+    setUi({ theme: document.documentElement.dataset.theme === "light" ? "dark" : "light" });
+  });
   $("addBtn").addEventListener("click", newProvider);
   $("emptyAdd").addEventListener("click", newProvider);
   $("settingsBtn").addEventListener("click", openSettings);
@@ -1053,11 +1101,13 @@ async function saveSettings() {
         russianUi: el.russianInput.checked,
         builtinBrowser: el.builtinBrowserInput.checked,
         language: el.languageInput.value,
+        theme: el.themeInput.value,
         autoUpdate: el.autoUpdateInput.checked,
         advisor: advisorChoice(),
       },
     });
     if (state.config.language !== LANG) applyLanguage(state.config.language);
+    applyTheme(state.config.themePref);
     render();
     // What happened to Claude Code's shared file, as the backend saw it.
     let saved = t(rolesChanged ? "settings.savedRoles" : "settings.saved");
