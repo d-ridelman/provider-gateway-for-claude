@@ -15,8 +15,12 @@ Requirements: Windows 10/11 x64, Rust 1.90+ (MSVC), Node.js.
 cargo test --workspace
 cargo clippy --workspace --all-targets
 node tools/check_i18n.js
+node tools/ui-shots.mjs      # window snapshots into state\shots\ (Chrome or Edge, no other dependencies)
+node tools/ui-shots.mjs --detect   # Impeccable detector over the live pages (claude plugin enable impeccable@impeccable)
 .\build-app.ps1              # portable exe in dist\
 ```
+
+Change the window (`crates/ctp-app/ui`) only on the shared scale in `styles.css`: the `--r-*` radii and `--fs-*` type sizes, buttons 34 px (small 26 px), no new radius or font size. `node tools/ui-shots.mjs --audit` lists what is actually used.
 
 `crates/ctp-gateway` runs on its own as well, which is handy for debugging the translation layer:
 
