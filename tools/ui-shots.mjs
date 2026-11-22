@@ -257,6 +257,34 @@ if (args.includes("--audit")) {
   fs.rmSync(profile, { recursive: true, force: true });
   process.exit(0);
 }
+// --detect: run the Impeccable detector (the installed plugin) over the live pages in both themes.
+// Exit code 1 when it finds anything.
+if (args.includes("--detect")) {
+  chrome.kill();
+  const pluginRoot = path.join(os.homedir(), ".claude", "plugins", "cache", "impeccable", "impeccable");
+  const versions = fs.existsSync(pluginRoot) ? fs.readdirSync(pluginRoot).sort() : [];
+  const bin = versions.length && path.join(pluginRoot, versions.at(-1), "skills", "impeccable", "scripts", "impeccable.cmd");
+  if (!bin || !fs.existsSync(bin)) throw new Error("the Impeccable plugin is not installed: claude plugin enable impeccable@impeccable --scope local");
+  const pages = ["normal", "normal&view=settings", "empty", "stale", "warn", "error", "long&view=settings", "forceddark", "forceddark&view=settings", "forcedlight", "normal&lang=en&view=settings"];
+  let failed = 0;
+  for (const page of pages) {
+    const url = `${base}/?s=${page}`;
+    const out = await new Promise((resolve) => {
+      const p = spawn(bin, ["detect", "--no-advisory", url], { shell: true });
+      let text = "";
+      p.stdout.on("data", (d) => (text += d));
+      p.stderr.on("data", (d) => (text += d));
+      p.on("close", () => resolve(text));
+    });
+    const found = /(\d+) anti-patterns? found/.exec(out);
+    const count = found ? Number(found[1]) : 0;
+    failed += count;
+    console.log(page.padEnd(34), count ? `${count} finding(s)\n${out.trim()}` : "clean");
+  }
+  server.close();
+  fs.rmSync(profile, { recursive: true, force: true });
+  process.exit(failed ? 1 : 0);
+}
 // --serve: keep the stub server up so that `impeccable detect http://127.0.0.1:<port>/?s=normal` can scan it.
 if (args.includes("--serve")) {
   console.log(`serving ${base}/?s=normal  (also ?s=empty, ?view=settings); Ctrl+C to stop`);

@@ -20,7 +20,7 @@
   /* Opaque: a blurred translucent bar would draw its text without ClearType. */
   --chrome: #151412;
   --sidebar-bg: rgba(25, 24, 22, .55);
-  --card-bg: linear-gradient(180deg, rgba(30, 29, 26, .96), rgba(27, 26, 23, .96));
+  --card-bg: var(--panel); /* the same fill as the sticky action bar: no "card in a card" */
   --hover: rgba(255, 255, 255, .05);
   --sunken: rgba(0, 0, 0, .14);
   --log-bg: #0f0e0c;
@@ -189,11 +189,11 @@ code {
 .win-btn svg { width: 12px; height: 12px; }
 
 .mark {
-  background: linear-gradient(145deg, var(--accent), #9f4c32);
+  background: var(--accent);
   color: #fff7f0;
   display: grid;
   place-items: center;
-  box-shadow: 0 8px 24px rgba(201, 100, 66, .22), inset 0 1px 0 rgba(255,255,255,.18);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
 }
 
 .status {
@@ -478,12 +478,12 @@ button.danger-solid {
 button.danger-solid:hover { background: #c95345; }
 button.primary {
   /* Dark enough for white 12px text (WCAG AA, ~5:1). */
-  background: linear-gradient(180deg, #a94f30, #9a4529);
+  background: #a94f30;
   border-color: #8f3f25;
   color: #fff8f3;
-  box-shadow: 0 6px 18px rgba(201, 100, 66, .18);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .25);
 }
-button.primary:hover { background: linear-gradient(180deg, var(--accent-2), #bd5e3e); }
+button.primary:hover { background: #933f25; }
 button.accent {
   background: var(--accent-soft);
   border-color: rgba(201, 100, 66, .32);
@@ -683,11 +683,11 @@ button.small { padding: 4px 10px; font-size: var(--fs-xs); line-height: 16px; }
     --line: #d8d8d4;
     --line-soft: #e5e5e1;
     --text: #1f1f1d;
-    --muted: #595954;
-    --dim: #6b6b65;
-    --accent-2: #b5532f;
+    --muted: #4f4f4a;
+    --dim: #5c5c57;
+    --accent-2: #9a4526; /* 4.8:1 even on the tinted selected row */
     --green: #3f7a35;
-    --red: #b8483b;
+    --red: #a63d31;
     --input-bg: #ffffff;
     --chrome: #f8f8f6;
     --sidebar-bg: rgba(240, 240, 237, .7);
