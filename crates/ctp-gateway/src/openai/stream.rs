@@ -774,6 +774,40 @@ mod tests {
     }
 
     #[test]
+    fn late_reasoning_waits_up_to_the_limit_and_joins_what_waited() {
+        let run = |tails: &[String]| {
+            let mut translator = StreamTranslator::new("claude-x", 1);
+            let mut deltas = vec![
+                json!({"reasoning_content": "plan"}),
+                json!({"content": "Hi"}),
+            ];
+            deltas.extend(tails.iter().map(|t| json!({"reasoning_content": t})));
+            deltas.push(json!({"content": "Done"}));
+            let mut events = feed(&mut translator, &deltas);
+            events.extend(translator.finish());
+            events
+        };
+        // Exactly the limit (in characters, not bytes) still waits: one whole text block.
+        let at_limit = run(&["ж".repeat(LATE_REASONING_LIMIT)]);
+        assert_eq!(block_kinds(&at_limit), ["thinking", "text", "thinking"]);
+        assert_eq!(streamed(&at_limit, "text"), "HiDone");
+        // One more breaks the text where the provider broke it.
+        let over = run(&["ж".repeat(LATE_REASONING_LIMIT + 1)]);
+        assert_eq!(block_kinds(&over), ["thinking", "text", "thinking", "text"]);
+        // Short tails add up; what waited goes first, in one block, when the sum is over.
+        let tails = ["tail a ".to_string(), "x".repeat(LATE_REASONING_LIMIT)];
+        let summed = run(&tails);
+        assert_eq!(
+            block_kinds(&summed),
+            ["thinking", "text", "thinking", "text"]
+        );
+        assert_eq!(
+            streamed(&summed, "thinking"),
+            format!("plantail a {}", tails[1])
+        );
+    }
+
+    #[test]
     fn late_reasoning_is_flushed_before_an_advisor_call() {
         let mut translator = StreamTranslator::new("claude-x", 1);
         feed(
