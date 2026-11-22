@@ -385,6 +385,70 @@ fn merge_entry(
     (merged, changed)
 }
 
+/// Существующая запись настроек: `None` — файла нет. Нечитаемый как JSON-объект файл не
+/// теряем: копия рядом, как у `claude_desktop_config.json`. Другая ошибка чтения — отказ:
+/// вслепую поверх файла, в котором лежат настройки человека, не пишем.
+fn read_entry(path: &Path) -> Result<Option<serde_json::Value>, String> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(exc) if exc.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(exc) => {
+            let path = path.display();
+            return Err(tr!(
+                "Не прочитать {path}: {exc}",
+                "Cannot read {path}: {exc}"
+            ));
+        }
+    };
+    match serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')) {
+        Ok(value) if value.is_object() => Ok(Some(value)),
+        _ => {
+            let stamp = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            let backup = path.with_extension(format!("json.broken-{stamp}"));
+            fs::copy(path, &backup).map_err(|exc| {
+                let path = path.display();
+                tr!(
+                    "{path} не читается, а копию сделать нельзя: {exc}",
+                    "{path} is unreadable and cannot be backed up: {exc}"
+                )
+            })?;
+            Ok(None)
+        }
+    }
+}
+
+/// Запись настроек Claude в `configLibrary`: наши ключи поверх существующей записи. Claude
+/// уже открыт (`running`) — файл не трогаем, пока наши ключи те же: он сам зашифровал ключ
+/// шлюза, и лишняя запись ничего не даст. `true` — наши ключи изменились.
+fn sync_entry(library: &Path, entry: &serde_json::Value, running: bool) -> Result<bool, String> {
+    let id = LIBRARY_ID;
+    let entry_path = library.join(format!("{id}.json"));
+    let (merged, changed) = merge_entry(read_entry(&entry_path)?, entry);
+    if running && !changed {
+        return Ok(false);
+    }
+    // Профиль наш собственный: старые записи (в них локальный токен) убираем, чтобы не
+    // копились по одной на каждый запуск. Своя запись остаётся: в ней уцелеют ключи,
+    // которые человек менял в окне Claude.
+    if let Ok(entries) = fs::read_dir(library) {
+        for other in entries.flatten() {
+            let path = other.path();
+            let ours = path == entry_path || path.file_name().is_some_and(|n| n == "_meta.json");
+            if !ours && path.extension().is_some_and(|ext| ext == "json") {
+                let _ = fs::remove_file(path);
+            }
+        }
+    }
+    write_json(&entry_path, &merged)?;
+    write_json(
+        &library.join("_meta.json"),
+        &json!({"entries": [{"id": id, "name": "Provider Gateway"}], "appliedId": id}),
+    )?;
+    Ok(changed)
+}
+
 /// Запущен ли уже Claude с этим профилем. Пока он работает, Chromium держит `lockfile` в папке
 /// профиля, а закрытый или упавший Claude его не оставляет (проверено): занятый файл — это
 /// «работает».
@@ -467,38 +531,13 @@ pub fn launch(
     fs::create_dir_all(&library)
         .map_err(|exc| tr!("Профиль Claude: {exc}", "Claude profile: {exc}"))?;
 
-    set_deployment_mode(&profile.join("claude_desktop_config.json"))?;
-
-    let id = LIBRARY_ID;
-    let models = inference_models(&status.models, &role_aliases(config));
-    let entry = library_entry(config, status, &models);
-    let entry_path = library.join(format!("{id}.json"));
-    let existing = fs::read_to_string(&entry_path)
-        .ok()
-        .and_then(|text| serde_json::from_str(text.trim_start_matches('\u{feff}')).ok());
-    let (merged, changed) = merge_entry(existing, &entry);
-    // Работающему Claude запись не трогаем, пока наши ключи те же: он сам зашифровал ключ
-    // шлюза в файле, и лишняя запись ничего не даст.
-    if !running || changed {
-        // Профиль наш собственный: старые записи (в них локальный токен) убираем,
-        // чтобы не копились по одной на каждый запуск. Своя запись остаётся: в ней
-        // уцелеют ключи, которые человек менял в окне Claude.
-        if let Ok(entries) = fs::read_dir(&library) {
-            for other in entries.flatten() {
-                let path = other.path();
-                let ours =
-                    path == entry_path || path.file_name().is_some_and(|n| n == "_meta.json");
-                if !ours && path.extension().is_some_and(|ext| ext == "json") {
-                    let _ = fs::remove_file(path);
-                }
-            }
-        }
-        write_json(&entry_path, &merged)?;
-        write_json(
-            &library.join("_meta.json"),
-            &json!({"entries": [{"id": id, "name": "Provider Gateway"}], "appliedId": id}),
-        )?;
+    // Работающий Claude этот файл уже прочитал и сам его пишет; нечего трогать.
+    if !running {
+        set_deployment_mode(&profile.join("claude_desktop_config.json"))?;
     }
+
+    let models = inference_models(&status.models, &role_aliases(config));
+    let changed = sync_entry(&library, &library_entry(config, status, &models), running)?;
 
     let mut command = Command::new(&exe);
     command
@@ -839,6 +878,66 @@ mod tests {
             .unwrap()
             .remove("inferenceGatewayApiKey");
         assert!(merge_entry(Some(keyless), &ours).1);
+    }
+
+    #[test]
+    fn the_entry_file_is_synced_without_touching_what_must_not_be_touched() {
+        let dir = std::env::temp_dir()
+            .join("agents")
+            .join(format!("ctp-sync-{}", uuid::Uuid::new_v4().simple()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!("{LIBRARY_ID}.json"));
+        let read = |p: &Path| {
+            serde_json::from_str::<serde_json::Value>(&fs::read_to_string(p).unwrap()).unwrap()
+        };
+        let config = Config::default();
+        let model = |name: &str| json!({"name": name, "supports1m": false});
+        let ours = library_entry(&config, &status_with(Vec::new()), &[model("a")]);
+
+        // Первый запуск: файла нет — пишем запись и `_meta.json`, чужие json убираем.
+        fs::write(dir.join("old-random-id.json"), "{}").unwrap();
+        assert!(sync_entry(&dir, &ours, false).unwrap());
+        assert!(dir.join("_meta.json").is_file());
+        assert!(!dir.join("old-random-id.json").exists());
+        assert_eq!(read(&path)["inferenceModels"], json!([model("a")]));
+
+        // Claude открыт, наши ключи те же: файл не переписывается (ключ остаётся зашифрованным).
+        let mut sealed = read(&path);
+        sealed["inferenceGatewayApiKey"] = json!("__sealed__:v1:xxx");
+        sealed["autoModeEnabled"] = json!(true);
+        fs::write(&path, serde_json::to_string(&sealed).unwrap()).unwrap();
+        fs::write(dir.join("other.json"), "{}").unwrap();
+        let before = fs::read_to_string(&path).unwrap();
+        assert!(!sync_entry(&dir, &ours, true).unwrap());
+        assert_eq!(fs::read_to_string(&path).unwrap(), before);
+        assert!(
+            dir.join("other.json").exists(),
+            "a running Claude's folder is left alone"
+        );
+
+        // Claude открыт, список моделей стал длиннее: записано целиком, чужой ключ цел.
+        let longer = library_entry(&config, &status_with(Vec::new()), &[model("a"), model("b")]);
+        assert!(sync_entry(&dir, &longer, true).unwrap());
+        let now = read(&path);
+        assert_eq!(now["inferenceModels"], json!([model("a"), model("b")]));
+        assert_eq!(now["autoModeEnabled"], true);
+        assert_eq!(
+            now["inferenceGatewayApiKey"],
+            longer["inferenceGatewayApiKey"]
+        );
+        assert!(!dir.join("other.json").exists());
+
+        // Битая запись: копия рядом, пишем свою.
+        fs::write(&path, "{ not json").unwrap();
+        assert!(sync_entry(&dir, &ours, false).unwrap());
+        assert!(read(&path).is_object());
+        let backups = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains("json.broken-"))
+            .count();
+        assert_eq!(backups, 1);
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[cfg(windows)]
