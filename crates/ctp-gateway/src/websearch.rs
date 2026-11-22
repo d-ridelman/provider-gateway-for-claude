@@ -55,6 +55,12 @@ pub async fn search(
     headers: HeaderMap,
     body: bytes::Bytes,
 ) -> Response {
+    if from_web_page(&headers) {
+        return answer(
+            StatusCode::FORBIDDEN,
+            json!({"error": "web pages may not use the search endpoint"}),
+        );
+    }
     let Some(query) = query_of(&body) else {
         return answer(StatusCode::BAD_REQUEST, json!({"error": "q is required"}));
     };
@@ -83,6 +89,12 @@ pub async fn search(
             )
         }
     }
+}
+
+/// Маршрут без ключа: страница в браузере человека не должна гонять через него поиск.
+/// Браузер всегда добавляет `Origin` или `Sec-Fetch-Site`, MCP-сервер и curl — нет.
+fn from_web_page(headers: &HeaderMap) -> bool {
+    headers.contains_key("origin") || headers.contains_key("sec-fetch-site")
 }
 
 /// Свой клиент: у общих стоит таймаут на полчаса, а тут нужен браузерный UA и короткий срок.
@@ -735,6 +747,19 @@ mod tests {
     use crate::state::ModelRouter;
 
     const DDG: &str = include_str!("../tests/fixtures/ddg.html");
+
+    #[test]
+    fn web_pages_are_refused_but_plain_clients_pass() {
+        let mut headers = HeaderMap::new();
+        assert!(!from_web_page(&headers));
+        headers.insert("accept-language", "ru".parse().unwrap());
+        assert!(!from_web_page(&headers));
+        headers.insert("origin", "https://evil.example".parse().unwrap());
+        assert!(from_web_page(&headers));
+        let mut fetch = HeaderMap::new();
+        fetch.insert("sec-fetch-site", "cross-site".parse().unwrap());
+        assert!(from_web_page(&fetch));
+    }
 
     #[test]
     fn parses_real_duckduckgo_page() {

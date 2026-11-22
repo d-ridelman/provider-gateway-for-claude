@@ -345,7 +345,7 @@ fn library_entry(
     status: &UiStatus,
     models: &[serde_json::Value],
 ) -> serde_json::Value {
-    json!({
+    let mut entry = json!({
         "inferenceProvider": "gateway",
         "inferenceGatewayBaseUrl": format!("http://127.0.0.1:{}", status.port),
         "inferenceGatewayApiKey": status.token,
@@ -356,7 +356,12 @@ fn library_entry(
         // В 3p встроенный браузер выключен по умолчанию; галочка в настройках
         // включает его там же, где Claude читает остальные поля.
         "builtinBrowserEnabled": config.builtin_browser,
-    })
+    });
+    if config.web_search {
+        // Локальные MCP-серверы (`mcpServers` профиля): так подключён поиск шлюза.
+        entry["isLocalDevMcpEnabled"] = json!(true);
+    }
+    entry
 }
 
 pub fn launch(
@@ -411,7 +416,12 @@ pub fn launch(
     fs::create_dir_all(&library)
         .map_err(|exc| tr!("Профиль Claude: {exc}", "Claude profile: {exc}"))?;
 
-    set_deployment_mode(&profile.join("claude_desktop_config.json"))?;
+    let desktop_config = profile.join("claude_desktop_config.json");
+    set_deployment_mode(&desktop_config)?;
+    match std::env::current_exe() {
+        Ok(me) => set_mcp_search(&desktop_config, config.web_search, &me, status.port)?,
+        Err(exc) => tracing::warn!(error = %exc, "web search server not registered"),
+    }
 
     // Профиль наш собственный: старые записи (в них локальный токен) убираем,
     // чтобы не копились по одной на каждый запуск.
@@ -639,9 +649,33 @@ fn inference_models(
         .collect()
 }
 
-/// `deploymentMode: "3p"` в `claude_desktop_config.json`. Claude хранит в этом же
-/// файле свои настройки (`preferences`, папки Cowork…) — их сохраняем, а не затираем.
+/// `deploymentMode: "3p"` в `claude_desktop_config.json`.
 fn set_deployment_mode(path: &Path) -> Result<(), String> {
+    update_desktop_config(path, |config| config["deploymentMode"] = json!("3p"))
+}
+
+/// Свой веб-поиск (см. `mcp_search`): запись в `mcpServers` профиля Claude. Выключен —
+/// убирается только она, чужие серверы человека остаются.
+fn set_mcp_search(path: &Path, on: bool, exe: &Path, port: u16) -> Result<(), String> {
+    update_desktop_config(path, |config| {
+        let name = crate::mcp_search::SERVER_NAME;
+        if on {
+            if !config["mcpServers"].is_object() {
+                config["mcpServers"] = json!({});
+            }
+            config["mcpServers"][name] = crate::mcp_search::server_entry(exe, port);
+        } else if let Some(servers) = config["mcpServers"].as_object_mut() {
+            servers.remove(name);
+        }
+    })
+}
+
+/// Правка `claude_desktop_config.json`. Claude хранит в этом же файле свои настройки
+/// (`preferences`, папки Cowork…) — их сохраняем, а не затираем; без изменений файл не пишется.
+fn update_desktop_config(
+    path: &Path,
+    patch: impl FnOnce(&mut serde_json::Value),
+) -> Result<(), String> {
     let mut config = match fs::read_to_string(path) {
         Ok(text) => {
             match serde_json::from_str::<serde_json::Value>(text.trim_start_matches('\u{feff}')) {
@@ -673,10 +707,11 @@ fn set_deployment_mode(path: &Path) -> Result<(), String> {
             ));
         }
     };
-    if config["deploymentMode"] == "3p" {
+    let before = config.clone();
+    patch(&mut config);
+    if config == before {
         return Ok(());
     }
-    config["deploymentMode"] = json!("3p");
     write_json(path, &config)
 }
 
@@ -688,6 +723,46 @@ fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_search_server_is_merged_into_the_claude_config_and_removed_again() {
+        let dir = std::env::temp_dir()
+            .join("agents")
+            .join(format!("ctp-mcp-{}", uuid::Uuid::new_v4().simple()));
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("claude_desktop_config.json");
+        // Свои настройки Claude и чужой MCP-сервер человека — не трогаются.
+        fs::write(
+            &path,
+            r#"{"deploymentMode":"3p","preferences":{"a":1},"mcpServers":{"mine":{"command":"x"}}}"#,
+        )
+        .unwrap();
+        let exe = Path::new(r"C:\Program Files\pgc\pgc.exe");
+        let read = || {
+            serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap()
+        };
+
+        set_mcp_search(&path, true, exe, 17899).unwrap();
+        let on = read();
+        let ours = &on["mcpServers"][crate::mcp_search::SERVER_NAME];
+        assert_eq!(ours["command"], r"C:\Program Files\pgc\pgc.exe");
+        assert_eq!(ours["args"], json!(["--mcp-search", "--port", "17899"]));
+        assert_eq!(on["mcpServers"]["mine"]["command"], "x");
+        assert_eq!(on["preferences"]["a"], 1);
+
+        // Порт сменился — запись обновилась; тот же порт — файл не переписывается.
+        set_mcp_search(&path, true, exe, 17900).unwrap();
+        assert_eq!(
+            read()["mcpServers"][crate::mcp_search::SERVER_NAME]["args"][2],
+            "17900"
+        );
+
+        set_mcp_search(&path, false, exe, 17900).unwrap();
+        let off = read();
+        assert!(off["mcpServers"][crate::mcp_search::SERVER_NAME].is_null());
+        assert_eq!(off["mcpServers"]["mine"]["command"], "x");
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn profile_folder_differs_per_build() {

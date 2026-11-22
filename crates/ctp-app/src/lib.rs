@@ -4,6 +4,7 @@ pub mod claude;
 pub mod commands;
 pub mod fetch;
 pub mod i18n;
+pub mod mcp_search;
 pub mod model;
 pub mod runtime;
 pub mod ruui;

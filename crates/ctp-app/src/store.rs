@@ -291,6 +291,7 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
         providers,
         russian_ui: config.russian_ui,
         builtin_browser: config.builtin_browser,
+        web_search: config.web_search,
         code_dir: config.code_dir.clone(),
         language: crate::i18n::current().to_string(),
         language_pref: config

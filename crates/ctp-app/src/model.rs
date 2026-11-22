@@ -21,6 +21,9 @@ pub struct Config {
     /// в третьестороннем режиме он по умолчанию выключен.
     #[serde(default)]
     pub builtin_browser: bool,
+    /// Свой веб-поиск шлюза для Claude: локальный MCP-сервер в профиле (`mcp_search`).
+    #[serde(default = "default_true")]
+    pub web_search: bool,
     /// Папка, в которой открывается Claude Code CLI; `None` — домашняя.
     #[serde(default)]
     pub code_dir: Option<String>,
@@ -73,6 +76,7 @@ impl Default for Config {
             claude_path: None,
             russian_ui: false,
             builtin_browser: false,
+            web_search: true,
             code_dir: None,
             language: None,
             auto_update: true,
@@ -124,6 +128,8 @@ pub struct UiConfig {
     pub russian_ui: bool,
     /// Включён ли встроенный браузер в 3p-профиле Claude.
     pub builtin_browser: bool,
+    /// Подключён ли поиск шлюза к Claude.
+    pub web_search: bool,
     /// Есть ли файл перевода `claude-ru.json` в папке настроек.
     pub russian_file: bool,
     pub config_dir: String,
@@ -251,6 +257,8 @@ pub struct SettingsInput {
     pub russian_ui: bool,
     #[serde(default)]
     pub builtin_browser: bool,
+    #[serde(default = "default_true")]
+    pub web_search: bool,
     #[serde(default)]
     pub code_dir: Option<String>,
     #[serde(default)]

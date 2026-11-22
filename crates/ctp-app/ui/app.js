@@ -49,6 +49,7 @@ const el = Object.fromEntries(
     "aliasBox", "aliasList", "deleteBtn", "formNotice", "settingsPanel", "portInput", "languageInput",
     "claudePathInput", "codeDirInput", "launchCodeBtn", "detectedClaude", "tokenInput", "russianInput",
     "builtinBrowserInput",
+    "webSearchInput",
     "russianFileHint", "claudeWarn", "claudeCheckList", "startBtn", "stopBtn", "launchBtn", "modelCount",
     "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
@@ -359,6 +360,7 @@ function settingsDirty() {
     el.codeDirInput.value.trim() !== (c.codeDir ?? "") ||
     el.russianInput.checked !== !!c.russianUi ||
     el.builtinBrowserInput.checked !== !!c.builtinBrowser ||
+    el.webSearchInput.checked !== !!c.webSearch ||
     el.autoUpdateInput.checked !== (c.autoUpdate !== false) ||
     el.advisorInput.checked !== advisorShown ||
     ROLES.some(([role, id]) => el[id].value !== roleKey(c.modelRoles?.[role]))
@@ -491,6 +493,7 @@ function renderSettings() {
   el.detectedClaude.title = state.config.detectedClaude ?? "";
   el.russianInput.checked = !!state.config.russianUi;
   el.builtinBrowserInput.checked = !!state.config.builtinBrowser;
+  el.webSearchInput.checked = !!state.config.webSearch;
   // Whether the translation is fine is said by the self-check below; here only "not yet".
   el.russianFileHint.textContent = state.config.russianFile ? "" : t("settings.russianFileMissing");
   el.russianFileHint.classList.toggle("hidden", !!state.config.russianFile);
@@ -1005,6 +1008,7 @@ async function saveSettings() {
         modelRoles: Object.fromEntries(ROLES.map(([role, id]) => [role, readRole(el[id])])),
         russianUi: el.russianInput.checked,
         builtinBrowser: el.builtinBrowserInput.checked,
+        webSearch: el.webSearchInput.checked,
         language: el.languageInput.value,
         autoUpdate: el.autoUpdateInput.checked,
         advisor: advisorChoice(),
