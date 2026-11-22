@@ -931,12 +931,14 @@ mod tests {
         fs::write(&path, "{ not json").unwrap();
         assert!(sync_entry(&dir, &ours, false).unwrap());
         assert!(read(&path).is_object());
-        let backups = fs::read_dir(&dir)
+        let backups: Vec<_> = fs::read_dir(&dir)
             .unwrap()
             .flatten()
             .filter(|e| e.file_name().to_string_lossy().contains("json.broken-"))
-            .count();
-        assert_eq!(backups, 1);
+            .collect();
+        assert_eq!(backups.len(), 1);
+        // В копии — прежнее содержимое: ничего не потеряно.
+        assert_eq!(fs::read_to_string(backups[0].path()).unwrap(), "{ not json");
         let _ = fs::remove_dir_all(&dir);
     }
 
