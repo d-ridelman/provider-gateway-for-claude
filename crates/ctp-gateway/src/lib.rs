@@ -8,6 +8,7 @@ pub mod sse;
 pub mod state;
 pub mod util;
 pub mod websearch;
+pub mod websearch_tool;
 
 use crate::state::{AppState, ModelRouter};
 use crate::websearch::search;

@@ -138,6 +138,21 @@ pub async fn messages(
         return probe_reply(&response_model, stream);
     }
 
+    // Встроенный `WebSearch` Claude присылает вложенный запрос с серверным инструментом
+    // `web_search`: провайдеры шлюза его не умеют, поэтому поиск выполняется здесь.
+    if let Some(search) = crate::websearch_tool::detect(&body) {
+        let language = crate::websearch::language_of(&headers);
+        return crate::websearch_tool::reply(
+            &state,
+            &response_model,
+            &body,
+            search,
+            stream,
+            &language,
+        )
+        .await;
+    }
+
     // Какой уровень рассуждения попросил Claude и что уйдёт провайдеру.
     let asked = body
         .pointer("/output_config/effort")
