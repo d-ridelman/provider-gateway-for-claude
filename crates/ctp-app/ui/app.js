@@ -583,9 +583,8 @@ function renderSettings() {
 function syncSettingsSave() {
   const dirty = settingsDirty();
   $("saveSettingsBtn").disabled = !dirty;
-  // The bar says why Save is grey, and what is waiting once it is active.
+  // The mark in front of the hint says there is something to save; the hint itself stays.
   $("settingsDirty").classList.toggle("hidden", !dirty);
-  $("settingsApplyHint").classList.toggle("hidden", dirty);
 }
 
 // Self-check of the installed Claude: the list in Settings and a badge in the title bar.

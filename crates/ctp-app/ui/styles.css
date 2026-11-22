@@ -20,7 +20,7 @@
   /* Opaque: a blurred translucent bar would draw its text without ClearType. */
   --chrome: #151412;
   --sidebar-bg: rgba(25, 24, 22, .55);
-  --card-bg: var(--panel); /* the same fill as the sticky action bar: no "card in a card" */
+  --card-bg: var(--panel); /* the same fill as the page panels: no "card in a card" */
   --hover: rgba(255, 255, 255, .05);
   --sunken: rgba(0, 0, 0, .14);
   --log-bg: #0f0e0c;
@@ -366,7 +366,9 @@ code {
 .group-title { margin: 0 0 14px; font-size: var(--fs-lg); font-weight: 650; color: var(--text); }
 .settings-actions { gap: 14px; flex-wrap: nowrap; }
 .settings-actions .small { line-height: 16px; flex: 1 1 0; min-width: 0; }
-.settings-actions .notice { margin-left: 0; }
+.dirty-mark { color: var(--accent-2); font-weight: 600; }
+.dirty-mark::before { content: "● "; }
+.dirty-mark::after { content: "."; }
 /* No native steppers: they are the one control the page style does not reach. */
 input[type="number"] { appearance: textfield; }
 input[type="number"]::-webkit-inner-spin-button, input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
