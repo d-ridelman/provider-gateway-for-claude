@@ -462,7 +462,11 @@ button {
 button:hover { background: var(--hover); }
 button:active { transform: translateY(1px); }
 /* Disabled by colour, not by opacity: a translucent layer would draw its text without ClearType. */
-button:disabled, button.primary:disabled {
+/* Under the pointer too: the :hover rules of the variants below (primary, danger, accent, ghost)
+   are as specific as the plain :disabled one, and a dark hover fill under dim text was unreadable. */
+button:disabled, button.primary:disabled, button.danger:disabled,
+button:disabled:hover, button.primary:disabled:hover, button.danger:disabled:hover,
+button.danger-solid:disabled:hover, button.accent:disabled:hover, button.ghost:disabled:hover {
   cursor: not-allowed; transform: none;
   color: var(--dim); background: var(--sunken); border-color: var(--line-soft); box-shadow: none;
 }

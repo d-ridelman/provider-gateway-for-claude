@@ -124,6 +124,18 @@ const SCREENS = {
   settings: "document.getElementById('settingsBtn').click()",
   dialog: "document.getElementById('deleteBtn').click()",
   launch: "document.getElementById('launchBtn').click()",
+  // A disabled button under the pointer must stay readable (it was dark text on a dark hover fill).
+  hoverlaunch: "hover:#launchBtn",
+  hoverstop: "hover:#stopBtn",
+  hoverenabled: "hover:#stopBtn",
+  hoverprimary: "hover:#emptyAdd",
+  hoverdanger: "hover:#deleteBtn",
+  hoveravatar: "hover:#addBtn",
+  hoverprovider: "hover:.provider-item",
+  hoversettings: "hover:#settingsBtn",
+  hovertheme: "hover:#themeBtn",
+  hoverlang: "hover:#langBtn",
+  hoverlogs: "hover:#logsBtn",
   // An unsaved edit, then the language switch in the title bar: it must ask before it drops the edit.
   dirtylang: "(() => { const n = document.getElementById('nameInput'); n.value = 'Edited name'; n.dispatchEvent(new Event('input', { bubbles: true })); document.getElementById('langBtn').click(); })()",
   testconn: "[...document.querySelectorAll('button')].find((b) => /Проверить связь|Test connection/.test(b.textContent))?.click()",
@@ -140,6 +152,14 @@ add("normal", "settings", [1], ["light", "dark"], "en");
 add("normal", "new", [1], ["dark"]);
 add("normal", "dialog", [1], ["dark"]);
 add("normal", "dirtylang", [1], ["dark"]);
+add("empty", "hoverlaunch", [1], ["light", "dark"]);
+add("empty", "hoverstop", [1], ["light", "dark"]);
+// Enabled buttons under the pointer: every variant stays readable too.
+add("empty", "hoverprimary", [1], ["light", "dark"]);
+add("normal", "hoverenabled", [1], ["light", "dark"]);
+add("normal", "hoverdanger", [1], ["light", "dark"]);
+add("normal", "hoveravatar", [1], ["light", "dark"]);
+for (const screen of ["hoverprovider", "hoversettings", "hovertheme", "hoverlang", "hoverlogs"]) add("normal", screen, [1], ["light", "dark"]);
 add("long", "main", [1], ["light", "dark"]);
 add("long", "settings", [1], ["dark"]);
 add("error", "launch", [1], ["dark"]);
@@ -310,7 +330,26 @@ for (const shot of shots) {
   else for (let i = 0; i < 40 && (await evaluate("document.body?.dataset?.ready")) !== "1"; i++) await sleep(100);
   await sleep(250);
   const step = SCREENS[shot.screen];
-  if (step) {
+  let hoverNote = "";
+  if (step?.startsWith("hover:")) {
+    // The pointer over a control, for real (a :hover state cannot be faked from the page).
+    const selector = step.slice(6);
+    const at = await evaluate(`(() => { const b = document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect(); return [b.x + b.width / 2, b.y + b.height / 2]; })()`);
+    await cdp("Input.dispatchMouseEvent", { type: "mouseMoved", x: at[0], y: at[1] });
+    await sleep(300);
+    const ratio = await evaluate(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)}), s = getComputedStyle(el);
+      const rgb = (c) => c.match(/[\\d.]+/g).map(Number);
+      const over = (top, under) => { const a = top[3] ?? 1; return [0, 1, 2].map((i) => top[i] * a + under[i] * (1 - a)); };
+      let bg = [255, 255, 255];
+      const chain = []; for (let n = el; n; n = n.parentElement) chain.unshift(getComputedStyle(n).backgroundColor);
+      for (const c of chain) { const v = rgb(c); if ((v[3] ?? 1) > 0) bg = over(v, bg); }
+      const lum = (v) => { const [r, g, b] = v.map((x) => { x /= 255; return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4; }); return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+      const fg = over(rgb(s.color), bg), l1 = lum(fg), l2 = lum(bg);
+      return ((Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05)).toFixed(2);
+    })()`);
+    hoverNote = Number(ratio) < 3 ? `HOVER-CONTRAST ${ratio}:1` : `hover contrast ${ratio}:1`;
+  } else if (step) {
     await evaluate(step);
     await sleep(shot.screen === "launch" || shot.screen === "testconn" ? 500 : 250);
   }
@@ -318,7 +357,7 @@ for (const shot of shots) {
   const png = await cdp("Page.captureScreenshot", { format: "png" });
   fs.writeFileSync(path.join(outDir, name + ".png"), Buffer.from(png.data, "base64"));
   report.push({ name, ...m });
-  const flags = [m.hscroll && "HSCROLL", m.clipped.length && "CLIPPED " + m.clipped.join(", "), m.scrollers.length && "SCROLL " + m.scrollers.join(", ")].filter(Boolean);
+  const flags = [hoverNote, m.hscroll && "HSCROLL", m.clipped.length && "CLIPPED " + m.clipped.join(", "), m.scrollers.length && "SCROLL " + m.scrollers.join(", ")].filter(Boolean);
   console.log(name.padEnd(42), flags.join(" | ") || "ok");
 }
 fs.writeFileSync(path.join(outDir, "report.json"), JSON.stringify(report, null, 1));
