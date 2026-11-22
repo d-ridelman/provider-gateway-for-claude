@@ -345,7 +345,7 @@ fn library_entry(
     status: &UiStatus,
     models: &[serde_json::Value],
 ) -> serde_json::Value {
-    let mut entry = json!({
+    json!({
         "inferenceProvider": "gateway",
         "inferenceGatewayBaseUrl": format!("http://127.0.0.1:{}", status.port),
         "inferenceGatewayApiKey": status.token,
@@ -356,12 +356,7 @@ fn library_entry(
         // В 3p встроенный браузер выключен по умолчанию; галочка в настройках
         // включает его там же, где Claude читает остальные поля.
         "builtinBrowserEnabled": config.builtin_browser,
-    });
-    if config.web_search {
-        // Локальные MCP-серверы (`mcpServers` профиля): так подключён поиск шлюза.
-        entry["isLocalDevMcpEnabled"] = json!(true);
-    }
-    entry
+    })
 }
 
 pub fn launch(
@@ -416,12 +411,7 @@ pub fn launch(
     fs::create_dir_all(&library)
         .map_err(|exc| tr!("Профиль Claude: {exc}", "Claude profile: {exc}"))?;
 
-    let desktop_config = profile.join("claude_desktop_config.json");
-    set_deployment_mode(&desktop_config)?;
-    match std::env::current_exe() {
-        Ok(me) => set_mcp_search(&desktop_config, config.web_search, &me, status.port)?,
-        Err(exc) => tracing::warn!(error = %exc, "web search server not registered"),
-    }
+    set_deployment_mode(&profile.join("claude_desktop_config.json"))?;
 
     // Профиль наш собственный: старые записи (в них локальный токен) убираем,
     // чтобы не копились по одной на каждый запуск.
@@ -654,25 +644,6 @@ fn set_deployment_mode(path: &Path) -> Result<(), String> {
     update_desktop_config(path, |config| config["deploymentMode"] = json!("3p"))
 }
 
-/// Свой веб-поиск (см. `mcp_search`): запись в `mcpServers` профиля Claude. Выключен —
-/// убирается только она, чужие серверы человека остаются.
-fn set_mcp_search(path: &Path, on: bool, exe: &Path, port: u16) -> Result<(), String> {
-    update_desktop_config(path, |config| {
-        let name = crate::mcp_search::SERVER_NAME;
-        if on {
-            if !config["mcpServers"].is_object() {
-                config["mcpServers"] = json!({});
-            }
-            config["mcpServers"][name] = crate::mcp_search::server_entry(exe, port);
-        } else if let Some(servers) = config
-            .get_mut("mcpServers")
-            .and_then(serde_json::Value::as_object_mut)
-        {
-            servers.remove(name);
-        }
-    })
-}
-
 /// Правка `claude_desktop_config.json`. Claude хранит в этом же файле свои настройки
 /// (`preferences`, папки Cowork…) — их сохраняем, а не затираем; без изменений файл не пишется.
 fn update_desktop_config(
@@ -728,74 +699,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn web_search_server_is_merged_into_the_claude_config_and_removed_again() {
+    fn deployment_mode_keeps_claudes_own_settings_and_does_not_rewrite_a_finished_file() {
         let dir = std::env::temp_dir()
             .join("agents")
-            .join(format!("ctp-mcp-{}", uuid::Uuid::new_v4().simple()));
+            .join(format!("ctp-dm-{}", uuid::Uuid::new_v4().simple()));
         fs::create_dir_all(&dir).unwrap();
         let path = dir.join("claude_desktop_config.json");
-        // Свои настройки Claude и чужой MCP-сервер человека — не трогаются.
-        fs::write(
-            &path,
-            r#"{"deploymentMode":"3p","preferences":{"a":1},"mcpServers":{"mine":{"command":"x"}}}"#,
-        )
-        .unwrap();
-        let exe = Path::new(r"C:\Program Files\pgc\pgc.exe");
+        fs::write(&path, r#"{"preferences":{"a":1}}"#).unwrap();
+        set_deployment_mode(&path).unwrap();
         let read = || {
             serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&path).unwrap()).unwrap()
         };
-
-        set_mcp_search(&path, true, exe, 17899).unwrap();
-        let on = read();
-        let ours = &on["mcpServers"][crate::mcp_search::SERVER_NAME];
-        assert_eq!(ours["command"], r"C:\Program Files\pgc\pgc.exe");
-        assert_eq!(ours["args"], json!(["--mcp-search", "--port", "17899"]));
-        assert_eq!(on["mcpServers"]["mine"]["command"], "x");
-        assert_eq!(on["preferences"]["a"], 1);
-
-        // Порт сменился — запись обновилась; тот же порт — файл не переписывается.
-        set_mcp_search(&path, true, exe, 17900).unwrap();
-        assert_eq!(
-            read()["mcpServers"][crate::mcp_search::SERVER_NAME]["args"][2],
-            "17900"
-        );
-
-        // Тот же порт ещё раз: файл не переписывается (метка времени и текст те же).
+        assert_eq!(read()["deploymentMode"], "3p");
+        assert_eq!(read()["preferences"]["a"], 1);
+        // Уже 3p: файл не переписывается (метка времени и текст те же).
         let stamp = || fs::metadata(&path).unwrap().modified().unwrap();
         let (text, at) = (fs::read_to_string(&path).unwrap(), stamp());
         std::thread::sleep(std::time::Duration::from_millis(30));
-        set_mcp_search(&path, true, exe, 17900).unwrap();
+        set_deployment_mode(&path).unwrap();
         assert_eq!((fs::read_to_string(&path).unwrap(), stamp()), (text, at));
-
-        set_mcp_search(&path, false, exe, 17900).unwrap();
-        let off = read();
-        assert!(off["mcpServers"][crate::mcp_search::SERVER_NAME].is_null());
-        assert_eq!(off["mcpServers"]["mine"]["command"], "x");
-
-        // Выключено и серверов нет вовсе: ключ `mcpServers` не появляется, даже как null.
-        fs::write(&path, r#"{"deploymentMode":"3p"}"#).unwrap();
-        set_mcp_search(&path, false, exe, 17900).unwrap();
-        assert!(read().get("mcpServers").is_none());
         let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn local_mcp_flag_follows_the_web_search_setting() {
-        let status = status_with(Vec::new());
-        let mut config = Config::default();
-        // Старый конфиг без `webSearch` читается как «включено».
-        let old: Config = serde_json::from_str(r#"{"port":17899}"#).unwrap();
-        assert!(old.web_search);
-        assert_eq!(
-            library_entry(&config, &status, &[])["isLocalDevMcpEnabled"],
-            true
-        );
-        config.web_search = false;
-        assert!(
-            library_entry(&config, &status, &[])
-                .get("isLocalDevMcpEnabled")
-                .is_none()
-        );
     }
 
     #[test]
