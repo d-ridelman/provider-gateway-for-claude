@@ -420,12 +420,9 @@ fn merge_entry(
         if key == API_KEY_FIELD {
             merged.get(key).is_none()
         } else {
-            // Claude сам убирает из записи ключи со значением по умолчанию
-            // (`builtinBrowserEnabled: false`): нет ключа — то же, что `false`.
-            match merged.get(key) {
-                Some(seen) => seen != value,
-                None => *value != serde_json::Value::Bool(false),
-            }
+            // Claude сам убирает из записи ключи со значением по умолчанию, поэтому
+            // `false` в нашу запись не кладётся (см. `library_entry`).
+            merged.get(key) != Some(value)
         }
     });
     if let Some(object) = merged.as_object_mut() {
@@ -916,20 +913,19 @@ mod tests {
         let mut moved = ours.clone();
         moved["inferenceGatewayBaseUrl"] = json!("http://127.0.0.1:1");
         assert!(merge_entry(Some(moved), &ours).1);
-        let mut browser = ours.clone();
-        browser["builtinBrowserEnabled"] = json!(true);
-        assert!(merge_entry(Some(browser), &ours).1);
-        // Claude убрал из записи `builtinBrowserEnabled: false` (умолчание) — не изменилось;
-        // а вот включённый флажок без ключа в записи — изменилось.
-        let mut trimmed = ours.clone();
-        trimmed
-            .as_object_mut()
-            .unwrap()
-            .remove("builtinBrowserEnabled");
-        assert!(!merge_entry(Some(trimmed.clone()), &ours).1);
+        // Браузер: без нашей галочки ключа в `ours` нет — чужое значение не «изменение».
+        let mut chosen_in_claude = ours.clone();
+        chosen_in_claude["builtinBrowserEnabled"] = json!(true);
+        let (merged, changed) = merge_entry(Some(chosen_in_claude), &ours);
+        assert!(!changed && merged["builtinBrowserEnabled"] == true);
+        // С галочкой: нет ключа или он выключен — изменилось, уже включён — нет.
         let mut on = ours.clone();
         on["builtinBrowserEnabled"] = json!(true);
-        assert!(merge_entry(Some(trimmed), &on).1);
+        assert!(merge_entry(Some(ours.clone()), &on).1);
+        let mut off = ours.clone();
+        off["builtinBrowserEnabled"] = json!(false);
+        assert!(merge_entry(Some(off), &on).1);
+        assert!(!merge_entry(Some(on.clone()), &on).1);
         // Записи без ключа шлюза — тоже изменилось.
         let mut keyless = ours.clone();
         keyless
