@@ -554,16 +554,30 @@ pub fn set_flavor(identifier: &str) {
 /// dev-сборки и изолированного запуска (`CLAUDE_GATEWAY_HOME`) она разная — иначе они
 /// перезаписывали бы друг у друга запись `configLibrary` (порт и токен) и делили бы замок профиля.
 pub fn base_dir() -> Option<PathBuf> {
-    if let Some(home) = std::env::var_os("CLAUDE_GATEWAY_HOME").filter(|v| !v.is_empty()) {
-        return Some(PathBuf::from(home).join("claude"));
+    base_dir_for(
+        std::env::var_os("CLAUDE_GATEWAY_HOME"),
+        DEV_BUILD.load(std::sync::atomic::Ordering::Relaxed),
+        local_appdata(),
+    )
+}
+
+fn base_dir_for(
+    home: Option<std::ffi::OsString>,
+    dev: bool,
+    local: Option<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(home) = home.filter(|v| !v.is_empty()) {
+        // Абсолютный путь: Claude получает его в `--user-data-dir` и запускается в другой папке.
+        let home = PathBuf::from(home);
+        let home = std::path::absolute(&home).unwrap_or(home);
+        return Some(home.join("claude"));
     }
-    let dev = DEV_BUILD.load(std::sync::atomic::Ordering::Relaxed);
     let name = if dev {
         "ClaudeProviderGateway-dev"
     } else {
         "ClaudeProviderGateway"
     };
-    Some(local_appdata()?.join(name))
+    Some(local?.join(name))
 }
 
 /// AppData\Local: системная папка Windows, а не переменная окружения — та бывает
@@ -674,6 +688,29 @@ fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_folder_differs_per_build() {
+        let local = || Some(PathBuf::from(r"C:\L"));
+        let release = base_dir_for(None, false, local()).unwrap();
+        assert_eq!(
+            release,
+            PathBuf::from(r"C:\L").join("ClaudeProviderGateway")
+        );
+        let dev = base_dir_for(None, true, local()).unwrap();
+        assert_eq!(
+            dev,
+            PathBuf::from(r"C:\L").join("ClaudeProviderGateway-dev")
+        );
+        // Пустое значение — как будто переменной нет.
+        assert_eq!(base_dir_for(Some("".into()), false, local()), Some(release));
+        let home = base_dir_for(Some("rel-home".into()), false, local()).unwrap();
+        assert!(
+            home.is_absolute() && home.ends_with("rel-home/claude"),
+            "{home:?}"
+        );
+        assert_eq!(base_dir_for(None, false, None), None);
+    }
     use crate::model::ModelInfo;
 
     fn info(model: &str, max: Option<&str>, openai: bool) -> ModelInfo {

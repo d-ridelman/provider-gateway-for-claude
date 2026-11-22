@@ -146,15 +146,35 @@ async fn bind(
                 // Порт держит другой шлюз (dev или изолированный запуск рядом с релизом):
                 // не падаем, а берём свободный. Адрес в записи Claude и в `status` берётся
                 // из `local_addr`, так что всё идёт по новому порту.
-                let free = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-                    .await
-                    .map_err(|exc| {
-                        tr!(
-                            "Не удалось открыть порт {port}: {exc}",
-                            "Could not open port {port}: {exc}"
-                        )
-                    })?;
-                tracing::warn!(port, "port is busy, using a free one");
+                // Прошлый запасной порт пробуем первым: после перезапуска (сохранили
+                // провайдера) адрес в уже открытом Claude остаётся тем же.
+                let last = shared.fallback_port.load(Ordering::SeqCst);
+                let mut free = None;
+                if last != 0 {
+                    for _ in 0..20 {
+                        if let Ok(listener) =
+                            tokio::net::TcpListener::bind(("127.0.0.1", last)).await
+                        {
+                            free = Some(listener);
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+                let free = match free {
+                    Some(listener) => listener,
+                    None => tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                        .await
+                        .map_err(|exc| {
+                            tr!(
+                                "Не удалось открыть порт {port}: {exc}",
+                                "Could not open port {port}: {exc}"
+                            )
+                        })?,
+                };
+                let used = free.local_addr().map_or(0, |addr| addr.port());
+                shared.fallback_port.store(used, Ordering::SeqCst);
+                tracing::warn!(port, used, "port is busy, using a free one");
                 return Ok(Some(free));
             }
             Err(exc) => {
@@ -257,7 +277,12 @@ mod tests {
         let busy = holder.local_addr().unwrap().port();
         let epoch = shared.epoch.load(Ordering::SeqCst);
         let listener = bind(&shared, busy, epoch).await.unwrap().unwrap();
-        assert_ne!(listener.local_addr().unwrap().port(), busy);
+        let first = listener.local_addr().unwrap().port();
+        assert_ne!(first, busy);
+        // Перезапуск при всё ещё занятом порту — тот же запасной адрес.
+        drop(listener);
+        let again = bind(&shared, busy, epoch).await.unwrap().unwrap();
+        assert_eq!(again.local_addr().unwrap().port(), first);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

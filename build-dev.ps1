@@ -38,6 +38,9 @@ if ($Installer) {
 } else {
     Push-Location $root
     try {
+        # The identifier is compiled in: without it the portable exe would be the release
+        # (same settings folder, same Claude profile) under another file name.
+        $env:TAURI_CONFIG = Get-Content (Join-Path $root 'crates\ctp-app\tauri.dev.conf.json') -Raw
         & cargo build --release -p ctp-app
         if ($LASTEXITCODE -ne 0) { throw "cargo build failed ($LASTEXITCODE)" }
     } finally { Pop-Location }
