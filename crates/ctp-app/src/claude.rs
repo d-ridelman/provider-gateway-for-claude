@@ -379,13 +379,12 @@ pub fn launch(
             "Claude Desktop not found. Set the path to claude.exe in the settings."
         )
     })?;
-    let local = local_appdata().ok_or_else(|| {
+    let base = base_dir().ok_or_else(|| {
         tr!(
             "Не найдена папка AppData\\Local",
             "AppData\\Local folder not found"
         )
     })?;
-    let base = local.join("ClaudeProviderGateway");
     let copies = base.join("claude-ru");
     let original = exe.clone();
     let (exe, russian, note) = if config.russian_ui {
@@ -512,10 +511,10 @@ fn repair_for(copies: &Path, original_exe: &Path, before: Option<&Before>) {
 
 /// При старте приложения: след русской копии в реестре, оставшийся с прошлого раза.
 pub fn repair_registry(config: &Config) {
-    let Some(local) = local_appdata() else {
+    let Some(base) = base_dir() else {
         return;
     };
-    let copies = local.join("ClaudeProviderGateway").join("claude-ru");
+    let copies = base.join("claude-ru");
     if let (true, Some(original)) = (copies.is_dir(), detect(config)) {
         repair_for(&copies, &original, None);
     }
@@ -529,7 +528,7 @@ pub const EFFORT_PROFILE: &str = "claude-opus-4-8";
 
 /// Папка русских копий Claude (`%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru`).
 pub fn copies_root() -> anyhow::Result<PathBuf> {
-    let local = local_appdata().ok_or_else(|| {
+    let base = base_dir().ok_or_else(|| {
         anyhow::anyhow!(
             "{}",
             tr!(
@@ -538,7 +537,33 @@ pub fn copies_root() -> anyhow::Result<PathBuf> {
             )
         )
     })?;
-    Ok(local.join("ClaudeProviderGateway").join("claude-ru"))
+    Ok(base.join("claude-ru"))
+}
+
+/// Сборка `.dev` (идентификатор приложения) — выставляется один раз при старте.
+static DEV_BUILD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn set_flavor(identifier: &str) {
+    DEV_BUILD.store(
+        identifier.ends_with(".dev"),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
+
+/// Своя папка Claude этого экземпляра шлюза: профиль `Claude-3p`, русские копии. У release,
+/// dev-сборки и изолированного запуска (`CLAUDE_GATEWAY_HOME`) она разная — иначе они
+/// перезаписывали бы друг у друга запись `configLibrary` (порт и токен) и делили бы замок профиля.
+pub fn base_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("CLAUDE_GATEWAY_HOME").filter(|v| !v.is_empty()) {
+        return Some(PathBuf::from(home).join("claude"));
+    }
+    let dev = DEV_BUILD.load(std::sync::atomic::Ordering::Relaxed);
+    let name = if dev {
+        "ClaudeProviderGateway-dev"
+    } else {
+        "ClaudeProviderGateway"
+    };
+    Some(local_appdata()?.join(name))
 }
 
 /// AppData\Local: системная папка Windows, а не переменная окружения — та бывает

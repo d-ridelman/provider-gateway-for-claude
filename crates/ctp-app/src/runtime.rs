@@ -143,10 +143,19 @@ async fn bind(
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
             Err(exc) if exc.kind() == std::io::ErrorKind::AddrInUse => {
-                return Err(tr!(
-                    "Порт {port} занят — возможно, уже открыто другое окно шлюза",
-                    "Port {port} is busy; another gateway window may already be open"
-                ));
+                // Порт держит другой шлюз (dev или изолированный запуск рядом с релизом):
+                // не падаем, а берём свободный. Адрес в записи Claude и в `status` берётся
+                // из `local_addr`, так что всё идёт по новому порту.
+                let free = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                    .await
+                    .map_err(|exc| {
+                        tr!(
+                            "Не удалось открыть порт {port}: {exc}",
+                            "Could not open port {port}: {exc}"
+                        )
+                    })?;
+                tracing::warn!(port, "port is busy, using a free one");
+                return Ok(Some(free));
             }
             Err(exc) => {
                 return Err(tr!(
@@ -238,6 +247,17 @@ mod tests {
             .await
             .unwrap();
         (response.status().as_u16(), response.text().await.unwrap())
+    }
+
+    #[tokio::test]
+    async fn busy_port_falls_back_to_a_free_one() {
+        let dir = std::env::temp_dir().join("agents");
+        let shared = AppShared::new(dir, Config::default());
+        let holder = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy = holder.local_addr().unwrap().port();
+        let epoch = shared.epoch.load(Ordering::SeqCst);
+        let listener = bind(&shared, busy, epoch).await.unwrap().unwrap();
+        assert_ne!(listener.local_addr().unwrap().port(), busy);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

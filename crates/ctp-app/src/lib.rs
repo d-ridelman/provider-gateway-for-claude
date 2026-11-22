@@ -56,6 +56,7 @@ pub fn run() {
                 None => app.path().app_config_dir()?,
             };
             std::fs::create_dir_all(&dir)?;
+            claude::set_flavor(&app.config().identifier);
             // После create_dir_all: service_for раскрывает путь, а для этого папка должна быть.
             // Окно и команды появляются только после setup, ключей до этой строки никто не читает.
             store::use_key_service(store::service_for(custom.then_some(dir.as_path())));
