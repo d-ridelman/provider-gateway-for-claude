@@ -267,6 +267,13 @@ pub fn stop_gateway(shared: State<'_, AppShared>) -> UiStatus {
     runtime::status(&shared)
 }
 
+/// Открыт ли Claude в профиле PGC и применены ли ему нынешние настройки (строка статуса).
+#[tauri::command]
+pub fn claude_state(shared: State<'_, AppShared>) -> crate::claude::ClaudeRun {
+    let config = shared.config.lock().unwrap().clone();
+    crate::claude::run_state(&config, &runtime::status(&shared))
+}
+
 #[tauri::command]
 pub fn status(shared: State<'_, AppShared>) -> UiStatus {
     runtime::status(&shared)

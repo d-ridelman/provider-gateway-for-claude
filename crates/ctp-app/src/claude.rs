@@ -345,7 +345,7 @@ fn library_entry(
     status: &UiStatus,
     models: &[serde_json::Value],
 ) -> serde_json::Value {
-    json!({
+    let mut entry = json!({
         "inferenceProvider": "gateway",
         "inferenceGatewayBaseUrl": format!("http://127.0.0.1:{}", status.port),
         "inferenceGatewayApiKey": status.token,
@@ -353,14 +353,58 @@ fn library_entry(
         "inferenceCredentialKind": "static",
         "deploymentDisplayName": "Provider Gateway",
         "inferenceModels": models,
-        // В 3p встроенный браузер выключен по умолчанию; галочка в настройках
-        // включает его там же, где Claude читает остальные поля.
-        "builtinBrowserEnabled": config.builtin_browser,
-    })
+    });
+    // В 3p встроенный браузер выключен по умолчанию. Галочка в настройках только включает
+    // его; без неё ключ не пишется, и действует то, что человек выбрал в окне настроек
+    // Claude (иначе каждый запуск из PGC откатывал бы его выбор).
+    if config.builtin_browser {
+        entry["builtinBrowserEnabled"] = json!(true);
+    }
+    entry
 }
 
 /// Поле записи с ключом шлюза: Claude сам шифрует его в файле, сравнивать его нельзя.
 const API_KEY_FIELD: &str = "inferenceGatewayApiKey";
+
+/// Запись, которую PGC хочет видеть в профиле Claude при нынешних настройках и шлюзе.
+fn desired_entry(config: &Config, status: &UiStatus) -> serde_json::Value {
+    let models = inference_models(&status.models, &role_aliases(config));
+    library_entry(config, status, &models)
+}
+
+/// Что окно PGC показывает про Claude в своём профиле.
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize)]
+pub struct ClaudeRun {
+    /// Claude открыт в профиле PGC.
+    pub running: bool,
+    /// Открыт, но настройки шлюза (порт, модели, флажки) с тех пор изменились: нужен
+    /// перезапуск Claude.
+    pub stale: bool,
+}
+
+/// Состояние для строки статуса в окне: только чтение, ничего не пишется и не копируется.
+pub fn run_state(config: &Config, status: &UiStatus) -> ClaudeRun {
+    let Some(profile) = base_dir().map(|base| base.join("Claude-3p")) else {
+        return ClaudeRun::default();
+    };
+    if !profile_in_use(&profile) {
+        return ClaudeRun::default();
+    }
+    // Остановленный шлюз с нашей записью не сравнить: «устарело» не утверждаем.
+    let stale = status.running && {
+        let path = profile
+            .join("configLibrary")
+            .join(format!("{LIBRARY_ID}.json"));
+        let existing = fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(text.trim_start_matches('\u{feff}')).ok());
+        merge_entry(existing, &desired_entry(config, status)).1
+    };
+    ClaudeRun {
+        running: true,
+        stale,
+    }
+}
 
 /// Наши ключи поверх существующей записи: то, что человек менял в окне Claude, остаётся.
 /// Второе значение — изменились ли наши ключи (кроме зашифрованного ключа шлюза).
@@ -541,8 +585,7 @@ pub fn launch(
         set_deployment_mode(&profile.join("claude_desktop_config.json"))?;
     }
 
-    let models = inference_models(&status.models, &role_aliases(config));
-    let changed = sync_entry(&library, &library_entry(config, status, &models), running)?;
+    let changed = sync_entry(&library, &desired_entry(config, status), running)?;
 
     let mut command = Command::new(&exe);
     command
@@ -1070,8 +1113,8 @@ mod tests {
         let mut config = crate::model::Config::default();
         assert_eq!(
             library_entry(&config, &status, &[]).get("builtinBrowserEnabled"),
-            Some(&serde_json::Value::Bool(false)),
-            "по умолчанию браузер в 3p выключен"
+            None,
+            "без галочки ключ не пишется: действует выбор человека в окне Claude"
         );
         config.builtin_browser = true;
         let entry = library_entry(&config, &status, &[]);

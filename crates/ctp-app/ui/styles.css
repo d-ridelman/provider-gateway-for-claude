@@ -512,6 +512,21 @@ button.small { padding: 5px 9px; font-size: 11px; }
 .actions-left, .actions-right { display: flex; align-items: center; gap: 8px; }
 .actions-right { color: var(--muted); }
 #modelCount { margin-right: 6px; font-size: 12px; }
+.claude-state {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 5px 11px;
+  border: 1px solid var(--line-soft);
+  border-radius: 999px;
+  font-size: 12px;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.actions button { white-space: nowrap; }
+/* The model count is the least important thing in the footer: it goes first when it is tight. */
+@media (max-width: 1000px) { #modelCount { display: none; } }
+.claude-state .dot { background: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+.claude-state.stale { color: var(--accent-2); border-color: rgba(201, 100, 66, .4); background: var(--accent-soft); }
+.claude-state.stale .dot { background: var(--accent-2); box-shadow: 0 0 0 3px var(--accent-soft); }
 
 .logs {
   flex: 0 0 220px;

@@ -118,6 +118,7 @@ pub fn run() {
             commands::start_gateway,
             commands::stop_gateway,
             commands::status,
+            commands::claude_state,
             commands::launch_claude,
             commands::launch_claude_code,
             commands::tail_log,

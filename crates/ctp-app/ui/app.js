@@ -48,7 +48,7 @@ const el = Object.fromEntries(
     "keyInput", "keyHint", "clearKeyBtn", "modelsInput", "maxEffortInput", "defaultEffortInput",
     "aliasBox", "aliasList", "deleteBtn", "formNotice", "settingsPanel", "portInput", "languageInput",
     "claudePathInput", "codeDirInput", "launchCodeBtn", "detectedClaude", "tokenInput", "russianInput",
-    "builtinBrowserInput",
+    "builtinBrowserInput", "claudeState", "claudeStateText",
     "russianFileHint", "claudeWarn", "claudeCheckList", "startBtn", "stopBtn", "launchBtn", "modelCount",
     "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
@@ -79,6 +79,7 @@ async function boot() {
   bind();
   await refresh();
   autostart();
+  pollStatus();
   setInterval(pollStatus, 3000);
   setInterval(() => {
     if (state.logsOpen) refreshLogs();
@@ -133,10 +134,23 @@ async function autostart() {
   }
 }
 
+// Strip in the footer: is Claude open in the gateway's profile, and does it still run with the
+// current settings. Stays on screen (unlike the toast after "Open Claude").
+function renderClaudeState() {
+  const run = state.claudeRun;
+  el.claudeState.classList.toggle("hidden", !run?.running);
+  if (!run?.running) return;
+  el.claudeState.classList.toggle("stale", !!run.stale);
+  el.claudeStateText.textContent = t(run.stale ? "claudeState.stale" : "claudeState.open");
+  el.claudeState.title = t(run.stale ? "claudeState.staleTitle" : "claudeState.openTitle");
+}
+
 async function pollStatus() {
   try {
     state.status = await invoke("status");
     renderStatus();
+    state.claudeRun = await invoke("claude_state").catch(() => null);
+    renderClaudeState();
   } catch {
     /* the app is closing */
   }
@@ -920,6 +934,9 @@ async function launchClaude() {
   } finally {
     launching = false;
     renderStatus();
+    // Claude needs a few seconds to take the profile lock: ask again now and a bit later.
+    pollStatus();
+    setTimeout(pollStatus, 4000);
   }
 }
 
