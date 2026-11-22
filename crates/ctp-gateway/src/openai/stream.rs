@@ -4,6 +4,9 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use uuid::Uuid;
 
+/// Рассуждение после начала текста короче этого (в символах) ждёт конца текста.
+const LATE_REASONING_LIMIT: usize = 64;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BlockKind {
     Text,
@@ -44,6 +47,9 @@ pub struct StreamTranslator {
     prior_output_tokens: u64,
     /// Текст текущего отрезка: из него шлюз собирает ответ ассистента для продолжения.
     segment_text: String,
+    /// Рассуждение, пришедшее, когда текст ответа уже начался: пока оно короткое, текстовый
+    /// блок не рвётся, а оно выходит отдельным блоком после текста (`close_current`).
+    late_thinking: String,
     finish_reason: Option<String>,
     done: bool,
     secret: String,
@@ -77,6 +83,7 @@ impl StreamTranslator {
             provider_input: None,
             prior_output_tokens: 0,
             segment_text: String::new(),
+            late_thinking: String::new(),
             finish_reason: None,
             done: false,
             secret: String::new(),
@@ -161,14 +168,28 @@ impl StreamTranslator {
 
         let reasoning = reasoning_delta(delta);
         if !reasoning.is_empty() {
-            events.extend(self.ensure(BlockKind::Thinking));
-            let index = self.current.as_ref().expect("block was opened").index;
-            events.push(json!({
-                "type": "content_block_delta",
-                "index": index,
-                "delta": {"type": "thinking_delta", "thinking": reasoning}
-            }));
             self.output_chars += reasoning.chars().count() as u64;
+            // Some providers send the tail of the reasoning (even a lone ".") after the first
+            // token of the answer: opening a thinking block there cut "Пробую" into "П" and
+            // "робую". A short straggler waits; a long one is real interleaved thinking.
+            let in_text = self
+                .current
+                .as_ref()
+                .is_some_and(|block| block.kind == BlockKind::Text);
+            let held = self.late_thinking.chars().count() + reasoning.chars().count();
+            if in_text && held <= LATE_REASONING_LIMIT {
+                self.late_thinking.push_str(&reasoning);
+            } else {
+                // Real thinking after the text: what waited goes first, in the provider's order.
+                let reasoning = std::mem::take(&mut self.late_thinking) + &reasoning;
+                events.extend(self.ensure(BlockKind::Thinking));
+                let index = self.current.as_ref().expect("block was opened").index;
+                events.push(json!({
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {"type": "thinking_delta", "thinking": reasoning}
+                }));
+            }
         }
 
         let text = content_delta(delta);
@@ -359,6 +380,7 @@ impl StreamTranslator {
         self.provider_input = None;
         self.output_chars = 0;
         self.segment_text.clear();
+        self.late_thinking.clear();
         self.finish_reason = None;
     }
 
@@ -396,10 +418,37 @@ impl StreamTranslator {
     }
 
     fn close_current(&mut self) -> Vec<Value> {
-        self.current
-            .take()
-            .map(|block| vec![json!({"type": "content_block_stop", "index": block.index})])
-            .unwrap_or_default()
+        let Some(block) = self.current.take() else {
+            return Vec::new();
+        };
+        let mut events = vec![json!({"type": "content_block_stop", "index": block.index})];
+        if block.kind == BlockKind::Text && !self.late_thinking.is_empty() {
+            // Marks without a letter or digit (".") carry nothing: dropped. Words are kept, as a
+            // block of their own right after the text.
+            let held = std::mem::take(&mut self.late_thinking);
+            let keep = held.chars().any(char::is_alphanumeric);
+            tracing::info!(
+                chars = held.chars().count(),
+                kept = keep,
+                "reasoning arrived after the answer text began"
+            );
+            if keep {
+                let index = self.next_index;
+                self.next_index += 1;
+                events.push(json!({
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {"type": "thinking", "thinking": ""}
+                }));
+                events.push(json!({
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {"type": "thinking_delta", "thinking": held}
+                }));
+                events.push(json!({"type": "content_block_stop", "index": index}));
+            }
+        }
+        events
     }
 }
 
@@ -593,5 +642,151 @@ mod tests {
             .find(|e| e["type"] == "message_delta")
             .unwrap();
         assert_eq!(delta["usage"]["input_tokens"], 7000);
+    }
+
+    fn feed(translator: &mut StreamTranslator, deltas: &[Value]) -> Vec<Value> {
+        let mut events = Vec::new();
+        for delta in deltas {
+            events.extend(translator.on_chunk(&json!({
+                "choices": [{"index": 0, "delta": delta, "finish_reason": null}]
+            })));
+        }
+        events
+    }
+
+    /// Kinds of the blocks, in the order they are opened.
+    fn block_kinds(events: &[Value]) -> Vec<String> {
+        events
+            .iter()
+            .filter(|event| event["type"] == "content_block_start")
+            .map(|event| event["content_block"]["type"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    /// Everything streamed as `text_delta` / `thinking_delta` (field `text` / `thinking`).
+    fn streamed(events: &[Value], field: &str) -> String {
+        events
+            .iter()
+            .filter_map(|event| event["delta"][field].as_str())
+            .collect()
+    }
+
+    fn tool_call(name: &str) -> Value {
+        json!({"tool_calls": [{"index": 0, "id": "c1", "function": {"name": name, "arguments": "{}"}}]})
+    }
+
+    #[test]
+    fn a_stray_reasoning_mark_inside_the_answer_does_not_split_it() {
+        // As a provider sent it (Code tab transcript): reasoning, text "П", reasoning ".",
+        // text "робую…", a tool call. Desktop showed "П", a thinking ".", then "робую…".
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        let deltas = [
+            json!({"reasoning_content": "The user asks to find the stream"}),
+            json!({"content": "П"}),
+            json!({"reasoning_content": "."}),
+            json!({"content": "робую по найденному API.\n\n"}),
+            tool_call("Bash"),
+        ];
+        let mut events = feed(&mut translator, &deltas);
+        events.extend(translator.finish());
+        assert_eq!(block_kinds(&events), ["thinking", "text", "tool_use"]);
+        assert_eq!(streamed(&events, "text"), "Пробую по найденному API.\n\n");
+        assert_eq!(
+            streamed(&events, "thinking"),
+            "The user asks to find the stream"
+        );
+        // The dropped mark still counts as output, as before.
+        let chars: usize = deltas
+            .iter()
+            .map(|d| {
+                ["reasoning_content", "content"]
+                    .iter()
+                    .filter_map(|key| d[key].as_str())
+                    .map(|s| s.chars().count())
+                    .sum::<usize>()
+                    + usize::from(d.get("tool_calls").is_some()) * 2
+            })
+            .sum();
+        let delta = events
+            .iter()
+            .find(|e| e["type"] == "message_delta")
+            .unwrap();
+        assert_eq!(delta["usage"]["output_tokens"], (chars as u64 / 4).max(1));
+    }
+
+    #[test]
+    fn late_reasoning_with_words_follows_the_answer_text() {
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        let mut events = feed(
+            &mut translator,
+            &[
+                json!({"reasoning_content": "plan"}),
+                json!({"content": "Hi"}),
+                json!({"reasoning_content": " then check"}),
+                json!({"content": " there"}),
+            ],
+        );
+        events.extend(translator.finish());
+        assert_eq!(block_kinds(&events), ["thinking", "text", "thinking"]);
+        assert_eq!(streamed(&events, "text"), "Hi there");
+        assert_eq!(streamed(&events, "thinking"), "plan then check");
+        // The text block is closed before the late thinking opens.
+        let types: Vec<&str> = events.iter().map(|e| e["type"].as_str().unwrap()).collect();
+        assert_eq!(
+            types,
+            [
+                "content_block_start",
+                "content_block_delta",
+                "content_block_stop", // thinking
+                "content_block_start",
+                "content_block_delta",
+                "content_block_delta",
+                "content_block_stop", // text
+                "content_block_start",
+                "content_block_delta",
+                "content_block_stop", // late thinking
+                "message_delta",
+                "message_stop"
+            ]
+        );
+    }
+
+    #[test]
+    fn long_reasoning_between_texts_keeps_the_providers_order() {
+        // A provider that really interleaves thinking and text is not rearranged.
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        let long = "x ".repeat(100);
+        let mut events = feed(
+            &mut translator,
+            &[
+                json!({"reasoning_content": "plan"}),
+                json!({"content": "Hi"}),
+                json!({"reasoning_content": long}),
+                json!({"content": "Done"}),
+            ],
+        );
+        events.extend(translator.finish());
+        assert_eq!(
+            block_kinds(&events),
+            ["thinking", "text", "thinking", "text"]
+        );
+        assert_eq!(streamed(&events, "thinking"), format!("plan{long}"));
+    }
+
+    #[test]
+    fn late_reasoning_is_flushed_before_an_advisor_call() {
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        feed(
+            &mut translator,
+            &[
+                json!({"reasoning_content": "plan"}),
+                json!({"content": "Hi"}),
+                json!({"reasoning_content": " ask them"}),
+                tool_call(crate::openai::request::ADVISOR),
+            ],
+        );
+        let (_, events) = translator.take_advisor_call().expect("advisor call");
+        assert_eq!(block_kinds(&events), ["thinking", "server_tool_use"]);
+        assert_eq!(streamed(&events, "thinking"), " ask them");
     }
 }
