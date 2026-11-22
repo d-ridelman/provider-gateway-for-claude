@@ -265,7 +265,7 @@ if (args.includes("--audit")) {
 if (args.includes("--detect")) {
   chrome.kill();
   const pluginRoot = path.join(os.homedir(), ".claude", "plugins", "cache", "impeccable", "impeccable");
-  const versions = fs.existsSync(pluginRoot) ? fs.readdirSync(pluginRoot).sort() : [];
+  const versions = fs.existsSync(pluginRoot) ? fs.readdirSync(pluginRoot).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
   const bin = versions.length && path.join(pluginRoot, versions.at(-1), "skills", "impeccable", "scripts", "impeccable.cmd");
   if (!bin || !fs.existsSync(bin)) throw new Error("the Impeccable plugin is not installed: claude plugin enable impeccable@impeccable --scope local");
   const pages = ["normal", "normal&view=settings", "empty", "stale", "warn", "error", "long&view=settings", "forceddark", "forceddark&view=settings", "forcedlight", "normal&lang=en&view=settings"];
@@ -279,15 +279,15 @@ if (args.includes("--detect")) {
       let text = "";
       p.stdout.on("data", (d) => (text += d));
       p.stderr.on("data", (d) => (text += d));
-      p.on("close", () => resolve(text));
+      p.on("close", (code) => resolve({ text, code }));
     });
-    const found = /(\d+) anti-patterns? found/.exec(out);
+    const found = /(\d+) anti-patterns? found/.exec(out.text);
     const count = found ? Number(found[1]) : 0;
-    // A clean page prints nothing. Anything else without a findings count is a broken run, not "clean".
-    const clean = !out.trim() || /\b0 anti-patterns? found/.test(out);
+    // The detector exits 0 when clean and 2 with findings; anything else is a broken run, never "clean".
+    const clean = out.code === 0 && !count;
     if (count) failed += count;
     else if (!clean) failed += 1;
-    console.log(page.padEnd(34), count ? `${count} finding(s)\n${out.trim()}` : clean ? "clean" : `UNEXPECTED OUTPUT\n${out.trim()}`);
+    console.log(page.padEnd(34), count ? `${count} finding(s)\n${out.text.trim()}` : clean ? "clean" : `DETECTOR FAILED (exit ${out.code})\n${out.text.trim()}`);
   }
   server.close();
   fs.rmSync(profile, { recursive: true, force: true });
