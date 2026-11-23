@@ -392,6 +392,15 @@ mod tests {
         // SAFETY: до потоков, читающих окружение.
         unsafe { std::env::set_var("CLAUDE_GATEWAY_HOME", &home) };
         let original = win::query().unwrap();
+        // Исходное возвращается и если тест упадёт посередине.
+        struct Back(Saved);
+        impl Drop for Back {
+            fn drop(&mut self) {
+                let _ = disable();
+                let _ = win::set(&self.0);
+            }
+        }
+        let _back = Back(original.clone());
         let domain = Saved {
             flags: win::DIRECT | 4 | 8, // + PAC + автоопределение
             server: None,
@@ -448,7 +457,6 @@ mod tests {
         let after = win::query().unwrap();
         println!("after: {after:?}");
         assert_eq!(after, before, "the domain setup is back");
-        win::set(&original).unwrap();
     }
 
     /// Чтение настроек Windows ничего не меняет и должно работать на любой машине.

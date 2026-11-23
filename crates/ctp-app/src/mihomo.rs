@@ -1310,6 +1310,14 @@ mod tests {
         if installed_version().is_none() {
             download_core(&|_, _| {}).await.unwrap();
         }
+        // Ядро гаснет и если тест упадёт посередине.
+        struct Down;
+        impl Drop for Down {
+            fn drop(&mut self) {
+                shutdown();
+            }
+        }
+        let _down = Down;
         let mut config = Config::default();
         config.proxy.mode = "tun".into();
         config.proxy.port = pick_port().unwrap();

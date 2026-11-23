@@ -54,8 +54,10 @@ pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
     let updater = app
         .updater_builder()
         .on_before_exit(move || {
+            // Только живое ядро: упавшее раньше само после сорвавшейся установки не поднимаем.
+            let was_running = crate::mihomo::running();
             crate::mihomo::shutdown();
-            flag.store(true, std::sync::atomic::Ordering::SeqCst);
+            flag.store(was_running, std::sync::atomic::Ordering::SeqCst);
             handle.cleanup_before_exit();
         })
         .build()
