@@ -1613,6 +1613,50 @@ async fn a_provider_that_needs_reasoning_content_keeps_it_while_the_ladder_goes_
     assert!(!last.contains("image_url"));
 }
 
+#[tokio::test]
+async fn a_provider_that_refuses_the_field_and_a_picture_gets_both_taken_out() {
+    // Two obstacles at once: neither rung helps alone. After the others the field goes out too.
+    let upstream = MockServer::start().await;
+    for needle in ["image_url", "reasoning_content"] {
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(wiremock::matchers::body_string_contains(needle))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "error": {"message": "[invalid_request] the request is invalid"}
+            })))
+            .with_priority(1)
+            .mount(&upstream)
+            .await;
+    }
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(chat_ok())
+        .with_priority(10)
+        .mount(&upstream)
+        .await;
+    let mut messages = history_with_thinking();
+    messages[2]["content"] = json!([
+        {"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png",
+                                     "data": screenshot_png(64, 64)}}
+    ]);
+    let response = app(state_with(&upstream.uri(), "openai", "strict-x"))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32,
+            "tools": [{"name": "read", "description": "r", "input_schema": {"type": "object"}}],
+            "messages": messages
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = upstream.received_requests().await.unwrap();
+    let last = String::from_utf8_lossy(&requests.last().unwrap().body).to_string();
+    assert!(
+        !last.contains("image_url") && !last.contains("reasoning_content"),
+        "{last}"
+    );
+}
+
 fn chat_ok() -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_json(json!({
         "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]

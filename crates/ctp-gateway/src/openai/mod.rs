@@ -87,6 +87,9 @@ async fn send(
     let mut removed_images: Vec<u64> = Vec::new();
     // Вынутое ступенью «без рассуждения» — вернуть, если она не помогла.
     let mut reasoning_taken: Option<Vec<(usize, Value)>> = None;
+    // Ступень «без рассуждения» уже пробовалась (одна) и пробовалась ли последней (поверх всего).
+    let mut reasoning_tried = false;
+    let mut reasoning_last = false;
     let mut first_refusal: Option<(u16, String)> = None;
     'send: loop {
         let request = state
@@ -177,6 +180,7 @@ async fn send(
                 let changed = if step == adapt::Step::Reasoning {
                     let saved = request::take_reasoning(payload);
                     let changed = !saved.is_empty();
+                    reasoning_tried |= changed;
                     reasoning_taken = changed.then_some(saved);
                     changed
                 } else {
@@ -196,9 +200,28 @@ async fn send(
                     continue 'send;
                 }
             }
+            // Лесенка кончилась, а поле на месте: убираем и его, поверх уже применённых ступеней, —
+            // провайдеру могут мешать и оно, и что-то ещё (картинка, лишние инструменты).
+            if reasoning_tried && !reasoning_last && !applied.is_empty() {
+                let saved = request::take_reasoning(payload);
+                if !saved.is_empty() {
+                    reasoning_last = true;
+                    reasoning_taken = Some(saved);
+                    applied.push(adapt::Step::Reasoning);
+                    info!(
+                        provider = %provider.id,
+                        model = %upstream_model,
+                        status,
+                        step = adapt::Step::Reasoning.label(),
+                        provider_said = %snippet(&reason),
+                        "the provider refused the request, retrying with the reasoning left out as well"
+                    );
+                    continue 'send;
+                }
+            }
             // Ничего не помогло: это не капризы модели, а сам запрос. Клиенту и в журнал —
             // отказ на исходный запрос, а не на упрощённый до неузнаваемости.
-            if !applied.is_empty() {
+            if !applied.is_empty() || reasoning_tried {
                 state.profiles.cool(&key);
             }
             if let Some((first_status, first_text)) = first_refusal {
