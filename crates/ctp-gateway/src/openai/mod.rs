@@ -229,7 +229,9 @@ fn drop_advisor_calls(message: &mut Value) {
     let tools_left = content
         .iter()
         .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"));
-    if content.len() != before && !tools_left {
+    // Ответ, оборванный на пределе токенов (`max_tokens`), остаётся оборванным: сигнал нужен
+    // Claude Code, чтобы поднять предел.
+    if content.len() != before && !tools_left && message["stop_reason"] == "tool_use" {
         message["stop_reason"] = json!("end_turn");
     }
 }
@@ -512,4 +514,22 @@ pub(crate) fn upstream_headers(provider: &Provider, session: Option<&str>) -> He
         }
     }
     headers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dropping_the_advisor_call_keeps_a_cut_answer_cut() {
+        let call = json!({"type": "tool_use", "id": "t", "name": request::ADVISOR, "input": {}});
+        let mut done = json!({"content": [call.clone()], "stop_reason": "tool_use"});
+        drop_advisor_calls(&mut done);
+        assert_eq!(done["stop_reason"], "end_turn");
+        // A call the model started and the token limit cut off was dropped earlier: the answer
+        // is still a cut one.
+        let mut cut = json!({"content": [call], "stop_reason": "max_tokens"});
+        drop_advisor_calls(&mut cut);
+        assert_eq!(cut["stop_reason"], "max_tokens");
+    }
 }

@@ -102,11 +102,12 @@ pub(crate) async fn lookup(
     }
 }
 
-/// Пустая выдача — честный ответ, только если источники ответили «ничего нет». Блокировка
-/// или пауза источника («resting») — не он: Claude должен получить отказ (`too_many_requests`),
-/// а не «No links found», иначе он минутами переписывает запросы.
+/// Пустая выдача — честный ответ, только если источники ответили «ничего нет». Блокировка,
+/// 429 или пауза источника — не он: Claude должен получить отказ (`too_many_requests`), а не
+/// «No links found», иначе он минутами переписывает запросы. Признак ставит `find` флагом,
+/// а не поиском слов в тексте: в причины попадают адреса с самим запросом.
 fn is_empty_answer(reasons: &str) -> bool {
-    reasons.contains("no results") && !reasons.contains("blocked") && !reasons.contains("resting")
+    reasons.contains("no results") && !reasons.starts_with(BLOCKED)
 }
 
 /// Маршрут без ключа: страница в браузере человека не должна гонять через него поиск.
@@ -245,8 +246,17 @@ async fn find(
     } else if blocked {
         reasons.push(format!("browser: not available ({BROWSER_ENV})"));
     }
-    Err(reasons.join("; "))
+    let reasons = reasons.join("; ");
+    // Поисковики блокируют (проверка на бота), отвечают 429 или отдыхают после этого.
+    Err(if blocked {
+        format!("{BLOCKED}: {reasons}")
+    } else {
+        reasons
+    })
 }
+
+/// Начало отказа, когда поисковики не отвечают из-за блокировки или ограничения частоты.
+pub(crate) const BLOCKED: &str = "blocked";
 
 /// Один источник через встроенный браузер: страница открывается как визит человека.
 async fn browser_fetch(
@@ -772,12 +782,18 @@ mod tests {
         assert!(is_empty_answer(
             "brave: no results; ddg: no results; ddg-lite: no results"
         ));
-        // A source on pause plus an empty browser pass is a refusal, not an empty list.
-        assert!(!is_empty_answer(
-            "brave: resting; ddg: resting; ddg-lite: resting; browser: no results"
-        ));
-        assert!(!is_empty_answer(
-            "brave: blocked (bot check); browser: no results"
+        // A source on pause (or blocked, or 429) plus an empty browser pass is a refusal.
+        assert!(!is_empty_answer(&format!(
+            "{BLOCKED}: brave: resting; ddg: resting; ddg-lite: resting; browser: no results"
+        )));
+        assert!(!is_empty_answer(&format!(
+            "{BLOCKED}: brave: HTTP 429; browser: no results"
+        )));
+        // One source down on the network does not turn the others' "nothing found" into a
+        // refusal, and a word of the query inside the failed URL ("interesting") means nothing.
+        assert!(is_empty_answer(
+            "brave: error sending request for url (https://x/?q=interesting+facts); \
+             ddg: no results; ddg-lite: no results"
         ));
     }
 

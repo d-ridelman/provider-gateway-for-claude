@@ -131,7 +131,8 @@ fn filter(results: Vec<Value>, search: &Search) -> Vec<Value> {
 }
 
 fn error_code(why: &str) -> &'static str {
-    if why.contains("blocked") || why.contains("429") || why.contains("resting") {
+    // Флаг от `websearch::find`: слова в тексте причин не годятся, там адреса с запросом.
+    if why.starts_with(crate::websearch::BLOCKED) {
         "too_many_requests"
     } else {
         "unavailable"
@@ -482,7 +483,10 @@ mod tests {
         let blocked = tail_events(
             &ids,
             "q",
-            &Err("ddg: blocked (anomaly); brave: HTTP 429".into()),
+            &Err(format!(
+                "{}: ddg: blocked (anomaly); brave: HTTP 429",
+                crate::websearch::BLOCKED
+            )),
         );
         assert_eq!(
             blocked[0]["content_block"]["content"]["type"],
@@ -495,6 +499,16 @@ mod tests {
         let down = tail_events(&ids, "q", &Err("ddg: connection refused".into()));
         assert_eq!(
             down[0]["content_block"]["content"]["error_code"],
+            "unavailable"
+        );
+        // Words of the query inside a failed address ("resting", "429") are not a block.
+        let odd = tail_events(
+            &ids,
+            "q",
+            &Err("ddg: error sending request for url (https://x/?q=interesting+port+4290)".into()),
+        );
+        assert_eq!(
+            odd[0]["content_block"]["content"]["error_code"],
             "unavailable"
         );
     }

@@ -307,27 +307,40 @@ impl StreamTranslator {
         self.done
     }
 
-    /// Какому вызову принадлежит кусок. С `index` всё ясно. Без него позиция в куске ничего
-    /// не значит, если провайдер шлёт по вызову на кусок: новый `id` — новый вызов, кусок
-    /// без `id` продолжает последний. Несколько вызовов в одном куске держатся по позиции.
+    /// Какому вызову принадлежит кусок. С `index` всё ясно. Несколько вызовов в одном куске
+    /// держатся по позиции. Без `index` и в куске из одного вызова позиция ничего не значит
+    /// (провайдер шлёт по вызову на кусок): совпавший `id` — тот же вызов; новый `id` или
+    /// новое имя — следующий вызов; остальное (кусок с аргументами, `id` позже имени) —
+    /// продолжение последнего.
     fn tool_slot(&self, call: &Value, position: usize, siblings: usize) -> u64 {
         if let Some(index) = call.get("index").and_then(Value::as_u64) {
             return index;
         }
-        let last = self.tools.keys().next_back().copied();
+        if siblings > 1 {
+            return position as u64;
+        }
+        let last = self.tools.iter().next_back();
+        let last_key = last.map_or(0, |(key, _)| *key);
+        let next = last.map_or(0, |(key, _)| key + 1);
+        let named = call
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .is_some_and(|name| !name.is_empty());
         match call
             .get("id")
             .and_then(Value::as_str)
             .filter(|id| !id.is_empty())
         {
-            Some(id) => self
-                .tools
-                .iter()
-                .find(|(_, entry)| entry.id == id)
-                .map(|(key, _)| *key)
-                .unwrap_or_else(|| last.map_or(0, |key| key + 1)),
-            None if siblings == 1 => last.unwrap_or(0),
-            None => position as u64,
+            Some(id) => match self.tools.iter().find(|(_, entry)| entry.id == id) {
+                Some((key, _)) => *key,
+                // Кусок без имени несёт `id` позднее: он дописывается вызову, у которого
+                // `id` ещё нет.
+                None if !named && last.is_some_and(|(_, entry)| entry.id.is_empty()) => last_key,
+                None => next,
+            },
+            // Новое имя после уже названного вызова начинает следующий.
+            None if named && last.is_some_and(|(_, entry)| !entry.name.is_empty()) => next,
+            None => last_key,
         }
     }
 
@@ -826,6 +839,58 @@ mod tests {
             [
                 ("Read".to_string(), "{\"path\":\"a\"}".to_string()),
                 ("Write".to_string(), "{\"path\":\"b\"}".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_late_id_belongs_to_the_call_it_follows_and_a_new_name_starts_a_new_call() {
+        // The id arrives in a later piece than the name: still one call.
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        feed(
+            &mut translator,
+            &[
+                json!({"tool_calls": [{"function": {"name": "Read", "arguments": "{\"p\":"}}]}),
+                json!({"tool_calls": [{"id": "a", "function": {"arguments": "1}"}}]}),
+            ],
+        );
+        assert_eq!(
+            tool_uses(&translator.finish()),
+            [("Read".to_string(), "{\"p\":1}".to_string())]
+        );
+        // A piece with a name and no id, after a named call, is the next call.
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        feed(
+            &mut translator,
+            &[
+                json!({"tool_calls": [{"id": "a", "function": {"name": "Read", "arguments": "{}"}}]}),
+                json!({"tool_calls": [{"function": {"name": "Write", "arguments": "{}"}}]}),
+            ],
+        );
+        assert_eq!(
+            tool_uses(&translator.finish()),
+            [
+                ("Read".to_string(), "{}".to_string()),
+                ("Write".to_string(), "{}".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn calls_in_one_chunk_keep_their_positions_even_with_the_same_id() {
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        feed(
+            &mut translator,
+            &[json!({"tool_calls": [
+                {"id": "x", "function": {"name": "Read", "arguments": "{}"}},
+                {"id": "x", "function": {"name": "Write", "arguments": "{}"}}
+            ]})],
+        );
+        assert_eq!(
+            tool_uses(&translator.finish()),
+            [
+                ("Read".to_string(), "{}".to_string()),
+                ("Write".to_string(), "{}".to_string())
             ]
         );
     }

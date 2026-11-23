@@ -467,6 +467,30 @@ async fn anthropic_error_body_does_not_carry_the_upstream_key() {
 }
 
 #[tokio::test]
+async fn anthropic_error_body_that_is_not_utf8_passes_untouched() {
+    // A proxy's HTML page in cp1251: cutting the key out must not mangle bytes it cannot read.
+    let upstream = MockServer::start().await;
+    let body: Vec<u8> = vec![0xCF, 0xF0, 0xEE, 0xEA, 0xF1, 0xE8];
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(502).set_body_raw(body.clone(), "text/html"))
+        .mount(&upstream)
+        .await;
+    let state = state_with(&upstream.uri(), "anthropic", "claude-test");
+    let response = app(state)
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000",
+            "max_tokens": 8,
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    let sent = response.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(sent.to_vec(), body);
+}
+
+#[tokio::test]
 async fn openai_count_tokens_is_local() {
     let state = state_with("http://127.0.0.1:9", "openai", "gpt-5.2");
     let request = Request::builder()
