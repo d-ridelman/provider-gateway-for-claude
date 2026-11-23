@@ -179,10 +179,10 @@ pub async fn get_code(portable: bool, progress: download::Progress<'_>) -> Resul
     let staging = home.join("downloads");
     let exe = staging.join(format!("claude-{version}.exe"));
     download::to_file(&client, &url, &exe, &expect, progress).await?;
-    let result = (|| {
-        download::ensure_anthropic(&exe)?;
-        run_hidden(&exe, &["install"])
-    })();
+    let result = match download::ensure_anthropic(&exe) {
+        Ok(()) => run_hidden(&exe, &["install"], true).await,
+        Err(exc) => Err(exc),
+    };
     let _ = std::fs::remove_dir_all(&staging);
     let output = result?;
     tracing::info!(%version, output = %output.trim(), "Claude Code installed");
@@ -192,8 +192,11 @@ pub async fn get_code(portable: bool, progress: download::Progress<'_>) -> Resul
     ))
 }
 
-/// Программа без окна консоли, с прокси приложения в окружении; ответ — её вывод.
-fn run_hidden(exe: &Path, args: &[&str]) -> Result<String> {
+/// Программа без окна консоли, с прокси приложения в окружении, в отдельном потоке.
+/// `capture` — собрать вывод. Без него потоки закрыты: установщик Claude запускает
+/// Claude, тот унаследовал бы пайпы, и ожидание вывода не кончилось бы до его закрытия.
+async fn run_hidden(exe: &Path, args: &[&str], capture: bool) -> Result<String> {
+    use std::process::Stdio;
     let mut command = std::process::Command::new(exe);
     command.args(args);
     for (name, value) in proxy_env() {
@@ -204,16 +207,28 @@ fn run_hidden(exe: &Path, args: &[&str]) -> Result<String> {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let output = command
-        .output()
-        .with_context(|| exe.display().to_string())?;
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    ensure!(output.status.success(), "{}", text.trim());
-    Ok(text)
+    let shown = exe.display().to_string();
+    tokio::task::spawn_blocking(move || {
+        if !capture {
+            let status = command
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .with_context(|| shown.clone())?;
+            ensure!(status.success(), "{shown}: {status}");
+            return Ok(String::new());
+        }
+        let output = command.output().with_context(|| shown.clone())?;
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        ensure!(output.status.success(), "{}", text.trim());
+        Ok(text)
+    })
+    .await?
 }
 
 /// Переменные прокси для дочерних программ (Claude Code, установщики): пусто, если
@@ -357,10 +372,10 @@ pub async fn get_desktop(
             ..Default::default()
         };
         download::to_file(&client, &url, &setup, &expect, progress).await?;
-        let result = (|| {
-            download::ensure_anthropic(&setup)?;
-            run_hidden(&setup, &[])
-        })();
+        let result = match download::ensure_anthropic(&setup) {
+            Ok(()) => run_hidden(&setup, &[], false).await,
+            Err(exc) => Err(exc),
+        };
         let _ = std::fs::remove_dir_all(&staging);
         result?;
         return Ok(DesktopResult {
