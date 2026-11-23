@@ -5,6 +5,7 @@ pub mod commands;
 pub mod download;
 pub mod fetch;
 pub mod i18n;
+pub mod installs;
 pub mod model;
 pub mod runtime;
 pub mod ruui;
@@ -133,6 +134,8 @@ pub fn run() {
             commands::app_exit,
             commands::check_update,
             commands::install_update,
+            commands::download_code,
+            commands::download_desktop,
             commands::win_minimize,
             commands::win_toggle_maximize,
             commands::win_close,

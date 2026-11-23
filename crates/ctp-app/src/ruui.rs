@@ -776,6 +776,15 @@ pub fn decide(
     remap(now, copies, installed, fallback_app).map_or(Fix::Skip, Fix::Set)
 }
 
+/// Значение реестра портативного Claude при уборке: прежнее (если его программа на
+/// месте) или удалить.
+pub fn forget_fix(saved: Option<&str>) -> Fix {
+    match saved.filter(|s| program_exists(s)) {
+        Some(saved) => Fix::Set(saved.to_string()),
+        None => Fix::Remove,
+    }
+}
+
 /// Существует ли программа из командной строки реестра (`"C:\…\x.exe" -- "%1"`).
 fn program_exists(command: &str) -> bool {
     let command = command.trim();
@@ -890,7 +899,41 @@ pub mod registry {
                 Err(exc) => tracing::warn!(key = %path, error = %exc, "registry: cannot replace"),
             }
         }
-        // MuiCache — кэш имён программ: путь копии в имени значения, просто убираем.
+        forget_mui(copies);
+    }
+
+    /// Портативный Claude без установленного: всё, что он записал о себе, убирается, а
+    /// бывшее до него значение (из снимка) возвращается — в системе от него не остаётся
+    /// ничего, кроме пустых ключей.
+    pub fn forget(root: &Path, before: Option<&Snapshot>) {
+        for (path, name) in watched() {
+            if read(&path, &name).is_none_or(|v| !mentions(&v, root)) {
+                continue;
+            }
+            let saved = before.and_then(|s| {
+                s.0.iter()
+                    .find(|(p, n, _)| {
+                        p.eq_ignore_ascii_case(&path) && n.eq_ignore_ascii_case(&name)
+                    })
+                    .map(|(_, _, v)| v.clone())
+            });
+            let result = match super::forget_fix(saved.as_deref()) {
+                super::Fix::Set(old) => CURRENT_USER
+                    .create(&path)
+                    .and_then(|k| k.set_string(&name, &old)),
+                _ => CURRENT_USER
+                    .create(&path)
+                    .and_then(|k| k.remove_value(&name)),
+            };
+            if let Err(exc) = result {
+                tracing::warn!(key = %path, error = %exc, "registry: cannot clean");
+            }
+        }
+        forget_mui(root);
+    }
+
+    /// MuiCache — кэш имён программ: путь копии в имени значения, просто убираем.
+    fn forget_mui(copies: &Path) {
         let copies_lower = copies.display().to_string().to_ascii_lowercase();
         if let Ok(mui) = CURRENT_USER.create(MUI)
             && let Ok(values) = mui.values()
@@ -907,6 +950,19 @@ pub mod registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn portable_traces_go_back_to_what_was_there_or_away() {
+        // Прежняя программа на месте — её значение возвращается; нет — значение убирается.
+        let exe = std::env::current_exe().unwrap();
+        let before = format!("\"{}\" \"%1\"", exe.display());
+        assert_eq!(forget_fix(Some(&before)), Fix::Set(before.clone()));
+        assert_eq!(
+            forget_fix(Some("\"C:\\nope\\claude.exe\" \"%1\"")),
+            Fix::Remove
+        );
+        assert_eq!(forget_fix(None), Fix::Remove);
+    }
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir()

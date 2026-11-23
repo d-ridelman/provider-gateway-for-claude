@@ -74,6 +74,11 @@ const STUB = String.raw`
     codeDir: null, language: lang, languagePref: "auto", themePref, autoUpdate: true, version: "0.2.2",
     modelRoles: providers.length ? { sonnet: { provider: providers[0].id, model: providers[0].models[0] }, opus: null, haiku: null } : { sonnet: null, opus: null, haiku: null },
     advisorModel: "opus", advisorDecided: true, claudeSettings: "C:\\Users\\user\\.claude\\settings.json", claudeSettingsError: null, advisorNotice: null,
+    codePortable: scenario === "portable",
+    detectedCode: scenario === "empty" ? null : "C:\\Users\\user\\.local\\bin\\claude.exe",
+    installed: scenario === "portable"
+      ? { codePortable: "2.1.330", desktopPortable: "6.28899.6", desktopPortableExe: "C:\\Users\\user\\AppData\\Local\\ClaudeProviderGateway\\claude-desktop\\app-6.28899.6\\claude.exe", desktopInstalled: null }
+      : { codePortable: null, desktopPortable: null, desktopPortableExe: null, desktopInstalled: scenario === "empty" ? null : home },
   });
   let running = scenario !== "empty";
   const status = () => ({ running, port: 17899, token: cfg().token, models: running ? models() : [], logPath: "C:\\logs\\gateway.log",
@@ -92,6 +97,17 @@ const STUB = String.raw`
     launch_claude_code: () => "Claude Code opened", tail_log: () => "2026-11-22T10:00:00Z INFO gateway started port=17899\n".repeat(30),
     open_logs: () => null, copy_text: () => null, pick_folder: () => null, app_exit: () => null, check_update: () => ({ available: false }),
     install_update: () => null, win_minimize: () => null, win_toggle_maximize: () => null, win_close: () => null, code_command: () => "$env:X=1\nclaude",
+    // Downloads: progress events while the answer waits (the "downloading" shot catches the middle).
+    download_code: () => downloadStub("code"), download_desktop: () => downloadStub("desktop"),
+  };
+  const listeners = {};
+  const downloadStub = async (id) => {
+    for (let done = 0; done <= 100; done += 25) {
+      (listeners.download ?? []).forEach((f) => f({ payload: { id, done: done * 2621440, total: 262144000 } }));
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    if (scenario === "error") return fail("sha1 mismatch: expected 3449da9c…, got 00000000… (stubbed)");
+    return { message: "Portable " + id + " is ready", config: cfg() };
   };
   const invoke = async (cmd, a) => {
     if (delay) await new Promise((r) => setTimeout(r, delay));
@@ -99,7 +115,8 @@ const STUB = String.raw`
     if (!h) return fail("unknown command " + cmd);
     return h(a);
   };
-  window.__TAURI__ = { core: { invoke } };
+  const listen = async (name, f) => { (listeners[name] ??= []).push(f); return () => {}; };
+  window.__TAURI__ = { core: { invoke }, event: { listen } };
   // ?view=settings opens Settings by itself (for scanners that only load the URL).
   if (q.get("view") === "settings") window.addEventListener("load", () => setTimeout(() => document.getElementById("settingsBtn")?.click(), 500));
 })();
@@ -158,6 +175,10 @@ const SCREENS = {
   // An edited port: Save wakes up and the bar says there is something to save.
   settingsdirty: "(async () => { document.getElementById('settingsBtn').click(); await new Promise((r) => setTimeout(r, 400)); const p = document.getElementById('portInput'); p.value = '18000'; p.dispatchEvent(new Event('input', { bubbles: true })); })()",
   testconn: "[...document.querySelectorAll('button')].find((b) => /Проверить связь|Test connection/.test(b.textContent))?.click()",
+  // A portable download in the middle: busy button, the other one off, progress in the hint.
+  downloading: "(async () => { document.getElementById('settingsBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.getElementById('desktopPortableBtn').click(); document.getElementById('codePortableBtn').click(); await new Promise((r) => setTimeout(r, 700)); })()",
+  // Installing over a regular Claude asks first.
+  installask: "(async () => { document.getElementById('settingsBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.getElementById('desktopInstallBtn').click(); })()",
 };
 const W = [[1920, 1080], [1280, 800], [900, 700], [1000, 680], [1100, 740]];
 const shots = [];
@@ -194,6 +215,11 @@ add("open", "main", [1], ["dark"]);
 add("forceddark", "main", [1], ["light"]);
 add("forcedlight", "settings", [1], ["dark"]);
 add("stale", "main", [0, 1, 2], ["light", "dark"]);
+// Downloads of Claude: portable ones present, a download running, the question before installing.
+add("portable", "settings", [0, 1], ["light", "dark"]);
+add("normal", "downloading", [1], ["light", "dark"], "ru", { settleMs: 900 });
+add("normal", "installask", [1], ["dark"]);
+add("empty", "settings", [1], ["dark"], "en");
 // The README screenshots (docs/images): neutral demo providers; Settings on a taller window so the
 // whole page is in the frame. `node tools/ui-shots.mjs --only docs- --out state/docs-shots`.
 W.push([1280, 1140]);

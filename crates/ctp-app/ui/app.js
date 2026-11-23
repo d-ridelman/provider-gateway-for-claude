@@ -54,7 +54,8 @@ const el = Object.fromEntries(
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
     "dialogText", "dialogOk", "dialogCancel", "dialogAlt", "dialogCheckRow", "dialogCheck", "dialogCheckText",
     "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn", "roleSonnet", "roleOpus", "roleHaiku",
-    "advisorInput", "advisorRow",
+    "advisorInput", "advisorRow", "desktopPortableBtn", "desktopInstallBtn", "desktopGetHint", "codeFound",
+    "codePortableInput", "codePortableBtn", "codeInstallBtn", "codeGetHint",
   ].map((id) => [id, $(id)]),
 );
 el.form = el.providerForm;
@@ -439,6 +440,7 @@ function settingsDirty() {
     el.russianInput.checked !== !!c.russianUi ||
     el.builtinBrowserInput.checked !== !!c.builtinBrowser ||
     el.autoUpdateInput.checked !== (c.autoUpdate !== false) ||
+    el.codePortableInput.checked !== !!c.codePortable ||
     el.advisorInput.checked !== advisorShown ||
     ROLES.some(([role, id]) => el[id].value !== roleKey(c.modelRoles?.[role]))
   );
@@ -576,7 +578,82 @@ function renderSettings() {
   el.russianFileHint.classList.toggle("hidden", !!state.config.russianFile);
   el.versionText.textContent = t("update.current", { version: state.config.version });
   el.autoUpdateInput.checked = state.config.autoUpdate !== false;
+  renderDownloads();
   syncSettingsSave();
+}
+
+// Download rows of Claude Desktop and Claude Code: what is there and what the buttons do.
+// A running download writes its progress into the hint instead (onDownload).
+const downloading = {};
+function renderDownloads() {
+  const c = state.config;
+  const got = c.installed ?? {};
+  el.desktopPortableBtn.textContent = t(got.desktopPortable ? "settings.unpackUpdate" : "settings.unpack");
+  if (!downloading.desktop) {
+    el.desktopGetHint.textContent = got.desktopPortable
+      ? t("settings.desktopPortableHint", { version: got.desktopPortable })
+      : t("settings.desktopGetHint");
+  }
+  el.codeFound.textContent = c.detectedCode
+    ? t("settings.codeFound", { path: c.detectedCode })
+    : t("settings.codeNotFound");
+  el.codeFound.title = c.detectedCode ?? "";
+  el.codePortableInput.checked = !!c.codePortable;
+  el.codePortableInput.disabled = !got.codePortable && !c.codePortable;
+  el.codePortableBtn.textContent = t(got.codePortable ? "settings.codePortableUpdate" : "settings.codePortableGet");
+  if (!downloading.code) {
+    el.codeGetHint.textContent = got.codePortable
+      ? t("settings.codePortableHint", { version: got.codePortable })
+      : t("settings.codeGetHint");
+  }
+}
+
+function onDownload({ payload }) {
+  const hint = { desktop: el.desktopGetHint, code: el.codeGetHint }[payload?.id];
+  if (!hint || !downloading[payload.id]) return;
+  const mb = (bytes) => (bytes / 1048576).toFixed(0);
+  hint.textContent =
+    payload.total && payload.done >= payload.total
+      ? t("download.checking")
+      : payload.total
+        ? t("download.progress", { done: mb(payload.done), total: mb(payload.total) })
+        : t("download.progressUnknown", { done: mb(payload.done) });
+}
+
+// Installing over a regular Claude touches the person's own copy: ask first.
+async function getClaude(kind, portable) {
+  const c = state.config;
+  const existing = kind === "desktop" ? c.installed?.desktopInstalled : c.detectedCode;
+  if (!portable && existing) {
+    const prefix = kind === "desktop" ? "dialog.installDesktop" : "dialog.installCode";
+    const answer = await ask({
+      title: t(`${prefix}Title`),
+      text: t(`${prefix}Text`, { path: existing }),
+      ok: t("dialog.install"),
+      cancel: t("dialog.cancel"),
+    });
+    if (answer.value !== "ok") return;
+  }
+  const buttons = kind === "desktop" ? [el.desktopPortableBtn, el.desktopInstallBtn] : [el.codePortableBtn, el.codeInstallBtn];
+  const button = portable ? buttons[0] : buttons[1];
+  const other = portable ? buttons[1] : buttons[0];
+  downloading[kind] = true;
+  other.disabled = true;
+  try {
+    await busy(button, t("download.busy"), async () => {
+      const result = await invoke(kind === "desktop" ? "download_desktop" : "download_code", { portable });
+      state.config = result.config;
+      toast(result.message, "good");
+    });
+  } catch (exc) {
+    toast(formatError(exc), "error");
+  } finally {
+    downloading[kind] = false;
+    other.disabled = false;
+    // Unsaved edits in the settings stay; then only the download rows are redrawn.
+    if (settingsDirty()) renderDownloads();
+    else renderSettings();
+  }
 }
 
 // "Save settings" is active only when something differs from what is saved.
@@ -695,6 +772,11 @@ function bind() {
   el.checkUpdateBtn.addEventListener("click", checkUpdate);
   $("browseClaudeBtn").addEventListener("click", () => browse(el.claudePathInput));
   $("browseCodeBtn").addEventListener("click", () => browse(el.codeDirInput));
+  el.desktopPortableBtn.addEventListener("click", () => getClaude("desktop", true));
+  el.desktopInstallBtn.addEventListener("click", () => getClaude("desktop", false));
+  el.codePortableBtn.addEventListener("click", () => getClaude("code", true));
+  el.codeInstallBtn.addEventListener("click", () => getClaude("code", false));
+  window.__TAURI__?.event?.listen("download", onDownload);
 
   // Enter outside a button would submit the dialog with its first button ("exit and stop
   // the gateway" in the tray dialog). Only a focused button answers with Enter.
@@ -1118,6 +1200,7 @@ async function saveSettings() {
         theme: el.themeInput.value,
         autoUpdate: el.autoUpdateInput.checked,
         advisor: advisorChoice(),
+        codePortable: el.codePortableInput.checked,
       },
     });
     if (state.config.language !== LANG) applyLanguage(state.config.language);

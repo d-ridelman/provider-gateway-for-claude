@@ -40,6 +40,51 @@ pub struct Config {
     /// программа не включает его сама, даже если `advisorModel` в его настройках нет.
     #[serde(default)]
     pub advisor_decided: bool,
+    /// Кнопка «Claude Code» открывает портативный Claude Code из папки приложения
+    /// (`installs::portable_code`) с его собственной папкой настроек.
+    #[serde(default)]
+    pub code_portable: bool,
+    /// Прокси (ядро mihomo) и подписки.
+    #[serde(default)]
+    pub proxy: ProxySettings,
+}
+
+/// Режимы прокси: что идёт через ядро mihomo.
+pub const PROXY_MODES: &[&str] = &["off", "app", "system", "tun"];
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProxySettings {
+    /// `off` (или пусто) — без прокси; `app` — шлюз, Claude из PGC и Claude Code;
+    /// `system` — плюс системный прокси Windows; `tun` — весь трафик (нужен админ).
+    #[serde(default)]
+    pub mode: String,
+    /// mixed-порт ядра на 127.0.0.1; `0` — выбрать свободный при первом запуске.
+    #[serde(default)]
+    pub port: u16,
+    #[serde(default)]
+    pub subscriptions: Vec<Subscription>,
+}
+
+impl ProxySettings {
+    pub fn is_on(&self) -> bool {
+        PROXY_MODES[1..].contains(&self.mode.as_str())
+    }
+}
+
+/// Подписка VPN. Адрес — секрет и лежит в Credential Manager (`store::sub_key`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Subscription {
+    pub id: String,
+    pub name: String,
+    /// Как часто ядро обновляет подписку само.
+    #[serde(default = "default_interval")]
+    pub interval_hours: u32,
+}
+
+fn default_interval() -> u32 {
+    12
 }
 
 /// Модель шлюза: провайдер и ID модели у него (не псевдоним — тот меняется вместе с
@@ -82,6 +127,8 @@ impl Default for Config {
             auto_update: true,
             model_roles: ModelRoles::default(),
             advisor_decided: false,
+            code_portable: false,
+            proxy: ProxySettings::default(),
         }
     }
 }
@@ -151,6 +198,11 @@ pub struct UiConfig {
     pub claude_settings_error: Option<String>,
     /// Ответ на сохранение: что стало с советником (записан, выключен, не вышло).
     pub advisor_notice: Option<Notice>,
+    pub code_portable: bool,
+    /// Что скачано в папку приложения (портативные Claude Code и Claude Desktop).
+    pub installed: crate::installs::Installed,
+    /// Установленный Claude Code (PATH или `~/.local/bin`), если есть.
+    pub detected_code: Option<String>,
 }
 
 /// Сообщение для окна; `warning` — не вышло то, что просили.
@@ -271,4 +323,6 @@ pub struct SettingsInput {
     /// настройки Claude Code не трогать.
     #[serde(default)]
     pub advisor: Option<bool>,
+    #[serde(default)]
+    pub code_portable: bool,
 }

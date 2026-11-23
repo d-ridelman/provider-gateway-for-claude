@@ -188,6 +188,7 @@ pub fn save_settings(
     next.language = pick(input.language, LANGUAGES);
     next.theme = pick(input.theme, THEMES);
     next.auto_update = input.auto_update;
+    next.code_portable = input.code_portable;
     // Роль без провайдера или модели — не выбрана (пустой выбор в окне).
     let keep = |role: Option<crate::model::ModelRef>| {
         role.filter(|r| !r.provider.trim().is_empty() && !r.model.trim().is_empty())
@@ -264,7 +265,7 @@ fn apply_advisor(next: &mut crate::model::Config, on: bool) -> Option<crate::mod
             "Advisor not turned on: it runs on the strong model — pick one on an OpenAI-compatible provider"
         ));
     }
-    let Some(path) = crate::cc_settings::settings_path() else {
+    let Some(path) = crate::cc_settings::settings_path_for(next) else {
         return warn(tr!(
             "Советник не изменён: не найдена домашняя папка",
             "Advisor unchanged: home folder not found"
@@ -293,8 +294,9 @@ fn apply_advisor(next: &mut crate::model::Config, on: bool) -> Option<crate::mod
 /// «Скопировать команду для Claude Code»: те же переменные, что у кнопки «Claude Code».
 #[tauri::command]
 pub fn code_command(shared: State<'_, AppShared>) -> Result<String, String> {
-    let roles = claude::role_aliases(&shared.config.lock().unwrap());
-    claude::code_command(&runtime::status(&shared), &roles)
+    let config = shared.config.lock().unwrap().clone();
+    let roles = claude::role_aliases(&config);
+    claude::code_command(&config, &runtime::status(&shared), &roles)
 }
 
 #[tauri::command]
@@ -433,6 +435,122 @@ pub async fn check_update(
 #[tauri::command]
 pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     crate::updates::install(&app).await
+}
+
+/// Итог скачивания Claude: что сказать и обновлённые настройки окна.
+#[derive(serde::Serialize)]
+pub struct Downloaded {
+    message: String,
+    config: UiConfig,
+}
+
+/// Прогресс загрузки в окно (событие `download`), не чаще пяти раз в секунду.
+fn progress_to(
+    app: &tauri::AppHandle,
+    id: &'static str,
+) -> impl Fn(u64, Option<u64>) + Send + Sync + use<> {
+    use tauri::Emitter;
+    let app = app.clone();
+    let last = std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(1));
+    move |done, total| {
+        let mut last = last.lock().unwrap_or_else(|e| e.into_inner());
+        if last.elapsed() >= std::time::Duration::from_millis(200) || Some(done) == total {
+            *last = std::time::Instant::now();
+            let _ = app.emit(
+                "download",
+                serde_json::json!({"id": id, "done": done, "total": total}),
+            );
+        }
+    }
+}
+
+/// Одна загрузка каждого вида за раз: повторный клик не запускает вторую.
+static DOWNLOADING: std::sync::Mutex<Vec<&'static str>> = std::sync::Mutex::new(Vec::new());
+
+struct Busy(&'static str);
+
+impl Busy {
+    fn take(id: &'static str) -> Result<Self, String> {
+        let mut list = DOWNLOADING.lock().unwrap_or_else(|e| e.into_inner());
+        if list.contains(&id) {
+            return Err(tr!("Уже скачивается", "Already downloading"));
+        }
+        list.push(id);
+        Ok(Self(id))
+    }
+}
+
+impl Drop for Busy {
+    fn drop(&mut self) {
+        DOWNLOADING
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .retain(|id| *id != self.0);
+    }
+}
+
+/// «Скачать Claude Code»: портативно (в папку приложения) или обычной установкой. Кнопка
+/// «Claude Code» дальше открывает выбранный вариант.
+#[tauri::command]
+pub async fn download_code(
+    app: tauri::AppHandle,
+    shared: State<'_, AppShared>,
+    portable: bool,
+) -> Result<Downloaded, String> {
+    let _busy = Busy::take("code")?;
+    let progress = progress_to(&app, "code");
+    let message = crate::installs::get_code(portable, &progress)
+        .await
+        .map_err(|exc| format!("{exc:#}"))?;
+    let mut config = shared.config.lock().unwrap();
+    let mut next = config.clone();
+    next.code_portable = portable;
+    store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
+    *config = next;
+    Ok(Downloaded {
+        message,
+        config: store::ui_config(&config, &shared.config_dir),
+    })
+}
+
+/// «Скачать Claude Desktop»: портативно — распаковка в папку приложения, и «Открыть
+/// Claude» запускает её; иначе — официальный установщик (окно спрашивает заранее, если
+/// Claude уже установлен: это обычный Claude человека).
+#[tauri::command]
+pub async fn download_desktop(
+    app: tauri::AppHandle,
+    shared: State<'_, AppShared>,
+    portable: bool,
+) -> Result<Downloaded, String> {
+    let _busy = Busy::take("desktop")?;
+    let progress = progress_to(&app, "desktop");
+    let result = crate::installs::get_desktop(portable, &progress)
+        .await
+        .map_err(|exc| format!("{exc:#}"))?;
+    let mut config = shared.config.lock().unwrap();
+    let mut next = config.clone();
+    if let Some(exe) = &result.exe {
+        next.claude_path = Some(exe.display().to_string());
+    } else if next
+        .claude_path
+        .as_deref()
+        .is_some_and(|path| crate::installs::is_portable_desktop(std::path::Path::new(path)))
+    {
+        // Поставили обычный Claude — «Открыть Claude» берёт его, а не портативный.
+        next.claude_path = None;
+    }
+    store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
+    *config = next;
+    let ui = store::ui_config(&config, &shared.config_dir);
+    let check = config.clone();
+    drop(config);
+    // Новый Claude — новые правила моделей и самопроверка.
+    let dir = shared.config_dir.clone();
+    std::thread::spawn(move || crate::upkeep::check_into(&app, &check, &dir, true));
+    Ok(Downloaded {
+        message: result.message,
+        config: ui,
+    })
 }
 
 /// Полный выход (как «Выход» в трее): шлюз останавливается вместе с программой.

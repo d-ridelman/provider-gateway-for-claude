@@ -226,14 +226,54 @@ pub fn code_env(
 
 /// Команда PowerShell для своего терминала («Скопировать команду») — те же переменные,
 /// что задаёт кнопка «Claude Code» (чужие переменные своего терминала человек видит сам).
-pub fn code_command(status: &UiStatus, roles: &RoleAliases) -> Result<String, String> {
-    let (_, set) = code_env(status, roles, std::iter::empty())?;
+pub fn code_command(
+    config: &Config,
+    status: &UiStatus,
+    roles: &RoleAliases,
+) -> Result<String, String> {
+    let (_, mut set) = code_env(status, roles, std::iter::empty())?;
+    // Установленный зовётся просто `claude` из PATH своего терминала.
+    let run = if config.code_portable {
+        let (cli, extra) = code_cli(config)?;
+        set.extend(extra);
+        format!("& \"{}\"", cli.display())
+    } else {
+        set.extend(crate::installs::proxy_env());
+        "claude".into()
+    };
     let mut lines: Vec<String> = set
         .iter()
         .map(|(name, value)| format!("$env:{name}=\"{value}\""))
         .collect();
-    lines.push("claude".into());
+    lines.push(run);
     Ok(lines.join("\n"))
+}
+
+/// Какой `claude` запускать и с какими переменными сверх шлюзовых: портативный — со
+/// своей папкой настроек и без самообновления (его обновляет PGC); плюс прокси.
+pub fn code_cli(config: &Config) -> Result<(PathBuf, Vec<(String, String)>), String> {
+    let mut extra = crate::installs::proxy_env();
+    if !config.code_portable {
+        let cli = installed_code_cli().ok_or_else(|| {
+            tr!(
+                "Claude Code не найден: установите его (claude.ai/install), скачайте в Настройках или добавьте claude в PATH",
+                "Claude Code not found: install it (claude.ai/install), download it in the settings or add claude to PATH"
+            )
+        })?;
+        return Ok((cli, extra));
+    }
+    let (Some(cli), Some(dir)) = (
+        crate::installs::portable_code(),
+        crate::installs::portable_code_config(),
+    ) else {
+        return Err(tr!(
+            "Портативный Claude Code не найден — скачайте его в Настройках",
+            "Portable Claude Code not found; download it in the settings"
+        ));
+    };
+    extra.push(("CLAUDE_CONFIG_DIR".into(), dir.display().to_string()));
+    extra.push(("DISABLE_AUTOUPDATER".into(), "1".into()));
+    Ok((cli, extra))
 }
 
 /// Переменная, через которую внутренний `cmd` получает путь к `claude`.
@@ -249,7 +289,7 @@ fn code_command_line() -> String {
 
 /// `claude` из PATH (`claude.exe`, `claude.cmd`), иначе стандартная установка
 /// `%USERPROFILE%\.local\bin\claude.exe`.
-fn find_claude_cli() -> Option<PathBuf> {
+pub fn installed_code_cli() -> Option<PathBuf> {
     let from_path = std::env::var_os("PATH").and_then(|path| {
         std::env::split_paths(&path).find_map(|dir| {
             ["claude.exe", "claude.cmd"]
@@ -280,12 +320,7 @@ pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String>
         &role_aliases(config),
         std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned()),
     )?;
-    let cli = find_claude_cli().ok_or_else(|| {
-        tr!(
-            "Claude Code не найден: установите его (claude.ai/install) или добавьте claude в PATH",
-            "Claude Code not found: install it (claude.ai/install) or add claude to PATH"
-        )
-    })?;
+    let (cli, extra) = code_cli(config)?;
     let dir = config
         .code_dir
         .as_deref()
@@ -326,6 +361,7 @@ pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String>
     // Адрес с секретом браузерного эндпоинта нужен только шлюзу, не Claude Code и его инструментам.
     command.env_remove(crate::fetch::URL_ENV);
     command.envs(set.iter().map(|(k, v)| (k, v)));
+    command.envs(extra.iter().map(|(k, v)| (k, v)));
     command.env(CLI_VAR, &cli);
     command.spawn().map_err(|exc| {
         tr!(
@@ -641,10 +677,17 @@ pub fn launch(
         });
     }
     // Снимок до запуска: копия перепишет `claude://` и COM-класс на себя (проверено вживую).
+    // Портативный Claude пишет туда же свой путь — после закрытия его следа быть не должно.
+    let portable =
+        crate::installs::desktop_home().filter(|_| crate::installs::is_portable_desktop(&original));
     #[cfg(windows)]
     let before = russian.then(|| crate::ruui::registry::snapshot(&copies));
+    #[cfg(windows)]
+    let before_portable = portable
+        .as_ref()
+        .map(|home| crate::ruui::registry::snapshot(home));
     #[cfg(not(windows))]
-    let before: Option<Before> = None;
+    let (before, before_portable): (Option<Before>, Option<Before>) = (None, None);
     let child = command.spawn().map_err(|exc| {
         let exe = exe.display();
         tr!(
@@ -656,11 +699,19 @@ pub fn launch(
     // Возвращаем ключи установленному Claude после старта копии и ещё раз, когда она
     // закроется. Если окно шлюза закроют раньше — это сделает выход из приложения или
     // следующий старт (repair_registry, уже без снимка).
-    if russian {
+    if russian || portable.is_some() {
         let locked = profile.clone();
+        let clean = move || {
+            if russian {
+                repair_for(&copies, &original, before.as_ref());
+            }
+            if let Some(home) = &portable {
+                forget_portable(home, before_portable.as_ref());
+            }
+        };
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(20));
-            repair_for(&copies, &original, before.as_ref());
+            clean();
             // Не `child.wait()`: Claude перезапускает сам себя (после «Save & Restart» в своём
             // окне настроек), запущенный нами процесс выходит, а копия живёт дальше и снова
             // пишет в реестр свой путь. Закрытие — это свободный `lockfile` профиля.
@@ -669,7 +720,7 @@ pub fn launch(
                 std::time::Duration::from_secs(5),
                 2,
             );
-            repair_for(&copies, &original, before.as_ref());
+            clean();
         });
     }
     let profile = profile.display();
@@ -733,6 +784,23 @@ pub fn repair_registry(config: &Config) {
     let copies = base.join("claude-ru");
     if let (true, Some(original)) = (copies.is_dir(), detect(config)) {
         repair_for(&copies, &original, None);
+    }
+    if let Some(home) = crate::installs::desktop_home().filter(|home| home.is_dir()) {
+        forget_portable(&home, None);
+    }
+}
+
+/// След портативного Claude в реестре: если установлен обычный Claude — ключи
+/// возвращаются ему (как после русской копии), иначе убираются совсем.
+fn forget_portable(home: &Path, before: Option<&Before>) {
+    let installed =
+        detect(&Config::default()).filter(|exe| !crate::installs::is_portable_desktop(exe));
+    match installed {
+        Some(installed) => repair_for(home, &installed, before),
+        #[cfg(windows)]
+        None => crate::ruui::registry::forget(home, before),
+        #[cfg(not(windows))]
+        None => {}
     }
 }
 
@@ -1502,7 +1570,7 @@ mod tests {
         assert!(rows[0].get("anthropicFamilyTier").is_none());
 
         // Команда для своего терминала — из того же окружения.
-        let text = code_command(&status, &roles).unwrap();
+        let text = code_command(&Config::default(), &status, &roles).unwrap();
         assert!(text.contains(&format!(
             "$env:ANTHROPIC_DEFAULT_OPUS_MODEL=\"{}\"",
             strong.alias

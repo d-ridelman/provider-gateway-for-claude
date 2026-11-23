@@ -342,6 +342,7 @@ code {
 .card-head h2 { margin: 0; font-size: var(--fs-xl); font-weight: 650; letter-spacing: 0; }
 .card-head p { margin: 4px 0 0; font-size: var(--fs-sm); }
 .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.button-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 
 .grid { display: grid; gap: 12px 14px; margin-bottom: 12px; align-items: start; }
 .grid.two { grid-template-columns: 1fr 1fr; }

@@ -22,6 +22,15 @@ pub fn settings_path() -> Option<PathBuf> {
     }
 }
 
+/// То же для кнопки «Claude Code»: у портативного своя папка настроек.
+pub fn settings_path_for(config: &crate::model::Config) -> Option<PathBuf> {
+    if config.code_portable {
+        crate::installs::portable_code_config().map(|dir| dir.join("settings.json"))
+    } else {
+        settings_path()
+    }
+}
+
 /// Модель советника из настроек: `Ok(Some)` — непустая строка, `Ok(None)` — нет ключа,
 /// пусто или файла нет, `Err` — файл есть, но не читается как объект JSON (тогда
 /// программа его не трогает и галочку не предлагает).

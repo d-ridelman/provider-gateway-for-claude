@@ -306,7 +306,7 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
             labels: row.labels.clone(),
         })
         .collect();
-    let settings = crate::cc_settings::settings_path();
+    let settings = crate::cc_settings::settings_path_for(config);
     let advisor = match &settings {
         Some(path) => crate::cc_settings::read_advisor(path),
         None => Err(tr!("не найдена домашняя папка", "home folder not found")),
@@ -338,6 +338,9 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
             .unwrap_or_default(),
         claude_settings_error: advisor.err(),
         advisor_notice: None,
+        code_portable: config.code_portable,
+        installed: crate::installs::installed(),
+        detected_code: crate::claude::installed_code_cli().map(|p| p.display().to_string()),
     }
 }
 

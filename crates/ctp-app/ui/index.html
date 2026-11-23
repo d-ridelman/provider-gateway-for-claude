@@ -216,6 +216,15 @@
             </div>
 
             <div class="field">
+              <span class="field-label" data-i18n="settings.getDesktop"></span>
+              <div class="button-row">
+                <button type="button" id="desktopPortableBtn" class="ghost small"></button>
+                <button type="button" id="desktopInstallBtn" class="ghost small" data-i18n="settings.install"></button>
+              </div>
+              <small id="desktopGetHint" aria-live="polite"></small>
+            </div>
+
+            <div class="field">
               <label class="check">
                 <input id="russianInput" type="checkbox">
                 <span data-i18n="settings.russian"></span>
@@ -251,6 +260,20 @@
                 <button type="button" id="browseCodeBtn" class="ghost" data-i18n="settings.browse"></button>
               </div>
               <small data-i18n-html="settings.codeDirHint"></small>
+            </div>
+
+            <div class="field">
+              <span class="field-label" data-i18n="settings.getCode"></span>
+              <small id="codeFound"></small>
+              <label class="check">
+                <input id="codePortableInput" type="checkbox">
+                <span data-i18n="settings.codePortable"></span>
+              </label>
+              <div class="button-row">
+                <button type="button" id="codePortableBtn" class="ghost small"></button>
+                <button type="button" id="codeInstallBtn" class="ghost small" data-i18n="settings.install"></button>
+              </div>
+              <small id="codeGetHint" aria-live="polite"></small>
             </div>
 
             <div class="field">
