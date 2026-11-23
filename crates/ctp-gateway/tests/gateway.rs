@@ -1430,6 +1430,33 @@ async fn screenshots_count_by_size_where_claude_code_reads_the_context() {
     assert!(tokens < 3000, "{tokens}");
 }
 
+#[tokio::test]
+async fn a_broken_provider_stream_ends_with_the_error_not_with_a_normal_stop() {
+    // After an `error` event Anthropic's stream is over. A `message_delta` with end_turn and
+    // a `message_stop` behind it would pass a cut answer off as a finished one.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(
+            "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"half\"}}]}\n\ndata: {not json\n\n",
+            "text/event-stream",
+        ))
+        .mount(&upstream)
+        .await;
+    let response = app(state_with(&upstream.uri(), "openai", "gpt-5.2"))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .await
+        .unwrap();
+    let body = text_body(response).await;
+    assert!(body.contains("upstream sent invalid JSON"), "{body}");
+    assert!(body.contains("\"text\":\"half\""), "{body}");
+    assert!(!body.contains("message_stop"), "{body}");
+    assert!(!body.contains("\"stop_reason\":\"end_turn\""), "{body}");
+}
+
 fn chat_ok() -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_json(json!({
         "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]

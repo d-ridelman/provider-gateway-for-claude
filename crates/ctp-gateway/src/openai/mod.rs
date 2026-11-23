@@ -370,6 +370,7 @@ pub async fn messages(
                         yield Ok::<Bytes, Infallible>(sse::frame(
                             &stream::StreamTranslator::error_event(&format!("upstream stream: {exc}"))
                         ));
+                        translator.abort();
                         break 'segments;
                     }
                 };
@@ -382,6 +383,7 @@ pub async fn messages(
                         yield Ok::<Bytes, Infallible>(sse::frame(
                             &stream::StreamTranslator::error_event("upstream sent invalid JSON")
                         ));
+                        translator.abort();
                         break 'segments;
                     }
                 };
@@ -469,6 +471,7 @@ pub async fn messages(
                 Ok(next) => upstream = next,
                 Err(exc) => {
                     yield Ok::<Bytes, Infallible>(sse::frame(&exc.event(&provider)));
+                    translator.abort();
                     break;
                 }
             }
