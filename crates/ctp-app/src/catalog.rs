@@ -146,7 +146,7 @@ pub async fn load() -> Option<Arc<Catalog>> {
 }
 
 async fn download() -> Result<Catalog, String> {
-    let client = reqwest::Client::builder()
+    let client = ctp_gateway::proxy::apply(reqwest::Client::builder())
         .user_agent(ctp_gateway::state::USER_AGENT)
         .timeout(TIMEOUT)
         .build()

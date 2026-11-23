@@ -4,6 +4,7 @@ pub mod handlers;
 pub mod openai;
 pub mod passthrough;
 pub mod probe;
+pub mod proxy;
 pub mod sse;
 pub mod state;
 pub mod util;

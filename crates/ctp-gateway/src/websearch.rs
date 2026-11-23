@@ -117,16 +117,26 @@ fn from_web_page(headers: &HeaderMap) -> bool {
 }
 
 /// Свой клиент: у общих стоит таймаут на полчаса, а тут нужен браузерный UA и короткий срок.
+/// Запоминается вместе с прокси, при котором собран: сменился прокси — новый клиент.
 fn search_client(state: &AppState) -> reqwest::Client {
-    static CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| {
-        reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .connect_timeout(TIMEOUT)
-            .timeout(TIMEOUT)
-            .build()
-            .ok()
-    });
-    CLIENT.clone().unwrap_or_else(|| state.clients.json.clone())
+    static CLIENT: Mutex<Option<(Option<String>, reqwest::Client)>> = Mutex::new(None);
+    let proxy = crate::proxy::current();
+    let mut cached = CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((built_for, client)) = cached.as_ref()
+        && *built_for == proxy
+    {
+        return client.clone();
+    }
+    let Ok(client) = crate::proxy::apply(reqwest::Client::builder())
+        .user_agent(USER_AGENT)
+        .connect_timeout(TIMEOUT)
+        .timeout(TIMEOUT)
+        .build()
+    else {
+        return state.clients.json.clone();
+    };
+    *cached = Some((proxy, client.clone()));
+    client
 }
 
 fn answer(status: StatusCode, body: Value) -> Response {

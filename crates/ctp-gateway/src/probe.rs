@@ -15,7 +15,7 @@ const CHAT_TIMEOUT: Duration = Duration::from_secs(90);
 
 /// ID моделей, которые отдаёт `GET …/models` провайдера, по алфавиту.
 pub async fn list_models(provider: &Provider) -> Result<Vec<String>, String> {
-    let client = reqwest::Client::builder()
+    let client = crate::proxy::apply(reqwest::Client::builder())
         .user_agent(crate::state::USER_AGENT)
         .connect_timeout(LIST_TIMEOUT)
         .timeout(LIST_TIMEOUT)

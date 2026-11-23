@@ -261,6 +261,10 @@ fn download_with_curl() -> Result<Vec<u8>> {
         ctp_gateway::state::USER_AGENT,
         TRANSLATION_URL,
     ]);
+    // claude.ai из части стран закрыт: через прокси приложения, если он включён.
+    if let Some(proxy) = ctp_gateway::proxy::current() {
+        command.args(["-x", &proxy, "--noproxy", ctp_gateway::proxy::NO_PROXY]);
+    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;

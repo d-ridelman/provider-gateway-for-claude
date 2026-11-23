@@ -364,12 +364,12 @@ pub struct Clients {
 impl Clients {
     pub fn new() -> anyhow::Result<Self> {
         // Свой User-Agent, а не reqwest: OpenCode Go и др. просят клиента представляться.
-        let json = reqwest::Client::builder()
+        let json = crate::proxy::apply(reqwest::Client::builder())
             .user_agent(USER_AGENT)
             .connect_timeout(Duration::from_secs(60))
             .timeout(Duration::from_secs(1800))
             .build()?;
-        let stream = reqwest::Client::builder()
+        let stream = crate::proxy::apply(reqwest::Client::builder())
             .user_agent(USER_AGENT)
             .connect_timeout(Duration::from_secs(60))
             .read_timeout(Duration::from_secs(1800))
