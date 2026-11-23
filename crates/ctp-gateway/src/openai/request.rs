@@ -217,7 +217,25 @@ fn convert_user(message: &Value, out: &mut Vec<Value>) {
                 if id.is_empty() {
                     continue;
                 }
-                let mut text = flatten_content(block.get("content").unwrap_or(&Value::Null));
+                let result = block.get("content").unwrap_or(&Value::Null);
+                let mut text = flatten_content(result);
+                // В сообщении `tool` у OpenAI только текст: картинки инструмента (скриншоты)
+                // идут следом сообщением пользователя, иначе модель увидела бы слово «[image]».
+                if let Value::Array(parts) = result {
+                    let before = images.len();
+                    images.extend(
+                        parts
+                            .iter()
+                            .filter(|part| {
+                                part.get("type").and_then(Value::as_str) == Some("image")
+                            })
+                            .filter_map(image_part),
+                    );
+                    if images.len() > before && text_parts.is_empty() {
+                        text_parts
+                            .push("The images returned by the tool results above.".to_string());
+                    }
+                }
                 if block
                     .get("is_error")
                     .and_then(Value::as_bool)
@@ -371,7 +389,15 @@ fn flatten_content(value: &Value) -> String {
             .iter()
             .filter_map(|part| match part.get("type").and_then(Value::as_str) {
                 Some("text") => part.get("text").and_then(Value::as_str).map(str::to_string),
-                Some("image") => Some("[image]".to_string()),
+                // Картинку, которую `convert_user` перенесёт в сообщение пользователя, так и называем.
+                Some("image") => Some(
+                    if image_part(part).is_some() {
+                        "[image attached below]"
+                    } else {
+                        "[image]"
+                    }
+                    .to_string(),
+                ),
                 Some("document") => Some("[document]".to_string()),
                 _ => part.get("text").and_then(Value::as_str).map(str::to_string),
             })

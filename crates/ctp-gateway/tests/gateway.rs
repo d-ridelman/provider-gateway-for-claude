@@ -1395,6 +1395,87 @@ async fn screenshots_count_by_size_where_claude_code_reads_the_context() {
     assert!(tokens < 3000, "{tokens}");
 }
 
+fn chat_ok() -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({
+        "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]
+    }))
+}
+
+#[tokio::test]
+async fn a_screenshot_in_a_tool_result_reaches_the_model_as_a_picture() {
+    // OpenAI tool messages carry text only: the picture follows in a user message, right after
+    // the tool messages. It used to become the word "[image]", so the model never saw the screen.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(chat_ok())
+        .mount(&upstream)
+        .await;
+    let response = app(state_with(&upstream.uri(), "openai", "gpt-5.2"))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32,
+            "messages": messages_with_screenshot()
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let sent: Value = upstream.received_requests().await.unwrap()[0]
+        .body_json()
+        .unwrap();
+    let messages = sent["messages"].as_array().unwrap();
+    let tool = messages.iter().position(|m| m["role"] == "tool").unwrap();
+    let text = messages[tool]["content"].as_str().unwrap();
+    assert!(
+        text.contains("screenshot") && text.contains("attached below"),
+        "{text}"
+    );
+    let picture = &messages[tool + 1];
+    assert_eq!(picture["role"], "user");
+    let parts = picture["content"].as_array().unwrap();
+    let image = parts.iter().find(|p| p["type"] == "image_url").unwrap();
+    assert!(
+        image["image_url"]["url"]
+            .as_str()
+            .unwrap()
+            .starts_with("data:image/png;base64,")
+    );
+}
+
+#[tokio::test]
+async fn a_screenshot_from_a_tool_is_dropped_for_a_model_that_rejects_images() {
+    // The picture now travels like any other: a model without vision answers 400, and the
+    // ladder retries without it, keeping the text of the tool result.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(wiremock::matchers::body_string_contains("image_url"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": {"message": "[invalid_request] the request is invalid"}
+        })))
+        .with_priority(1)
+        .mount(&upstream)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(chat_ok())
+        .with_priority(10)
+        .mount(&upstream)
+        .await;
+    let response = app(state_with(&upstream.uri(), "openai", "glm-5.3"))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32,
+            "messages": messages_with_screenshot()
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    let retried = String::from_utf8_lossy(&requests[1].body).to_string();
+    assert!(!retried.contains("image_url"));
+    assert!(retried.contains("screenshot"));
+}
+
 /// Основная модель `main-model` и сильная `strong-model` — советник из настроек.
 fn advisor_state(base_url: &str) -> AppState {
     let file: ProvidersFile = serde_json::from_value(json!({
