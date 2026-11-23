@@ -106,12 +106,6 @@ const STUB = String.raw`
     proxy_add_sub: () => scenario === "error" ? fail("The subscription address must start with https:// or http://") : proxy,
     proxy_remove_sub: () => proxy, proxy_update_sub: () => proxy, proxy_select: (a) => { proxy = { ...proxy, selected: a.name }; return proxy; },
     proxy_measure: () => proxy,
-    mcp_sources: () => scenario === "empty" ? [] : [
-      { name: "anytype", what: "npx", present: false },
-      { name: "filesystem", what: "node.exe", present: true },
-      { name: long ? "a-remote-mcp-server-with-a-very-long-name-from-a-marketplace" : "linear", what: "mcp.linear.app", present: false },
-    ],
-    mcp_copy: () => scenario === "error" ? fail("Claude from PGC is open and writes its own settings; close it and try again") : "Servers copied: 1",
   };
   const vpn = scenario === "vpn" || scenario === "vpnerror" || scenario === "vpnlong";
   const node = (sub, label, kind, delay) => ({ name: sub + "|" + label, label, sub, kind, delay });

@@ -788,17 +788,6 @@ pub async fn proxy_measure(shared: State<'_, AppShared>) -> Result<ProxyState, S
     Ok(proxy_state_of(&shared).await)
 }
 
-/// MCP-серверы обычного Claude Desktop (только чтение) — для переноса в профиль PGC.
-#[tauri::command]
-pub fn mcp_sources() -> Vec<crate::mcp::Server> {
-    crate::mcp::list()
-}
-
-#[tauri::command]
-pub fn mcp_copy(names: Vec<String>) -> Result<String, String> {
-    crate::mcp::copy(&names)
-}
-
 /// Полный выход (как «Выход» в трее): шлюз останавливается вместе с программой.
 #[tauri::command]
 pub fn app_exit(app: tauri::AppHandle) {

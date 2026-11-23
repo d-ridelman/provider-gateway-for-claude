@@ -363,47 +363,6 @@ async function openSettings() {
   if (!(await leaveForm())) return;
   state.view = "settings";
   render();
-  loadMcp();
-}
-
-// MCP servers of the regular Claude Desktop (read only): tick and copy into the PGC profile.
-async function loadMcp() {
-  const servers = await invoke("mcp_sources").catch(() => []);
-  const list = $("mcpList");
-  list.replaceChildren();
-  for (const server of servers) {
-    const label = document.createElement("label");
-    label.className = "check";
-    const box = document.createElement("input");
-    box.type = "checkbox";
-    box.value = server.name;
-    box.disabled = server.present;
-    box.checked = false;
-    const name = document.createElement("span");
-    name.textContent = server.name;
-    const what = document.createElement("small");
-    what.textContent = server.present ? t("settings.mcpPresent") : server.what;
-    if (server.present) what.className = "present";
-    label.append(box, name, what);
-    list.append(label);
-  }
-  const fresh = servers.filter((s) => !s.present).length;
-  $("mcpCopyBtn").disabled = !fresh;
-  $("mcpHint").textContent = t(servers.length ? "settings.mcpHint" : "settings.mcpNone");
-}
-
-async function copyMcp() {
-  const names = [...$("mcpList").querySelectorAll("input:checked")].map((box) => box.value);
-  if (!names.length) {
-    toast(t("settings.mcpPick"), "error");
-    return;
-  }
-  try {
-    toast(await invoke("mcp_copy", { names }), "good");
-  } catch (exc) {
-    toast(formatError(exc), "error");
-  }
-  loadMcp();
 }
 
 async function closeSettings() {
@@ -1110,7 +1069,6 @@ function bind() {
   el.checkUpdateBtn.addEventListener("click", checkUpdate);
   $("browseClaudeBtn").addEventListener("click", () => browse(el.claudePathInput));
   $("browseCodeBtn").addEventListener("click", () => browse(el.codeDirInput));
-  $("mcpCopyBtn").addEventListener("click", copyMcp);
   el.proxyBtn.addEventListener("click", openProxy);
   el.proxyChip.addEventListener("click", openProxy);
   $("closeProxy").addEventListener("click", closeProxy);

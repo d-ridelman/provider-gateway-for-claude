@@ -42,7 +42,6 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 - **Free web search for Claude.** Claude's built-in `WebSearch` (Claude Code and Claude Desktop) works without any key or setup: the gateway answers it itself, see [Web search](#web-search).
 - **VPN subscriptions on the mihomo core.** Pick a node or Auto, test latency and choose what goes through the VPN: Claude and providers only, the system proxy (works on domain PCs) or all traffic (TUN). See [Proxy and VPN](#proxy-and-vpn).
 - **Claude without installing.** Claude Desktop and Claude Code download from Anthropic's own addresses, either portable with nothing installed or as a regular install. The signature and checksum are verified. See [Claude without installing](#claude-without-installing).
-- **MCP servers from your regular Claude** are copied into the PGC profile in one click; the regular Claude is only read.
 - **Keys stay in Windows Credential Manager**, never in files. The gateway listens on `127.0.0.1` only and requires a local token. The config files are written through a temporary file, so a cut write cannot empty them.
 - **Adapts to picky models.** Providers differ in what they accept, and many answer with a bare 400. The gateway prevents the known trouble (repeated tool names, a conversation that no longer fits the window is reported to Claude Code the way Anthropic does, so it compacts by itself), and when a model refuses a request without saying why, it simplifies it step by step: images left out, reasoning effort, sampling parameters and stream options dropped, tool names shortened, consecutive messages merged, tool schemas simplified, tools capped at 128. The reasoning of earlier replies goes back to providers that require it (DeepSeek's thinking mode with tools) and is dropped for those that refuse it. The one step that made the difference, confirmed twice for a model, is remembered in `model-profiles.json` next to the settings (delete it to forget; entries expire after 30 days) and the gateway log says what it did and what the provider answered.
 - **Keeps working after Claude updates**: the app reads Claude's model rules from the installed version, checks its config fields and tells you in Settings if something no longer matches.
@@ -138,10 +137,6 @@ Settings → **Download Claude Desktop** and **Download Claude Code**: both come
 With the VPN on in PGC, downloads go through it. If the core is not running, the download does not start and the window says why; if the node does not answer, the error suggests picking another. The mihomo core itself is downloaded directly.
 
 Checks: sha256 from the release manifest for Claude Code, sha1 from `RELEASES` for Claude Desktop (the same check Squirrel makes). Every `claude.exe` must carry an Authenticode signature by "Anthropic, PBC". A portable Claude writes `claude://` into the registry when it starts; once it closes, PGC gives those keys back to the installed Claude, or removes them if there is none.
-
-### MCP servers from your regular Claude
-
-Settings → **MCP servers from the regular Claude** lists the servers of your regular Claude Desktop by name and program, never their arguments or keys. The ticked ones are copied whole into the PGC profile. The regular Claude is only read. A server the profile already has stays as it is, and the previous profile file stays next to it as `claude_desktop_config.json.before-mcp`. Claude from PGC has to be closed while this runs.
 
 ## Privacy and network
 
