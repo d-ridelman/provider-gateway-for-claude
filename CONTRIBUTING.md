@@ -17,6 +17,7 @@ cargo clippy --workspace --all-targets
 node tools/check_i18n.js
 node tools/ui-shots.mjs      # window snapshots into state\shots\ (Chrome or Edge, no other dependencies)
 node tools/ui-shots.mjs --detect   # Impeccable detector over the live pages (claude plugin enable impeccable@impeccable)
+node tools/ui-shots.mjs --only docs- --out state/docs-shots   # README screenshots (neutral demo data); copy main/new/settings-en/ru to docs/images/
 .\build-app.ps1              # portable exe in dist\
 ```
 

@@ -30,8 +30,8 @@
 
 Claude Desktop can run in third-party inference mode and Claude Code can talk to any Anthropic-style endpoint. Provider Gateway for Claude is a small Windows app that runs that endpoint for you on `127.0.0.1` and translates each request to your provider:
 
-- **Anthropic Messages → OpenAI Chat Completions**, including streaming, tool calls, images and reasoning levels; or straight passthrough for Anthropic-compatible providers.
-- **Claude Desktop in a separate profile**, so your own Claude account and chats stay untouched. Your models appear in Claude's model menu under readable names.
+- **Anthropic Messages → OpenAI Chat Completions**, including streaming, tool calls, images (also the screenshots that tools return) and reasoning levels; or straight passthrough for Anthropic-compatible providers.
+- **Claude Desktop in a separate profile**, so your own Claude account and chats stay untouched. Your models appear in Claude's model menu under readable names. If that Claude is already open, **Open Claude** only shows it (and says when the gateway settings changed); the app never closes or restarts it.
 - **Claude Code in one click**: a console opens in your project folder with `claude` already connected to the gateway.
 
 ## Features
@@ -39,18 +39,20 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 - Any number of providers, each with its own key, models and reasoning-level ceiling. Templates for OpenAI, OpenRouter, OpenCode Go and Zen, DeepSeek, Gemini, Anthropic, Ollama, llama.cpp and LM Studio.
 - **Load models from the provider**, with hints from the open [OpenCode model catalog](https://models.dev): readable names, 1M-context models and supported reasoning levels are filled in for you.
 - **Test connection** sends one real request through the gateway and shows the answer.
-- **Keys stay in Windows Credential Manager**, never in files. The gateway listens on `127.0.0.1` only and requires a local token.
-- **Adapts to picky models.** Providers differ in what they accept, and many answer with a bare 400. The gateway prevents the known trouble (repeated tool names, a conversation that no longer fits the window is reported to Claude Code the way Anthropic does, so it compacts by itself), and when a model refuses a request without saying why, it simplifies it step by step: images left out, reasoning effort, sampling parameters and stream options dropped, tool names shortened, consecutive messages merged, tool schemas simplified, tools capped at 128. The one step that made the difference, confirmed twice for a model, is remembered in `model-profiles.json` next to the settings (delete it to forget; entries expire after 30 days) and the gateway log says what it did and what the provider answered.
+- **Free web search for Claude.** Claude's built-in `WebSearch` (Claude Code and Claude Desktop) works without any key or setup: the gateway answers it itself, see [Web search](#web-search).
+- **Keys stay in Windows Credential Manager**, never in files. The gateway listens on `127.0.0.1` only and requires a local token. The config files are written through a temporary file, so a cut write cannot empty them.
+- **Adapts to picky models.** Providers differ in what they accept, and many answer with a bare 400. The gateway prevents the known trouble (repeated tool names, a conversation that no longer fits the window is reported to Claude Code the way Anthropic does, so it compacts by itself), and when a model refuses a request without saying why, it simplifies it step by step: images left out, reasoning effort, sampling parameters and stream options dropped, tool names shortened, consecutive messages merged, tool schemas simplified, tools capped at 128. The reasoning of earlier replies goes back to providers that require it (DeepSeek's thinking mode with tools) and is dropped for those that refuse it. The one step that made the difference, confirmed twice for a model, is remembered in `model-profiles.json` next to the settings (delete it to forget; entries expire after 30 days) and the gateway log says what it did and what the provider answered.
 - **Keeps working after Claude updates**: the app reads Claude's model rules from the installed version, checks its config fields and tells you in Settings if something no longer matches.
 - **Russian interface for Claude Desktop** (optional): a separate patched copy of Claude with claude.ai's own Russian translation. The copy also brings back **No folder** in the Code folder picker, which third-party mode hides. When Claude updates, the app prepares the new copy in the background, so **Open Claude** does not wait. Your installed Claude is not modified.
 - **Lives in the tray** while you work; the gateway keeps running when the window is closed.
 - **Updates itself** from GitHub Releases; every update is verified against a signing key built into the app.
-- English and Russian interface, following the Windows display language; light and dark theme follow Windows too.
+- **Built-in browser switch**: third-party mode turns Claude Desktop's browser pane off; a tick in Settings turns it on at every launch from the gateway.
+- English and Russian interface, light and dark theme: as in Windows by default, and switchable in the title bar or in Settings.
 
 ## Requirements
 
 - Windows 10 or 11, x64, with WebView2 (built into Windows 11).
-- [Claude Desktop](https://claude.ai/download) for the desktop chat. Tested with Claude Desktop 6.6395.0.
+- [Claude Desktop](https://claude.ai/download) for the desktop chat. Tested with Claude Desktop 6.28899.6.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) for the terminal agent (optional).
 - An account and API key with at least one provider, or a local model server.
 
@@ -76,7 +78,7 @@ A portable `.exe` is attached to each release as well. Its built-in update runs 
 
 <p align="center">
   <img src="docs/images/new-en.png" width="49%" alt="A new provider: template, address, key and models">
-  <img src="docs/images/settings-en.png" width="49%" alt="Settings: language, port, Claude paths, compatibility check, updates">
+  <img src="docs/images/settings-en.png" width="49%" alt="Settings: Claude Desktop, Claude Code with model roles and the advisor, the app (language, theme, port, token, updates)">
 </p>
 
 ### Reasoning levels
@@ -92,6 +94,10 @@ Claude Code asks for models by role: `sonnet`, `opus` and `haiku`. Settings → 
 Claude Code's advisor (`/advisor`) lets the working model consult a stronger one in the middle of a task. At Anthropic it is a server-side tool, so through a third-party provider it would simply be off. With a strong model chosen, the gateway runs it itself: the main model calls `advisor`, the gateway asks the strong model with the whole conversation and puts its advice into the same reply, as Anthropic's server does.
 
 Settings → **Strong is the advisor (`/advisor`)** under the model roles turns it on: the app writes `advisorModel` to Claude Code's settings (`~/.claude/settings.json`), the same thing `/advisor` does. That file is shared by every Claude Code on the computer, so in the regular Claude Code with an Anthropic account the advisor is on as well (an Anthropic model there); unticking is `/advisor off`. Until you decide, the box is ticked, and the first save writes it (once: after that the app never turns the advisor on by itself, so a later `/advisor off` stays off); a model you already chose with `/advisor` is kept. If the settings file cannot be read, the app leaves it alone. Whichever Claude model is named, the gateway answers with the strong one. It works with OpenAI-compatible providers, in the **Claude Code** console and in the Code tab of the Russian copy of Claude Desktop. Not covered: the Code tab of the regular Claude Desktop (it turns experimental features off for its sessions) and Anthropic-type providers. The gateway log shows each consultation (`advisor consulted`, model and time).
+
+### Web search
+
+Claude's `WebSearch` normally runs on Anthropic's servers, so through a third-party provider the model got nothing. The gateway now answers it itself, in the form Anthropic's server uses: it searches DuckDuckGo and Brave with no key (answers are cached for 10 minutes; the tool's `allowed_domains` and `blocked_domains` are honored). When a search engine asks for a human check, the app opens that page in its own WebView2 window as a real visit, and the window shows itself if it needs a tick. There is nothing to set up and no switch yet: the search words go to those search engines (see [Privacy and network](#privacy-and-network)). Checked in the Claude Code console and in the Code tab of Claude Desktop.
 
 ### Claude Code by hand
 

@@ -37,7 +37,17 @@ const STUB = String.raw`
     id, name, kind: "openai", baseUrl: base, models, hasKey: key, needsKey: true,
     aliases: models.map((m, i) => alias(id, m, i)), maxEffort: "max", defaultEffort: null, labels: {},
   });
-  let providers = scenario === "empty" ? [] : long ? [
+  // docs: neutral demo data for the screenshots in README (no real provider names or addresses).
+  const demo = () => {
+    const ollama = mk("ollama", "Ollama", "http://127.0.0.1:11434/v1", ["qwen3:8b"], false);
+    ollama.needsKey = false;
+    return [
+      mk("openrouter", "OpenRouter", "https://openrouter.ai/api/v1", ["deepseek/deepseek-v4-pro[1m]", "z-ai/glm-5.3", "qwen/qwen4-max"]),
+      mk("deepseek", "DeepSeek", "https://api.deepseek.com", ["deepseek-v4-flash[1m]", "deepseek-v4-pro[1m]"]),
+      ollama,
+    ];
+  };
+  let providers = scenario === "empty" ? [] : scenario === "docs" ? demo() : long ? [
     mk("very-long-provider-identifier-for-the-gateway", "A provider with a name that is much longer than the sidebar can ever show without wrapping", "https://example.com/some/very/long/path/that/keeps/going/and/going/and/going/for/a/while/v1",
       ["a-model-with-an-extremely-long-identifier-that-should-not-break-the-layout-1234567890[1m]", "short"], false),
     mk("second", "Second", "https://api.example.com/v1", ["m1", "m2", "m3"]),
@@ -184,6 +194,14 @@ add("open", "main", [1], ["dark"]);
 add("forceddark", "main", [1], ["light"]);
 add("forcedlight", "settings", [1], ["dark"]);
 add("stale", "main", [0, 1, 2], ["light", "dark"]);
+// The README screenshots (docs/images): neutral demo providers; Settings on a taller window so the
+// whole page is in the frame. `node tools/ui-shots.mjs --only docs- --out state/docs-shots`.
+W.push([1280, 1140]);
+for (const lang of ["en", "ru"]) {
+  add("docs", "main", [1], ["dark"], lang);
+  add("docs", "new", [1], ["dark"], lang);
+  add("docs", "settings", [5], ["dark"], lang);
+}
 // Windows display scaling shrinks the window to fewer CSS pixels (1500 px at 150 % is 1000) and puts
 // edges between device pixels: the widths of 1000 / 1100 px, and fractional device scales (x1.25, x1.5).
 add("normal", "main", [3, 4], ["light", "dark"]);
