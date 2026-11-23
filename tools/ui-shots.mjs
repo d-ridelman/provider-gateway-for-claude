@@ -149,7 +149,7 @@ const SCREENS = {
   settingsdirty: "(async () => { document.getElementById('settingsBtn').click(); await new Promise((r) => setTimeout(r, 400)); const p = document.getElementById('portInput'); p.value = '18000'; p.dispatchEvent(new Event('input', { bubbles: true })); })()",
   testconn: "[...document.querySelectorAll('button')].find((b) => /Проверить связь|Test connection/.test(b.textContent))?.click()",
 };
-const W = [[1920, 1080], [1280, 800], [900, 700]];
+const W = [[1920, 1080], [1280, 800], [900, 700], [1000, 680], [1100, 740]];
 const shots = [];
 const add = (scenario, screen, widths, schemes, lang = "ru", extra = {}) => {
   for (const wi of widths) for (const scheme of schemes) shots.push({ scenario, screen, size: W[wi], scheme, lang, ...extra });
@@ -184,6 +184,18 @@ add("open", "main", [1], ["dark"]);
 add("forceddark", "main", [1], ["light"]);
 add("forcedlight", "settings", [1], ["dark"]);
 add("stale", "main", [0, 1, 2], ["light", "dark"]);
+// Windows display scaling shrinks the window to fewer CSS pixels (1500 px at 150 % is 1000) and puts
+// edges between device pixels: the widths of 1000 / 1100 px, and fractional device scales (x1.25, x1.5).
+add("normal", "main", [3, 4], ["light", "dark"]);
+add("normal", "settings", [3, 4], ["light", "dark"]);
+add("normal", "settingsbottom", [3, 4], ["dark"]);
+add("normal", "new", [3, 4], ["dark"]);
+add("long", "settings", [3], ["dark"]);
+add("normal", "settings", [1], ["light", "dark"], "ru", { scale: 1.25 });
+add("normal", "settings", [3], ["light", "dark"], "ru", { scale: 1.5 });
+add("normal", "new", [1], ["dark"], "ru", { scale: 1.25 });
+add("normal", "new", [3], ["dark"], "ru", { scale: 1.5 });
+add("normal", "main", [3], ["light"], "ru", { scale: 1.5 });
 
 // ---- Chrome over the DevTools protocol -----------------------------------------------------
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), "ui-shots-"));
@@ -343,9 +355,9 @@ if (args.includes("--serve")) {
 }
 const report = [];
 for (const shot of shots) {
-  const name = `${shot.scenario}-${shot.screen}-${shot.size[0]}-${shot.scheme}-${shot.lang}`;
+  const name = `${shot.scenario}-${shot.screen}-${shot.size[0]}-${shot.scheme}-${shot.lang}${shot.scale ? "-x" + shot.scale : ""}`;
   if (only && !name.includes(only)) continue;
-  await cdp("Emulation.setDeviceMetricsOverride", { width: shot.size[0], height: shot.size[1], deviceScaleFactor: 1, mobile: false });
+  await cdp("Emulation.setDeviceMetricsOverride", { width: shot.size[0], height: shot.size[1], deviceScaleFactor: shot.scale ?? 1, mobile: false });
   await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: shot.scheme }] });
   await cdp("Page.navigate", { url: `${base}/?s=${shot.scenario}&lang=${shot.lang}` });
   if (shot.settleMs) await sleep(shot.settleMs);
