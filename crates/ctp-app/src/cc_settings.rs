@@ -93,7 +93,9 @@ pub fn set_advisor(path: &Path, on: bool) -> Result<bool, String> {
 }
 
 /// Через временный файл и замену; символическая ссылка остаётся ссылкой (пишется цель).
-fn write_file(path: &Path, text: &str) -> Result<(), String> {
+/// Так же пишутся настройки программы и профиль Claude: обрыв записи (полный диск, питание,
+/// антивирус) оставляет прежний файл целым, а не пустым.
+pub(crate) fn write_file(path: &Path, text: &str) -> Result<(), String> {
     if fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
         return fs::write(path, text).map_err(|exc| format!("{}: {exc}", path.display()));
     }

@@ -18,6 +18,17 @@ pub fn service_for(home: Option<&Path>) -> String {
     }
 }
 
+/// Служба ключей этой сборки: dev-сборка (без своей папки) не делит ключи с релизом, иначе
+/// провайдер с тем же ID, удалённый или заменённый в dev, стёр бы ключ релиза.
+pub fn key_service(home: Option<&Path>, dev: bool) -> String {
+    let service = service_for(home);
+    if dev && home.is_none() {
+        format!("{service}-dev")
+    } else {
+        service
+    }
+}
+
 /// Один вид пути для одной папки: относительный путь раскрыт, без `\\?\`,
 /// обратные слеши, без завершающего слеша, в нижнем регистре.
 fn home_key(home: &Path) -> String {
@@ -39,36 +50,51 @@ pub fn use_key_service(name: String) {
 pub fn load_or_create(dir: &Path) -> anyhow::Result<Config> {
     std::fs::create_dir_all(dir)?;
     let path = dir.join("config.json");
+    // Нужно ли писать файл: его нет, он был битый или нормализация что-то изменила. Прежний
+    // конфиг при каждом старте не переписывается: лишняя запись — лишний шанс его потерять.
+    let mut write = !path.exists();
     let mut config: Config = if path.exists() {
-        let text = std::fs::read_to_string(&path)?;
+        // Любая ошибка чтения, кроме «не текст» (занят, нет доступа), останавливает старт:
+        // пустой конфиг поверх временно недоступного файла стёр бы провайдеров.
+        let bytes = std::fs::read(&path)?;
         // Блокнот сохраняет UTF-8 с BOM — serde такой файл не читает.
-        match serde_json::from_str(text.trim_start_matches('\u{feff}')) {
+        let parsed = String::from_utf8(bytes)
+            .map_err(|exc| exc.to_string())
+            .and_then(|text| {
+                serde_json::from_str(text.trim_start_matches('\u{feff}'))
+                    .map_err(|exc| exc.to_string())
+            });
+        match parsed {
             Ok(config) => config,
             Err(exc) => {
-                // Битый файл не затираем молча: рядом остаётся копия для ручного разбора.
-                // Если копию сделать нельзя — не стартуем, чтобы не потерять провайдеров.
+                // Битый файл (или не UTF-8, например Unicode из Блокнота) не затираем молча:
+                // рядом остаётся копия для ручного разбора. Если копию сделать нельзя — не
+                // стартуем, чтобы не потерять провайдеров.
                 let stamp = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map_or(0, |d| d.as_secs());
                 let backup = dir.join(format!("config.broken-{stamp}.json"));
                 std::fs::copy(&path, &backup)?;
                 tracing::error!(error = %exc, backup = %backup.display(), "config.json is unreadable, starting empty");
+                write = true;
                 Config::default()
             }
         }
     } else {
         Config::default()
     };
+    let before = serde_json::to_string(&config)?;
     normalize(&mut config);
-    save(dir, &config)?;
+    if write || serde_json::to_string(&config)? != before {
+        save(dir, &config)?;
+    }
     Ok(config)
 }
 
 pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
     let path = dir.join("config.json");
     let text = serde_json::to_string_pretty(config)?;
-    std::fs::write(path, text)?;
-    Ok(())
+    crate::cc_settings::write_file(&path, &text).map_err(anyhow::Error::msg)
 }
 
 pub fn normalize(config: &mut Config) {
@@ -605,6 +631,72 @@ mod tests {
         let dark: Config = serde_json::from_str(r#"{"theme":"dark"}"#).unwrap();
         assert_eq!(ui_config(&dark, &dir).theme_pref, "dark");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_config_that_is_not_utf8_is_set_aside_not_a_crash() {
+        let dir = temp_dir("utf16");
+        // Notepad's "Unicode": UTF-16 with a byte order mark.
+        let mut bytes = vec![0xFF, 0xFE];
+        for unit in "{\"port\": 1}".encode_utf16() {
+            bytes.extend_from_slice(&unit.to_le_bytes());
+        }
+        std::fs::write(dir.join("config.json"), &bytes).unwrap();
+        let config = load_or_create(&dir).unwrap();
+        assert!(config.providers.is_empty());
+        let backup = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .find(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("config.broken-")
+            })
+            .expect("a copy of the unreadable file");
+        assert_eq!(std::fs::read(backup.path()).unwrap(), bytes);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn an_unchanged_config_is_not_rewritten_at_start() {
+        let dir = temp_dir("keep");
+        load_or_create(&dir).unwrap(); // the first start writes the defaults
+        let path = dir.join("config.json");
+        // The same content in another layout: a rewrite would bring the pretty layout back.
+        let value: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let compact = serde_json::to_string(&value).unwrap();
+        std::fs::write(&path, &compact).unwrap();
+        load_or_create(&dir).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), compact);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_save_leaves_the_old_config_in_place() {
+        let dir = temp_dir("atomic");
+        let config = load_or_create(&dir).unwrap();
+        let path = dir.join("config.json");
+        let before = std::fs::read(&path).unwrap();
+        // The temporary file cannot be created (a folder sits on its name). The old scheme
+        // emptied config.json first and wrote after; now the old file must stay whole.
+        std::fs::create_dir(dir.join("config.json.ctp-tmp")).unwrap();
+        let mut next = config.clone();
+        next.port = config.port.wrapping_add(1);
+        assert!(save(&dir, &next).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_dev_build_does_not_share_the_release_keys() {
+        // Same provider ID in both builds: deleting or replacing it in the dev build must not
+        // touch the release's key in Credential Manager.
+        assert_eq!(key_service(None, false), "claude-provider-gateway");
+        assert_eq!(key_service(None, true), "claude-provider-gateway-dev");
+        // An own folder already has its own service.
+        let home = Path::new(r"Q:\Portable\GW");
+        assert_eq!(key_service(Some(home), true), service_for(Some(home)));
     }
 
     #[test]

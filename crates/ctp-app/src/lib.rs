@@ -59,7 +59,10 @@ pub fn run() {
             claude::set_flavor(&app.config().identifier);
             // После create_dir_all: service_for раскрывает путь, а для этого папка должна быть.
             // Окно и команды появляются только после setup, ключей до этой строки никто не читает.
-            store::use_key_service(store::service_for(custom.then_some(dir.as_path())));
+            store::use_key_service(store::key_service(
+                custom.then_some(dir.as_path()),
+                claude::is_dev_build(),
+            ));
             store::rotate_log(&dir);
             let guard = init_logging(&dir);
             Box::leak(Box::new(guard));

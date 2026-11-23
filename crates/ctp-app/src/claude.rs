@@ -721,6 +721,10 @@ pub fn copies_root() -> anyhow::Result<PathBuf> {
 /// Сборка `.dev` (идентификатор приложения) — выставляется один раз при старте.
 static DEV_BUILD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+pub fn is_dev_build() -> bool {
+    DEV_BUILD.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 pub fn set_flavor(identifier: &str) {
     DEV_BUILD.store(
         identifier.ends_with(".dev"),
@@ -880,7 +884,7 @@ fn update_desktop_config(
 
 fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(value).map_err(|exc| exc.to_string())?;
-    fs::write(path, text).map_err(|exc| format!("{}: {exc}", path.display()))
+    crate::cc_settings::write_file(path, &text)
 }
 
 #[cfg(test)]
