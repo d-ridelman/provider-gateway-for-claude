@@ -122,10 +122,14 @@ pub async fn download_core(progress: download::Progress<'_>) -> Result<String> {
     ))
 }
 
+/// id подписки идёт в путь: только буквы и цифры, как его выдаёт `proxy_add_sub`.
+fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 32 && id.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
 /// Удалённая подписка: её скачанный список узлов ядру больше не нужен.
 pub fn forget_provider(id: &str) {
-    // id идёт в путь: только буквы и цифры, как его выдаёт `proxy_add_sub`.
-    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+    if !valid_id(id) {
         return;
     }
     if let Some(dir) = dir() {
@@ -359,7 +363,7 @@ fn watch(generation: u64) {
             }
             drop(guard);
             tracing::warn!("mihomo core exited on its own");
-            let system = crate::sysproxy::status().is_some();
+            let system = crate::sysproxy::status().is_some_and(|s| s.on);
             set_error(Some(if system {
                 tr!(
                     "ядро mihomo остановилось — запросы через VPN не проходят; системный прокси возвращён",
@@ -1135,6 +1139,14 @@ mod tests {
         let empty = build_config(&[], 7890, 9090, "k", false);
         assert_eq!(empty["proxy-groups"][0]["proxies"][0], "DIRECT");
         assert_eq!(empty["proxy-groups"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn only_plain_ids_become_paths() {
+        assert!(valid_id("s1a2b3c"));
+        for bad in ["", "..", r"..\..\x", "a/b", "s 1", "s.yaml"] {
+            assert!(!valid_id(bad), "{bad}");
+        }
     }
 
     #[test]

@@ -71,6 +71,13 @@ pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
         .download_and_install(|_, _| {}, || {})
         .await
         .map_err(|exc| {
+            // Хук мог уже снять ядро (установщик не запустился — например, отказ в UAC):
+            // поднять прокси снова, иначе шлюз остался бы на мёртвом порту.
+            let handle = app.clone();
+            // Только если ядро и правда снято: иначе (сбой до хука) TUN спросил бы UAC зря.
+            if !crate::mihomo::running() {
+                std::thread::spawn(move || crate::commands::start_proxy_in_background(&handle));
+            }
             tr!(
                 "Обновление не установлено: {exc}",
                 "Update not installed: {exc}"

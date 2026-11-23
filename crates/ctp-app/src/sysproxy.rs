@@ -115,6 +115,15 @@ pub fn enable(port: u16) -> Result<()> {
     result
 }
 
+/// Возвращать ли снимок. Прокси с тех пор сменили (человек, политика, другой VPN) — их выбор
+/// не затираем. Не знаем, что стоит сейчас (запрос не прошёл, файла «нашего» нет — его писала
+/// только эта версия), — возвращаем: потерять снимок человека хуже.
+fn should_restore(ours: &str, now: Option<&Saved>) -> bool {
+    let ours = ours.trim();
+    ours.is_empty()
+        || now.is_none_or(|now| now.flags & win::PROXY != 0 && now.server.as_deref() == Some(ours))
+}
+
 /// Возвращает настройки, что были до нас (если мы их меняли).
 pub fn disable() -> Result<()> {
     *STATE.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -123,14 +132,7 @@ pub fn disable() -> Result<()> {
     };
     let ours_file = file.with_file_name("sysproxy-ours.txt");
     let ours = std::fs::read_to_string(&ours_file).unwrap_or_default();
-    // Прокси с тех пор сменили (человек, политика, другой VPN) — их выбор не затираем.
-    // Не знаем, что стоит сейчас (запрос не прошёл, файла «нашего» нет — его писала только
-    // эта версия), — возвращаем: потерять снимок человека хуже.
-    let still_ours = ours.trim().is_empty()
-        || win::query().map_or(true, |now| {
-            now.flags & win::PROXY != 0 && now.server.as_deref() == Some(ours.trim())
-        });
-    if still_ours {
+    if should_restore(&ours, win::query().ok().as_ref()) {
         let saved: Saved = serde_json::from_slice(&std::fs::read(&file)?)?;
         win::set(&saved)?;
         tracing::info!("system proxy restored");
@@ -332,6 +334,31 @@ mod tests {
         assert!(list.ends_with(";*.corp.example;intranet"), "{list}");
         assert_eq!(list.matches("10.*").count(), 1);
         assert!(!bypass_list(None).contains(";;"));
+    }
+
+    #[test]
+    fn the_snapshot_comes_back_unless_someone_else_set_a_proxy() {
+        let ours = "127.0.0.1:17990";
+        let set = |flags, server: &str| Saved {
+            flags,
+            server: Some(server.into()),
+            ..Default::default()
+        };
+        let proxy = win::DIRECT | win::PROXY;
+        assert!(should_restore(ours, Some(&set(proxy, ours))), "still ours");
+        assert!(
+            !should_restore(ours, Some(&set(proxy, "10.0.0.1:3128"))),
+            "someone else's"
+        );
+        assert!(
+            !should_restore(ours, Some(&set(win::DIRECT, ours))),
+            "turned off since"
+        );
+        assert!(should_restore(ours, None), "unreadable: restore");
+        assert!(
+            should_restore("", Some(&set(proxy, "10.0.0.1:3128"))),
+            "no marker: restore"
+        );
     }
 
     #[test]
