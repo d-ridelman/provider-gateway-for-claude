@@ -257,7 +257,14 @@ pub async fn messages(
     // Если провайдеру придётся сокращать имена инструментов, в ответе они вернутся прежними.
     let names = adapt::name_map(&body);
     let headers = upstream_headers(provider, session);
-    let input_tokens = ctp_core::tokens::count_json_tokens(&body);
+    // Подсчёт длинного разговора — десятки миллисекунд процессора (замер: ~55 мс на 3 МБ с
+    // картинками, первый вызов ~250 мс): не на рабочем потоке, пока рядом идут потоки субагентов.
+    let counted =
+        tokio::task::spawn_blocking(move || ctp_core::tokens::count_json_tokens(&body)).await;
+    let input_tokens = match counted {
+        Ok(tokens) => tokens,
+        Err(exc) => return error::anthropic_error(500, "api_error", exc.to_string()),
+    };
 
     let upstream = match send(state, provider, &headers, upstream_model, &mut payload).await {
         Ok(upstream) => upstream,

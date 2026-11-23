@@ -246,7 +246,7 @@ pub async fn count_tokens(
             }
         }
     }
-    estimate_reply(&body)
+    estimate_reply(&body).await
 }
 
 pub async fn oauth_authorize(body: Bytes) -> Response {
@@ -310,9 +310,13 @@ pub async fn not_found(uri: Uri) -> Response {
         .into_response()
 }
 
-fn estimate_reply(body: &Value) -> Response {
+async fn estimate_reply(body: &Value) -> Response {
     let text = json!([body.get("system"), body.get("messages"), body.get("tools")]);
-    let tokens = ctp_core::tokens::count_json_tokens(&text);
+    // Подсчёт длинного разговора — десятки миллисекунд процессора (замер: ~55 мс на 3 МБ
+    // с картинками, первый вызов ~250 мс): не на рабочем потоке async-рантайма.
+    let tokens = tokio::task::spawn_blocking(move || ctp_core::tokens::count_json_tokens(&text))
+        .await
+        .unwrap_or(1);
     (StatusCode::OK, Json(json!({"input_tokens": tokens}))).into_response()
 }
 
