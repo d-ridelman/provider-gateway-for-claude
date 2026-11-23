@@ -136,6 +136,17 @@ fn read_version(dir: &Path) -> Option<String> {
 /// Скачивает последний Claude Code. Портативно — в `code_home`; иначе запускает
 /// `claude install` скачанного бинаря (как официальный install.ps1: `~/.local/bin`).
 pub async fn get_code(portable: bool, progress: download::Progress<'_>) -> Result<String> {
+    // Включён VPN приложения — загрузка идёт через него (`download::client`).
+    download::vpn_ready(
+        ctp_gateway::proxy::current().as_deref(),
+        crate::mihomo::running(),
+    )?;
+    get_code_with(portable, progress)
+        .await
+        .map_err(download::through_vpn)
+}
+
+async fn get_code_with(portable: bool, progress: download::Progress<'_>) -> Result<String> {
     let client = download::client()?;
     let release = latest_code(&client).await?;
     let home = code_home().context("no AppData\\Local")?;
@@ -233,17 +244,31 @@ async fn run_hidden(exe: &Path, args: &[&str]) -> Result<String> {
 /// Переменные прокси для дочерних программ (Claude Code, установщики): пусто, если
 /// прокси приложения выключен.
 pub fn proxy_env() -> Vec<(String, String)> {
-    match ctp_gateway::proxy::current() {
-        Some(url) => ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]
-            .into_iter()
-            .map(|name| (name.to_string(), url.clone()))
-            .chain(
-                ["NO_PROXY", "no_proxy"]
-                    .into_iter()
-                    .map(|name| (name.to_string(), ctp_gateway::proxy::NO_PROXY.to_string())),
-            )
-            .collect(),
-        None => Vec::new(),
+    let Some(url) = ctp_gateway::proxy::current() else {
+        return Vec::new();
+    };
+    // Свой список обхода человека не заменяется, а дополняется.
+    let own = std::env::var("NO_PROXY")
+        .or_else(|_| std::env::var("no_proxy"))
+        .unwrap_or_default();
+    let no_proxy = no_proxy_with(&own);
+    ["HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"]
+        .into_iter()
+        .map(|name| (name.to_string(), url.clone()))
+        .chain(
+            ["NO_PROXY", "no_proxy"]
+                .into_iter()
+                .map(|name| (name.to_string(), no_proxy.clone())),
+        )
+        .collect()
+}
+
+fn no_proxy_with(own: &str) -> String {
+    let own = own.trim().trim_matches(',');
+    if own.is_empty() {
+        ctp_gateway::proxy::NO_PROXY.to_string()
+    } else {
+        format!("{},{own}", ctp_gateway::proxy::NO_PROXY)
     }
 }
 
@@ -357,6 +382,19 @@ pub struct DesktopResult {
 /// если не заняты. Иначе — официальный установщик (Squirrel ставит в
 /// `%LOCALAPPDATA%\AnthropicClaude` и сам открывает Claude в обычном профиле).
 pub async fn get_desktop(
+    portable: bool,
+    progress: download::Progress<'_>,
+) -> Result<DesktopResult> {
+    download::vpn_ready(
+        ctp_gateway::proxy::current().as_deref(),
+        crate::mihomo::running(),
+    )?;
+    get_desktop_with(portable, progress)
+        .await
+        .map_err(download::through_vpn)
+}
+
+async fn get_desktop_with(
     portable: bool,
     progress: download::Progress<'_>,
 ) -> Result<DesktopResult> {
@@ -554,6 +592,14 @@ mod tests {
         assert_eq!(portable_desktop().unwrap(), exe);
     }
 
+    #[test]
+    fn own_no_proxy_is_kept() {
+        assert_eq!(no_proxy_with(" "), ctp_gateway::proxy::NO_PROXY);
+        let merged = no_proxy_with("corp.example,gpu-box,");
+        assert!(merged.starts_with(ctp_gateway::proxy::NO_PROXY));
+        assert!(merged.ends_with(",corp.example,gpu-box"), "{merged}");
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_folder_in_use_is_kept_whole() {
@@ -578,12 +624,5 @@ mod tests {
         discard(&home, &app).unwrap();
         assert!(!app.exists());
         let _ = std::fs::remove_dir_all(&home);
-    }
-
-    #[test]
-    fn proxy_env_is_empty_without_a_proxy() {
-        if ctp_gateway::proxy::current().is_none() {
-            assert!(proxy_env().is_empty());
-        }
     }
 }

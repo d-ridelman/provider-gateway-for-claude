@@ -118,13 +118,13 @@ What goes through the VPN:
 | System proxy | plus browsers and programs that use the Windows proxy (your regular Claude too) | none, so it suits domain PCs |
 | All traffic (TUN) | every program | administrator: Windows asks each time the core starts |
 
-Local addresses and private networks (Ollama, LM Studio, the intranet) go direct in every mode. If the core is not running, the gateway's requests fail with an error instead of slipping past the VPN.
+Local addresses, private networks and `.local`, `.lan`, `.internal`, `.home.arpa` names (Ollama, LM Studio, the intranet) go direct in every mode. A LAN server named without a dot or by a corporate domain goes through the VPN, so give such a server by its IP. If the core is not running, the gateway's requests fail with an error instead of slipping past the VPN.
 
 The core is not part of the app. **Download the core** gets a pinned version from its author's GitHub (v1.19.34 now, about 22 MB) and checks its sha256, which is built into PGC: a newer core arrives with a PGC update, signed with PGC's key. The core runs as a separate process and closes with PGC. Some antivirus programs flag mihomo as a "potentially unwanted program"; if the file is quarantined, the window says so and offers to download it again.
 
 **System proxy** is set through WinINet, the way the Windows Proxy settings page does it. Your previous settings (manual proxy, PAC script, auto-detection, bypass list) are saved before the switch and come back when you turn the mode off or quit PGC. If PGC crashed, that happens at its next start; until then programs point at a dead port. If a group policy forbids changing the proxy, the window says so, and Claude and providers only still works. If a domain PC reaches the internet only through a corporate proxy, the core cannot yet reach the nodes through it.
 
-**TUN** starts the core with administrator rights through UAC; PGC itself stays a normal process. An elevated helper stops the core when PGC closes.
+**TUN** starts the core with administrator rights through UAC; PGC itself stays a normal process. An elevated helper stops the core when PGC closes. Before every start, the sha256 of `mihomo.exe` itself is checked, and the file stays locked against writes until the core starts, so it cannot be swapped in the user's folder. If the UAC prompt is refused, the previous mode stays. If the core crashes, the system proxy is put back on its own and the chip turns red.
 
 A subscription address is a secret: it is kept in Credential Manager, and the window and the log show only its server. The core gets it in its own config file (`mihomo\home\config.yaml`) and keeps the downloaded node list in `mihomo\home\providers`.
 
@@ -134,6 +134,8 @@ Settings → **Download Claude Desktop** and **Download Claude Code**: both come
 
 - **Without installing** (for PCs where you may not install software). Claude Desktop is unpacked from its full package into the app folder, and Open Claude runs it. Claude Code goes into the same folder, and the "Portable Claude Code" tick makes the **Claude Code** button use it. Portable Claude Code has its own settings folder (`CLAUDE_CONFIG_DIR`) and its self-update is off; PGC updates it with the same button.
 - **Install**: the official Claude Desktop installer, or `claude install` for Claude Code, the way Anthropic does it. If Claude is already installed, the window asks first, because that is your regular Claude.
+
+With the VPN on in PGC, downloads go through it. If the core is not running, the download does not start and the window says why; if the node does not answer, the error suggests picking another. The mihomo core itself is downloaded directly.
 
 Checks: sha256 from the release manifest for Claude Code, sha1 from `RELEASES` for Claude Desktop (the same check Squirrel makes). Every `claude.exe` must carry an Authenticode signature by "Anthropic, PBC". A portable Claude writes `claude://` into the registry when it starts; once it closes, PGC gives those keys back to the installed Claude, or removes them if there is none.
 

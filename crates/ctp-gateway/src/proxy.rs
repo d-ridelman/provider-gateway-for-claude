@@ -5,9 +5,11 @@
 
 use std::sync::RwLock;
 
-/// Мимо прокси: сам компьютер и локальные сети (Ollama, LM Studio в LAN).
-pub const NO_PROXY: &str =
-    "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,169.254.0.0/16";
+/// Мимо прокси: сам компьютер, локальные сети и имена локальной сети (Ollama, LM Studio).
+/// shortcut: имя без точки (`gpu-box`) и корпоративный домен идут через VPN — указывайте
+/// такой сервер по IP; добавить список своих доменов в окно, если попросят.
+pub const NO_PROXY: &str = "localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16,\
+    169.254.0.0/16,.local,.lan,.internal,.home.arpa,.localdomain";
 
 static CURRENT: RwLock<Option<String>> = RwLock::new(None);
 

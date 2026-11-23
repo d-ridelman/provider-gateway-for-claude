@@ -169,8 +169,14 @@ pub fn run() {
             commands::win_toggle_maximize,
             commands::win_close,
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to start Provider Gateway for Claude");
+        .build(tauri::generate_context!())
+        .expect("failed to start Provider Gateway for Claude")
+        // Любой выход (трей, окно, конец сеанса Windows): ядро и системный прокси убрать.
+        .run(|_, event| {
+            if let tauri::RunEvent::Exit = event {
+                mihomo::shutdown();
+            }
+        });
 }
 
 fn init_logging(dir: &Path) -> tracing_appender::non_blocking::WorkerGuard {

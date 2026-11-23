@@ -26,6 +26,16 @@ All notable changes to this project are listed here. The format follows [Keep a 
   - Regular install: the official installer, or `claude install`. Over an existing Claude the window asks first.
   - Checks: sha256 from the Claude Code manifest, sha1 from `RELEASES`, and an Authenticode signature by exactly "Anthropic, PBC" on every `claude.exe`.
   - An update keeps a portable Claude that is still open whole, because its folder is renamed before it is removed.
+- **Claude downloads go through the VPN when it is on.** The downloader uses the core's mixed port; the installers get `HTTPS_PROXY`. A VPN that is on with no core running stops the download with a plain message. The core itself is always downloaded directly.
+- **Hardening after review.**
+  - Every core start checks the sha256 of `mihomo.exe` itself and keeps the file locked against writes until it runs (the elevated TUN helper included).
+  - A refused UAC prompt puts the previous mode back.
+  - The system proxy is restored on any exit (`RunEvent::Exit`), before an update installs, when the core crashes, and only if it is still ours.
+  - The mode is read under the core's lock, so the last saved one wins; the mode radios are locked while one applies.
+  - A port change at start restarts the gateway; the proxy port comes from a fixed range next to the gateway's.
+  - Local names go direct, and the user's own `NO_PROXY` is kept.
+  - The core's log tail is redacted, the core gets no browser-endpoint secret, and the node list of a removed subscription is deleted.
+  - The window skips redraws when nothing changed and polls nothing while hidden.
 - **MCP servers from the regular Claude Desktop** (an idea from Loadout).
   - Settings lists them read-only, by name and program.
   - Ticked ones are copied into the PGC profile while its Claude is closed; existing ones are kept, and the previous file stays as `.before-mcp`.

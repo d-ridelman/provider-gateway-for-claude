@@ -217,7 +217,8 @@ async function pollStatus() {
     state.claudeRun = await invoke("claude_state").catch(() => null);
     renderClaudeState();
     // The proxy is asked only while it matters: its page is open or a mode is on.
-    if (!state.proxy || state.view === "proxy" || state.proxy.mode !== "off") await refreshProxy();
+    // A hidden window (in the tray) asks nothing: each answer reads Credential Manager and the core.
+    if (!document.hidden && (!state.proxy || state.view === "proxy" || state.proxy.mode !== "off")) await refreshProxy();
   } catch {
     /* the app is closing */
   }
@@ -428,11 +429,15 @@ function closeProxy() {
 // The backend answers every proxy command with the whole state; the view only draws it.
 
 async function refreshProxy() {
+  let fresh;
   try {
-    state.proxy = await invoke("proxy_state");
+    fresh = await invoke("proxy_state");
   } catch {
     return;
   }
+  // Nothing changed: no redraw, so keyboard focus on a node or a button stays put.
+  if (JSON.stringify(fresh) === JSON.stringify(state.proxy)) return;
+  state.proxy = fresh;
   renderChip();
   if (state.view === "proxy") renderProxy();
 }
@@ -627,7 +632,17 @@ async function setProxyMode(mode) {
       return;
     }
   }
-  const ok = await proxyCall("proxy_set_mode", { mode });
+  // One change at a time: TUN may wait for the UAC answer, and arrows would apply every mode
+  // they pass.
+  const radios = [...document.querySelectorAll('input[name="proxyMode"]')];
+  for (const radio of radios) radio.disabled = true;
+  let ok;
+  try {
+    ok = await proxyCall("proxy_set_mode", { mode });
+  } finally {
+    for (const radio of radios) radio.disabled = false;
+    renderProxy();
+  }
   if (ok && state.claudeRun?.running) toast(t("proxy.reopenClaude"), "");
 }
 

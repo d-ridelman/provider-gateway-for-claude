@@ -587,11 +587,20 @@ fn update_config(
 
 /// Режим целиком (ядро, системный прокси, прокси шлюза); сменившийся порт — в настройки;
 /// работающий шлюз перезапускается, чтобы его клиенты взяли новый прокси.
-async fn apply_proxy(shared: &AppShared) -> Result<(), String> {
-    let config = shared.config.lock().unwrap().clone();
-    let result = tauri::async_runtime::spawn_blocking(move || mihomo::apply(&config))
-        .await
-        .map_err(|exc| exc.to_string())?;
+/// Настройки читаются под блокировкой ядра (`mihomo::apply_with`): из быстрых смен режима
+/// применяется последняя сохранённая.
+fn current_config(app: &tauri::AppHandle) -> crate::model::Config {
+    use tauri::Manager;
+    app.state::<AppShared>().config.lock().unwrap().clone()
+}
+
+async fn apply_proxy(app: &tauri::AppHandle, shared: &AppShared) -> Result<(), String> {
+    let handle = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        mihomo::apply_with(|| current_config(&handle))
+    })
+    .await
+    .map_err(|exc| exc.to_string())?;
     if let Ok(Some(port)) = result {
         update_config(shared, |c| c.proxy.port = port)?;
     }
@@ -601,14 +610,19 @@ async fn apply_proxy(shared: &AppShared) -> Result<(), String> {
     result.map(|_| ()).map_err(|exc| format!("{exc:#}"))
 }
 
-/// Старт приложения с включённым прокси (поток из `setup`).
+/// Старт приложения с включённым прокси (поток из `setup`). Пришлось сменить порт — шлюз,
+/// уже поднятый окном со старым адресом, перезапускается.
 pub fn start_proxy_in_background(app: &tauri::AppHandle) {
     use tauri::Manager;
     let shared = app.state::<AppShared>();
-    let config = shared.config.lock().unwrap().clone();
-    match mihomo::apply(&config) {
+    match mihomo::apply_with(|| current_config(app)) {
         Ok(Some(port)) => {
             let _ = update_config(&shared, |c| c.proxy.port = port);
+            if runtime::status(&shared).running
+                && let Err(exc) = tauri::async_runtime::block_on(runtime::start(&shared))
+            {
+                tracing::warn!(error = %exc, "gateway not restarted on the new proxy port");
+            }
         }
         Ok(None) => {}
         Err(exc) => tracing::warn!(error = %format!("{exc:#}"), "proxy not started"),
@@ -629,21 +643,35 @@ pub async fn proxy_state(shared: State<'_, AppShared>) -> Result<ProxyState, Str
 /// шлюз не уходил напрямую.
 #[tauri::command]
 pub async fn proxy_set_mode(
+    app: tauri::AppHandle,
     shared: State<'_, AppShared>,
     mode: String,
 ) -> Result<ProxyState, String> {
     if !crate::model::PROXY_MODES.contains(&mode.as_str()) {
         return Err(format!("unknown proxy mode {mode}"));
     }
-    let port = match shared.config.lock().unwrap().proxy.port {
-        0 => mihomo::free_port().map_err(|exc| exc.to_string())?,
+    let (previous, port) = {
+        let config = shared.config.lock().unwrap();
+        (config.proxy.mode.clone(), config.proxy.port)
+    };
+    let port = match port {
+        0 => mihomo::pick_port().map_err(|exc| exc.to_string())?,
         port => port,
     };
+    let tun = mode == "tun";
     update_config(&shared, |c| {
         c.proxy.mode = mode;
         c.proxy.port = port;
     })?;
-    apply_proxy(&shared).await?;
+    if let Err(exc) = apply_proxy(&app, &shared).await {
+        // TUN не поднялся (отказ в UAC и т. п.): прежний режим, иначе каждый запуск PGC
+        // снова спрашивал бы права, а шлюз всё это время не ходил бы никуда.
+        if tun {
+            update_config(&shared, |c| c.proxy.mode = previous)?;
+            let _ = apply_proxy(&app, &shared).await;
+        }
+        return Err(exc);
+    }
     Ok(proxy_state_of(&shared).await)
 }
 
@@ -660,23 +688,28 @@ pub async fn proxy_download_core(
     let downloaded = mihomo::download_core(&progress).await;
     let on = shared.config.lock().unwrap().proxy.is_on();
     if on {
-        apply_proxy(&shared).await?;
+        apply_proxy(&app, &shared).await?;
     }
     downloaded.map_err(|exc| format!("{exc:#}"))?;
     Ok(proxy_state_of(&shared).await)
 }
 
-/// Работающему ядру — новый список подписок (без перезапуска).
-async fn reload_proxy(shared: &AppShared) -> Result<(), String> {
-    let config = shared.config.lock().unwrap().clone();
-    tauri::async_runtime::spawn_blocking(move || mihomo::reload(&config))
-        .await
-        .map_err(|exc| exc.to_string())?
-        .map_err(|exc| format!("{exc:#}"))
+/// Работающему ядру — новый список подписок (без перезапуска). Ошибка не отменяет уже
+/// сохранённую подписку: её покажет состояние, а повторное «Добавить» не создаст дубль.
+async fn reload_proxy(app: &tauri::AppHandle) {
+    let handle = app.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        mihomo::reload_with(|| current_config(&handle))
+    })
+    .await;
+    if let Ok(Err(exc)) = result {
+        tracing::warn!(error = %format!("{exc:#}"), "core config not reloaded");
+    }
 }
 
 #[tauri::command]
 pub async fn proxy_add_sub(
+    app: tauri::AppHandle,
     shared: State<'_, AppShared>,
     name: String,
     url: String,
@@ -710,18 +743,20 @@ pub async fn proxy_add_sub(
         store::delete_key(&mihomo::sub_key(&id));
         return Err(exc);
     }
-    reload_proxy(&shared).await?;
+    reload_proxy(&app).await;
     Ok(proxy_state_of(&shared).await)
 }
 
 #[tauri::command]
 pub async fn proxy_remove_sub(
+    app: tauri::AppHandle,
     shared: State<'_, AppShared>,
     id: String,
 ) -> Result<ProxyState, String> {
     update_config(&shared, |c| c.proxy.subscriptions.retain(|s| s.id != id))?;
     store::delete_key(&mihomo::sub_key(&id));
-    reload_proxy(&shared).await?;
+    reload_proxy(&app).await;
+    mihomo::forget_provider(&id);
     Ok(proxy_state_of(&shared).await)
 }
 

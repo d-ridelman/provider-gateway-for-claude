@@ -97,9 +97,12 @@ pub fn enable(port: u16) -> Result<()> {
             std::fs::write(&file, serde_json::to_vec_pretty(&saved)?)?;
         }
         let saved: Saved = serde_json::from_slice(&std::fs::read(&file)?)?;
+        let ours = format!("127.0.0.1:{port}");
+        // Что поставили мы: возврат при выключении — только если прокси всё ещё наш.
+        std::fs::write(file.with_file_name("sysproxy-ours.txt"), &ours)?;
         win::set(&Saved {
             flags: win::DIRECT | win::PROXY,
-            server: Some(format!("127.0.0.1:{port}")),
+            server: Some(ours),
             bypass: Some(bypass_list(saved.bypass.as_deref())),
             autoconfig: None,
         })
@@ -118,10 +121,20 @@ pub fn disable() -> Result<()> {
     let Some(file) = backup().filter(|f| f.is_file()) else {
         return Ok(());
     };
-    let saved: Saved = serde_json::from_slice(&std::fs::read(&file)?)?;
-    win::set(&saved)?;
+    let ours_file = file.with_file_name("sysproxy-ours.txt");
+    let ours = std::fs::read_to_string(&ours_file).unwrap_or_default();
+    // Прокси с тех пор сменили (человек, политика, другой VPN) — их выбор не затираем.
+    let still_ours = win::query()
+        .is_ok_and(|now| now.flags & win::PROXY != 0 && now.server.as_deref() == Some(ours.trim()));
+    if still_ours {
+        let saved: Saved = serde_json::from_slice(&std::fs::read(&file)?)?;
+        win::set(&saved)?;
+        tracing::info!("system proxy restored");
+    } else {
+        tracing::info!("system proxy changed since; left as it is");
+    }
     std::fs::remove_file(&file)?;
-    tracing::info!("system proxy restored");
+    let _ = std::fs::remove_file(&ours_file);
     Ok(())
 }
 
@@ -153,10 +166,12 @@ mod win {
     use windows_sys::Win32::Networking::WinInet::{
         INTERNET_OPTION_PER_CONNECTION_OPTION, INTERNET_OPTION_REFRESH,
         INTERNET_OPTION_SETTINGS_CHANGED, INTERNET_PER_CONN_AUTOCONFIG_URL,
-        INTERNET_PER_CONN_FLAGS, INTERNET_PER_CONN_OPTION_LISTW, INTERNET_PER_CONN_OPTIONW,
-        INTERNET_PER_CONN_PROXY_BYPASS, INTERNET_PER_CONN_PROXY_SERVER, InternetQueryOptionW,
-        InternetSetOptionW,
+        INTERNET_PER_CONN_OPTION_LISTW, INTERNET_PER_CONN_OPTIONW, INTERNET_PER_CONN_PROXY_BYPASS,
+        INTERNET_PER_CONN_PROXY_SERVER, InternetQueryOptionW, InternetSetOptionW,
     };
+    // Флаги в том виде, как их видит панель «Прокси» (с галочкой автоопределения): простой
+    // INTERNET_PER_CONN_FLAGS её не отдаёт, и после возврата она пропадала бы.
+    use windows_sys::Win32::Networking::WinInet::INTERNET_PER_CONN_FLAGS_UI as INTERNET_PER_CONN_FLAGS;
     pub use windows_sys::Win32::Networking::WinInet::{
         PROXY_TYPE_DIRECT as DIRECT, PROXY_TYPE_PROXY as PROXY,
     };

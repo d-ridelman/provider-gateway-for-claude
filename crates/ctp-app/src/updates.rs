@@ -56,7 +56,9 @@ pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
     // открыта, её след в реестре иначе остался бы до следующего старта.
     crate::claude::repair_registry_on_exit(app);
     update
-        .download_and_install(|_, _| {}, || {})
+        // Скачано — дальше установщик закроет PGC: ядро и системный прокси убираются здесь,
+        // а не раньше (само скачивание может идти через VPN).
+        .download_and_install(|_, _| {}, crate::mihomo::shutdown)
         .await
         .map_err(|exc| {
             tr!(

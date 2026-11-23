@@ -23,13 +23,49 @@ pub struct Expect {
 /// Прогресс: сколько скачано и сколько всего (если сервер сказал).
 pub type Progress<'a> = &'a (dyn Fn(u64, Option<u64>) + Send + Sync);
 
-/// HTTP-клиент для загрузок: через прокси приложения, если он включён (`ctp_gateway::proxy`).
-pub fn client() -> Result<reqwest::Client> {
-    let builder = reqwest::Client::builder()
+fn builder() -> reqwest::ClientBuilder {
+    reqwest::Client::builder()
         .user_agent(ctp_gateway::state::USER_AGENT)
         .connect_timeout(std::time::Duration::from_secs(30))
-        .read_timeout(std::time::Duration::from_secs(120));
-    Ok(ctp_gateway::proxy::apply(builder).build()?)
+        .read_timeout(std::time::Duration::from_secs(120))
+}
+
+/// HTTP-клиент для загрузок Claude: через VPN приложения, если он включён
+/// (`ctp_gateway::proxy` — mixed-порт ядра mihomo; в TUN это тоже он).
+pub fn client() -> Result<reqwest::Client> {
+    Ok(ctp_gateway::proxy::apply(builder()).build()?)
+}
+
+/// Клиент мимо прокси приложения и системного прокси — для самого ядра mihomo: пока оно
+/// не скачано или остановлено для замены, оба указывают на неработающий порт.
+pub fn client_direct() -> Result<reqwest::Client> {
+    Ok(builder().no_proxy().build()?)
+}
+
+/// Перед загрузкой через VPN: включён, а ядро не работает — сказать это, а не «connection
+/// refused». Узел не отвечает — к ошибке загрузки добавляется, что она шла через VPN.
+pub fn vpn_ready(proxy: Option<&str>, core_running: bool) -> Result<()> {
+    if proxy.is_some() && !core_running {
+        bail!(
+            "{}",
+            crate::tr!(
+                "VPN включён, но ядро mihomo не работает — загрузка через VPN невозможна. Откройте «Прокси и VPN»: запустите ядро или выключите VPN.",
+                "The VPN is on, but the mihomo core is not running, so nothing can be downloaded through it. Open Proxy and VPN: start the core or turn the VPN off."
+            )
+        );
+    }
+    Ok(())
+}
+
+/// Ошибка загрузки при включённом VPN: с пометкой, что шла через него (узел мог не ответить).
+pub fn through_vpn(exc: anyhow::Error) -> anyhow::Error {
+    match ctp_gateway::proxy::current() {
+        Some(proxy) => exc.context(crate::tr!(
+            "загрузка шла через VPN ({proxy}); если узел не отвечает — выберите другой в «Прокси и VPN»",
+            "the download went through the VPN ({proxy}); if the node does not answer, pick another one in Proxy and VPN"
+        )),
+        None => exc,
+    }
 }
 
 /// Короткий ответ (текст, JSON) с пределом размера.
@@ -322,6 +358,7 @@ pub(crate) mod tests {
         let err = to_file(&plain(), &url, &dest, &bad, &quiet).await;
         assert!(err.is_err());
         assert_eq!(std::fs::read(&dest).unwrap(), b"hello");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
@@ -342,6 +379,7 @@ pub(crate) mod tests {
         assert!(!dest.exists());
         assert!(text(&plain(), &url, 5).await.is_err());
         assert_eq!(text(&plain(), &url, 10).await.unwrap(), "0123456789");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -373,6 +411,34 @@ pub(crate) mod tests {
         // Карта, выводящая за пределы папки, отклоняется.
         let err = unzip(&archive, &out, |_| Some(PathBuf::from("../evil"))).unwrap_err();
         assert!(err.to_string().contains("unsafe path"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Включённый VPN: загрузчик идёт через прокси приложения (здесь — wiremock в роли
+    /// прокси), а без ядра загрузка не начинается и говорит почему.
+    #[tokio::test]
+    async fn downloads_take_the_vpn_when_it_is_on() {
+        let proxy = MockServer::start().await;
+        Mock::given(path("/claude.exe"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("via vpn"))
+            .mount(&proxy)
+            .await;
+        ctp_gateway::proxy::set(Some(proxy.uri()));
+        let client = client().unwrap();
+        let direct = client_direct().unwrap();
+        ctp_gateway::proxy::set(None);
+        let url = "http://downloads.example.invalid/claude.exe";
+        assert_eq!(text(&client, url, 100).await.unwrap(), "via vpn");
+        assert!(
+            text(&direct, url, 100).await.is_err(),
+            "the core download goes direct"
+        );
+
+        let uri = proxy.uri();
+        let err = vpn_ready(Some(&uri), false).unwrap_err();
+        assert!(err.to_string().contains("mihomo"), "{err}");
+        vpn_ready(Some(&uri), true).unwrap();
+        vpn_ready(None, false).unwrap();
     }
 
     #[cfg(windows)]
@@ -383,6 +449,7 @@ pub(crate) mod tests {
         std::fs::write(&file, b"MZ not really").unwrap();
         assert!(signer(&file).is_err());
         assert!(ensure_anthropic(&file).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(windows)]

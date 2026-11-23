@@ -36,6 +36,12 @@ const ASSET: (&str, &str) = (
     "mihomo-windows-arm64-v1.19.34.zip",
     "076cb04a21377675bcf009b8d1dd83006ce2464aa537e37bce1faf6d3504f554",
 );
+/// sha256 самого exe из этого архива: его сверяет каждый запуск ядра (обычный и повышенный),
+/// а не только скачивание — папка ядра доступна на запись программам без прав.
+#[cfg(not(target_arch = "aarch64"))]
+pub const EXE_SHA256: &str = "5a0231811a80b27477ebdee15684b41946d01afbd2114534e9a4b256125ca147";
+#[cfg(target_arch = "aarch64")]
+pub const EXE_SHA256: &str = "aaec9e412c6dc5103bec026c697c9447e6001a55e0151e2cce0419837d357ce5";
 const MAX_CORE: u64 = 128 * 1024 * 1024;
 /// Главная группа (её выбор — выбранный узел) и группа «самый быстрый».
 pub const MAIN: &str = "PGC";
@@ -83,7 +89,16 @@ pub async fn download_core(progress: download::Progress<'_>) -> Result<String> {
         sha1: None,
         max: MAX_CORE,
     };
-    download::to_file(&download::client()?, &url, &archive, &expect, progress).await?;
+    // Напрямую: прокси приложения (и наш системный) смотрят в это самое ядро, а оно ещё не
+    // скачано или остановлено для замены.
+    download::to_file(
+        &download::client_direct()?,
+        &url,
+        &archive,
+        &expect,
+        progress,
+    )
+    .await?;
     let fresh = staging.join("unpacked");
     let _ = std::fs::remove_dir_all(&fresh);
     // В архиве один exe (`mihomo-windows-amd64-compatible.exe`) — кладём его под своим именем.
@@ -105,6 +120,17 @@ pub async fn download_core(progress: download::Progress<'_>) -> Result<String> {
         "Ядро mihomo {VERSION} скачано",
         "mihomo core {VERSION} downloaded"
     ))
+}
+
+/// Удалённая подписка: её скачанный список узлов ядру больше не нужен.
+pub fn forget_provider(id: &str) {
+    if let Some(dir) = dir() {
+        let _ = std::fs::remove_file(
+            dir.join("home")
+                .join("providers")
+                .join(format!("{id}.yaml")),
+        );
+    }
 }
 
 /// Адрес подписки — секрет: ключ в Credential Manager отдельно от ключей провайдеров.
@@ -161,10 +187,16 @@ pub fn build_config(
             { "name": MAIN, "type": "select", "proxies": [AUTO], "use": used },
         ])
     };
-    let mut rules: Vec<String> = DIRECT_NETS
+    // Локальные имена — напрямую (в TUN и системном режиме по ним приходят браузеры).
+    let mut rules: Vec<String> = ["local", "lan", "internal", "home.arpa", "localdomain"]
         .iter()
-        .map(|net| format!("IP-CIDR,{net},DIRECT,no-resolve"))
+        .map(|suffix| format!("DOMAIN-SUFFIX,{suffix},DIRECT"))
         .collect();
+    rules.extend(
+        DIRECT_NETS
+            .iter()
+            .map(|net| format!("IP-CIDR,{net},DIRECT,no-resolve")),
+    );
     rules.push(format!("MATCH,{MAIN}"));
     let mut config = json!({
         "mixed-port": mixed,
@@ -215,6 +247,15 @@ pub fn free_port() -> Result<u16> {
         .port())
 }
 
+/// mixed-порт: сначала из своего ряда рядом с портом шлюза. Случайный порт из динамического
+/// диапазона после перезагрузки часто забирают зарезервированные диапазоны Hyper-V и WSL.
+pub fn pick_port() -> Result<u16> {
+    match (17990..18090).find(|&port| port_free(port)) {
+        Some(port) => Ok(port),
+        None => free_port(),
+    }
+}
+
 fn port_free(port: u16) -> bool {
     port != 0 && std::net::TcpListener::bind(("127.0.0.1", port)).is_ok()
 }
@@ -234,7 +275,14 @@ static APPLYING: Mutex<()> = Mutex::new(());
 /// При ошибке ядра прокси шлюза остаётся на его порту: запросы падают с понятной ошибкой,
 /// а не уходят напрямую мимо VPN, которого человек ждёт.
 pub fn apply(config: &Config) -> Result<Option<u16>> {
+    apply_with(|| config.clone())
+}
+
+/// То же, но настройки читаются уже под блокировкой: из двух быстрых смен режима
+/// применится последняя сохранённая, а не та, чей поток дождался очереди позже.
+pub fn apply_with(current: impl FnOnce() -> Config) -> Result<Option<u16>> {
     let _one = APPLYING.lock().unwrap_or_else(|e| e.into_inner());
+    let config = &current();
     if let Err(exc) = crate::sysproxy::disable() {
         tracing::warn!(error = %format!("{exc:#}"), "system proxy not restored");
     }
@@ -274,9 +322,47 @@ struct Core {
     process: win::Running,
     /// Адреса подписок этого запуска — для `redact`.
     urls: Vec<String>,
+    /// Номер запуска: сторож следит только за своим.
+    generation: u64,
 }
 
 static CORE: Mutex<Option<Core>> = Mutex::new(None);
+static GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn urls_of_core() -> Vec<String> {
+    CORE.lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|core| core.urls.clone())
+        .unwrap_or_default()
+}
+
+/// Сторож запуска: ядро упало само (не остановлено нами) — сказать об этом в окне и, если
+/// системный прокси наш, вернуть прежний, чтобы весь компьютер не остался без сети.
+fn watch(generation: u64) {
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(2));
+            let guard = CORE.lock().unwrap_or_else(|e| e.into_inner());
+            let Some(core) = guard.as_ref().filter(|c| c.generation == generation) else {
+                return; // остановлено нами или запущено заново
+            };
+            if core.process.alive() {
+                continue;
+            }
+            drop(guard);
+            tracing::warn!("mihomo core exited on its own");
+            set_error(Some(tr!(
+                "ядро mihomo остановилось — запросы через VPN не проходят; системный прокси возвращён",
+                "the mihomo core stopped; requests through the VPN fail; the system proxy was put back"
+            )));
+            if let Err(exc) = crate::sysproxy::disable() {
+                tracing::warn!(error = %format!("{exc:#}"), "system proxy not restored");
+            }
+            return;
+        }
+    });
+}
 /// Почему ядро не работает, хотя должно (упало, не скачано, отказ UAC).
 static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
@@ -318,7 +404,7 @@ pub fn start(config: &Config) -> Result<Option<u16>> {
     let mut changed = None;
     let mut mixed = config.proxy.port;
     if !port_free(mixed) {
-        mixed = free_port()?;
+        mixed = pick_port()?;
         changed = Some(mixed);
     }
     let controller = free_port()?;
@@ -335,19 +421,22 @@ pub fn start(config: &Config) -> Result<Option<u16>> {
         win::start_in_job(&exe, &home, &path, &log)?
     };
     let api = format!("http://127.0.0.1:{controller}");
+    let generation = GENERATION.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
     *CORE.lock().unwrap_or_else(|e| e.into_inner()) = Some(Core {
         api: api.clone(),
         secret: secret.clone(),
         tun,
         process,
         urls,
+        generation,
     });
     // Ждём REST: ядро поднимается за доли секунды; UAC в TUN — пока человек не ответит.
     let wait = if tun { 120 } else { 15 };
     let client = blocking_client();
     for _ in 0..wait * 5 {
         if !running() {
-            let tail = log_tail(&log);
+            // Хвост журнала ядра может цитировать адрес подписки — только хост.
+            let tail = redact(&log_tail(&log), &urls_of_core());
             set_error(Some(tr!(
                 "ядро mihomo остановилось при запуске: {tail}",
                 "the mihomo core stopped while starting: {tail}"
@@ -363,6 +452,7 @@ pub fn start(config: &Config) -> Result<Option<u16>> {
         if ok {
             set_error(None);
             tracing::info!(mixed, tun, "mihomo core started");
+            watch(generation);
             return Ok(changed);
         }
         std::thread::sleep(Duration::from_millis(200));
@@ -415,6 +505,14 @@ fn blocking_client() -> reqwest::blocking::Client {
 
 /// Новый конфиг работающему ядру без перезапуска (в TUN перезапуск — это снова UAC).
 pub fn reload(config: &Config) -> Result<()> {
+    reload_with(|| config.clone())
+}
+
+/// Под той же блокировкой, что запуск: подписка, добавленная, пока ядро стартует (в TUN —
+/// ждёт UAC), попадёт в него, а не потеряется до следующего перезапуска.
+pub fn reload_with(current: impl FnOnce() -> Config) -> Result<()> {
+    let _one = APPLYING.lock().unwrap_or_else(|e| e.into_inner());
+    let config = &current();
     let (api, secret, tun, path) = {
         let guard = CORE.lock().unwrap_or_else(|e| e.into_inner());
         let Some(core) = guard.as_ref() else {
@@ -732,10 +830,36 @@ mod win {
         config: &Path,
         log: &Path,
     ) -> Result<(std::process::Child, Owned)> {
+        use std::os::windows::fs::OpenOptionsExt;
         use std::os::windows::process::CommandExt;
+        // Сверка sha256 самого exe, и файл держится открытым без права записи и удаления до
+        // запуска: подменить его между проверкой и стартом нельзя (папка ядра доступна на
+        // запись без прав, а в TUN это запуск от администратора).
+        let mut held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1) // FILE_SHARE_READ: загрузчик Windows сможет его открыть
+            .open(exe)
+            .with_context(|| exe.display().to_string())?;
+        let mut hasher = <sha2::Sha256 as sha2::Digest>::new();
+        std::io::copy(&mut held, &mut hasher)?;
+        let got: String = sha2::Digest::finalize(hasher)
+            .iter()
+            .map(|b| format!("{b:02x}"))
+            .collect();
+        if got != super::EXE_SHA256 {
+            bail!(
+                "{}",
+                crate::tr!(
+                    "файл ядра изменён (sha256 не совпадает) — скачайте ядро заново",
+                    "the core file has been changed (sha256 mismatch); download the core again"
+                )
+            );
+        }
         let job = kill_on_close_job()?;
         let out = std::fs::File::create(log)?;
         let child = std::process::Command::new(exe)
+            // Секрет браузерного эндпоинта нужен только шлюзу.
+            .env_remove(crate::fetch::URL_ENV)
             .arg("-d")
             .arg(home)
             .arg("-f")
@@ -746,6 +870,7 @@ mod win {
             .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
             .spawn()
             .with_context(|| exe.display().to_string())?;
+        drop(held);
         // SAFETY: оба дескриптора живы: job наш, процесс — только что запущенный ребёнок.
         if unsafe { AssignProcessToJobObject(job.0, child.as_raw_handle() as HANDLE) } == 0 {
             let error = std::io::Error::last_os_error();
@@ -1122,6 +1247,21 @@ mod tests {
         crate::store::delete_key(&sub_key("s1"));
         crate::store::delete_key(&sub_key("s2"));
         ctp_gateway::proxy::set(None);
+    }
+
+    /// Подменённый exe в папке ядра (она доступна на запись без прав) не запускается.
+    #[cfg(windows)]
+    #[test]
+    fn a_changed_core_file_is_refused() {
+        let dir = crate::download::tests::tempdir();
+        let exe = dir.join("mihomo.exe");
+        std::fs::copy(std::env::var_os("ComSpec").unwrap(), &exe).unwrap();
+        let err = win::start_in_job(&exe, &dir, &dir.join("c.yaml"), &dir.join("l.log"))
+            .err()
+            .expect("must refuse");
+        assert!(err.to_string().contains("sha256"), "{err}");
+        assert!(!dir.join("l.log").exists(), "nothing was started");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[cfg(windows)]
