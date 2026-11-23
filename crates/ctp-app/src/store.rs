@@ -3,6 +3,7 @@ use crate::tr;
 use ctp_core::alias::{desktop_alias, strip_1m};
 use ctp_core::config::{ProviderConfig, ProvidersFile};
 use std::collections::{BTreeMap, HashSet};
+use std::fs;
 use std::path::Path;
 
 const SERVICE: &str = "claude-provider-gateway";
@@ -96,7 +97,28 @@ pub fn load_or_create(dir: &Path) -> anyhow::Result<Config> {
 pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
     let path = dir.join("config.json");
     let text = serde_json::to_string_pretty(config)?;
-    crate::cc_settings::write_file(&path, &text).map_err(anyhow::Error::msg)
+    write_file(&path, &text).map_err(anyhow::Error::msg)
+}
+
+/// Запись JSON без полузаписанного файла при сбое: временный файл рядом, `sync_all`,
+/// `rename`. Символическую ссылку пишет насквозь, чтобы не заменить её обычным файлом.
+pub(crate) fn write_file(path: &Path, text: &str) -> Result<(), String> {
+    if fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
+        return fs::write(path, text).map_err(|exc| format!("{}: {exc}", path.display()));
+    }
+    let temp = path.with_extension("json.ctp-tmp");
+    let written = fs::File::create(&temp).and_then(|mut file| {
+        std::io::Write::write_all(&mut file, text.as_bytes())?;
+        file.sync_all()
+    });
+    if let Err(exc) = written {
+        let _ = fs::remove_file(&temp);
+        return Err(format!("{}: {exc}", temp.display()));
+    }
+    fs::rename(&temp, path).map_err(|exc| {
+        let _ = fs::remove_file(&temp);
+        format!("{}: {exc}", path.display())
+    })
 }
 
 pub fn normalize(config: &mut Config) {
@@ -243,15 +265,14 @@ pub fn apply_provider(
     }
     let mut next = config.clone();
     // Переименованный провайдер уносит с собой выбранные на его модели роли.
-    if let Some(old) = original.filter(|old| *old != row.id) {
-        let roles = &mut next.model_roles;
-        for role in [&mut roles.sonnet, &mut roles.opus, &mut roles.haiku]
-            .into_iter()
-            .flatten()
+    if let Some(old) = original.filter(|old| *old != row.id)
+        && let Some(role) = next
+            .model_roles
+            .sonnet
+            .as_mut()
             .filter(|role| role.provider == old)
-        {
-            role.provider = row.id.clone();
-        }
+    {
+        role.provider = row.id.clone();
     }
     let slot = original.and_then(|o| next.providers.iter_mut().find(|p| p.id == o));
     match slot {
@@ -306,11 +327,6 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
             labels: row.labels.clone(),
         })
         .collect();
-    let settings = crate::cc_settings::settings_path_for(config);
-    let advisor = match &settings {
-        Some(path) => crate::cc_settings::read_advisor(path),
-        None => Err(tr!("не найдена домашняя папка", "home folder not found")),
-    };
     UiConfig {
         port: config.port,
         token: config.token.clone(),
@@ -331,13 +347,6 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
         russian_file: dir.join(crate::ruui::TRANSLATION_FILE).is_file(),
         config_dir: dir.display().to_string(),
         model_roles: config.model_roles.clone(),
-        advisor_model: advisor.as_ref().ok().cloned().flatten(),
-        advisor_decided: config.advisor_decided,
-        claude_settings: settings
-            .map(|path| path.display().to_string())
-            .unwrap_or_default(),
-        claude_settings_error: advisor.err(),
-        advisor_notice: None,
         code_portable: config.code_portable,
         installed: crate::installs::installed(),
         detected_code: crate::claude::installed_code_cli().map(|p| p.display().to_string()),
@@ -404,11 +413,9 @@ pub fn build_file(config: &Config) -> Result<ProvidersFile, String> {
             .first()
             .and_then(|provider| provider.models.first().map(|(alias, _)| alias.clone()))
     });
-    // Советник (advisor Claude Code) — сильная модель; не выбрана — советника нет.
-    let advisor = role_alias(config, config.model_roles.opus.as_ref());
     Ok(ProvidersFile {
         default,
-        advisor,
+        advisor: None,
         providers,
     })
 }
@@ -706,6 +713,28 @@ mod tests {
     }
 
     #[test]
+    fn strong_and_fast_roles_and_the_advisor_flag_of_0_2_1_are_dropped() {
+        let dir = temp_dir("roles");
+        let role = |model: &str| format!(r#"{{"provider":"oa","model":"{model}"}}"#);
+        let old = format!(
+            r#"{{"port":17899,"advisorDecided":true,"modelRoles":{{"sonnet":{},"opus":{},"haiku":{}}}}}"#,
+            role("main"),
+            role("strong"),
+            role("fast")
+        );
+        std::fs::write(dir.join("config.json"), old).unwrap();
+        let config = load_or_create(&dir).unwrap();
+        assert_eq!(config.port, 17899);
+        assert_eq!(
+            config.model_roles.sonnet.as_ref().map(|r| r.model.as_str()),
+            Some("main")
+        );
+        let saved = serde_json::to_string(&config).unwrap();
+        assert!(!saved.contains("opus") && !saved.contains("haiku") && !saved.contains("advisor"));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn a_config_that_is_not_utf8_is_set_aside_not_a_crash() {
         let dir = temp_dir("utf16");
         // Notepad's "Unicode": UTF-16 with a byte order mark.
@@ -828,7 +857,7 @@ mod tests {
         let mut renamed = row();
         renamed.id = "openai2".into();
         let mut with_role = added.clone();
-        with_role.model_roles.opus = Some(crate::model::ModelRef {
+        with_role.model_roles.sonnet = Some(crate::model::ModelRef {
             provider: "openai".into(),
             model: "gpt-5.2".into(),
         });
@@ -836,7 +865,10 @@ mod tests {
         assert_eq!(next.providers[0].id, "openai2", "позиция сохраняется");
         assert_eq!(next.providers.len(), 2);
         assert_eq!(
-            next.model_roles.opus.as_ref().map(|r| r.provider.as_str()),
+            next.model_roles
+                .sonnet
+                .as_ref()
+                .map(|r| r.provider.as_str()),
             Some("openai2"),
             "роль переезжает вместе с провайдером"
         );

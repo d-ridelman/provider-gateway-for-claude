@@ -33,13 +33,9 @@ pub struct Config {
     /// Проверять обновления на GitHub при старте и раз в сутки.
     #[serde(default = "default_true")]
     pub auto_update: bool,
-    /// Какие модели шлюза Claude Code считает «opus», «sonnet» и «haiku».
+    /// Какую модель шлюза Claude Code считает основной («sonnet»).
     #[serde(default)]
     pub model_roles: ModelRoles,
-    /// Человек уже решал про советника Claude Code (галочка в настройках): после этого
-    /// программа не включает его сама, даже если `advisorModel` в его настройках нет.
-    #[serde(default)]
-    pub advisor_decided: bool,
     /// Кнопка «Claude Code» открывает портативный Claude Code из папки приложения
     /// (`installs::portable_code`) с его собственной папкой настроек.
     #[serde(default)]
@@ -95,17 +91,13 @@ pub struct ModelRef {
     pub model: String,
 }
 
-/// Роли моделей в Claude Code. `sonnet` — основная (сессия и алиас `sonnet`), `opus` —
-/// сильная (алиас `opus`: субагенты с `model: opus`), `haiku` — быстрая
-/// (алиас `haiku` и фоновые мелочи). `None` — как раньше: первая модель шлюза.
+/// Роль модели в Claude Code: `sonnet` — основная (сессия и алиас `sonnet`); алиасы
+/// `opus`/`haiku` шлюз тоже отдаёт ей. `None` — первая модель шлюза. Старые `opus` и
+/// `haiku` из config.json (сильная и быстрая роли до 0.2.2) читаются и отбрасываются.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ModelRoles {
     #[serde(default)]
     pub sonnet: Option<ModelRef>,
-    #[serde(default)]
-    pub opus: Option<ModelRef>,
-    #[serde(default)]
-    pub haiku: Option<ModelRef>,
 }
 
 fn default_true() -> bool {
@@ -126,7 +118,6 @@ impl Default for Config {
             theme: None,
             auto_update: true,
             model_roles: ModelRoles::default(),
-            advisor_decided: false,
             code_portable: false,
             proxy: ProxySettings::default(),
         }
@@ -189,27 +180,11 @@ pub struct UiConfig {
     /// Версия этой сборки (`Cargo.toml`).
     pub version: String,
     pub model_roles: ModelRoles,
-    /// `advisorModel` из настроек Claude Code (`None` — советник выключен).
-    pub advisor_model: Option<String>,
-    pub advisor_decided: bool,
-    /// Файл настроек Claude Code, куда пишется советник.
-    pub claude_settings: String,
-    /// Почему этот файл не годится для правки (битый JSON и т. п.); тогда галочки нет.
-    pub claude_settings_error: Option<String>,
-    /// Ответ на сохранение: что стало с советником (записан, выключен, не вышло).
-    pub advisor_notice: Option<Notice>,
     pub code_portable: bool,
     /// Что скачано в папку приложения (портативные Claude Code и Claude Desktop).
     pub installed: crate::installs::Installed,
     /// Установленный Claude Code (PATH или `~/.local/bin`), если есть.
     pub detected_code: Option<String>,
-}
-
-/// Сообщение для окна; `warning` — не вышло то, что просили.
-#[derive(Clone, Debug, Serialize)]
-pub struct Notice {
-    pub text: String,
-    pub warning: bool,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -319,10 +294,6 @@ pub struct SettingsInput {
     pub auto_update: bool,
     #[serde(default)]
     pub model_roles: ModelRoles,
-    /// Галочка советника, только если человек её трогал или она меняет файл; `None` —
-    /// настройки Claude Code не трогать.
-    #[serde(default)]
-    pub advisor: Option<bool>,
     #[serde(default)]
     pub code_portable: bool,
 }

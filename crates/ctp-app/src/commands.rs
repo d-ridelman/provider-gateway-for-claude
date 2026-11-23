@@ -195,20 +195,14 @@ pub fn save_settings(
     };
     next.model_roles = crate::model::ModelRoles {
         sonnet: keep(input.model_roles.sonnet),
-        opus: keep(input.model_roles.opus),
-        haiku: keep(input.model_roles.haiku),
     };
     // Основная модель — модель шлюза по умолчанию (store::build_file): нужен перезапуск.
     let port_changed = port_changed || next.model_roles != config.model_roles;
-    // Советник Claude Code — его общий файл настроек. Не вышло — остальные настройки всё
-    // равно сохраняются, а окно говорит, что с советником. Шлюз он не перезапускает.
-    let advisor_notice = input.advisor.and_then(|on| apply_advisor(&mut next, on));
     store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
     *config = next;
     crate::i18n::apply(config.language.as_deref());
     crate::tray::relabel(&app);
-    let mut ui = store::ui_config(&config, &shared.config_dir);
-    ui.advisor_notice = advisor_notice;
+    let ui = store::ui_config(&config, &shared.config_dir);
     drop(config);
     if port_changed {
         runtime::stop(&shared);
@@ -248,70 +242,6 @@ pub fn set_ui(
     crate::i18n::apply(config.language.as_deref());
     crate::tray::relabel(&app);
     Ok(store::ui_config(&config, &shared.config_dir))
-}
-
-/// Галочка советника → общий файл настроек Claude Code. Решение запоминается, только
-/// если запись удалась. Ответ — что сказать человеку (`None` — файл и так такой).
-fn apply_advisor(next: &mut crate::model::Config, on: bool) -> Option<crate::model::Notice> {
-    let warn = |text: String| {
-        Some(crate::model::Notice {
-            text,
-            warning: true,
-        })
-    };
-    if on && !claude::advisor_available(next) {
-        return warn(tr!(
-            "Советник не включён: его исполняет сильная модель — выберите её на OpenAI-совместимом провайдере",
-            "Advisor not turned on: it runs on the strong model — pick one on an OpenAI-compatible provider"
-        ));
-    }
-    let Some(path) = crate::cc_settings::settings_path_for(next) else {
-        return warn(tr!(
-            "Советник не изменён: не найдена домашняя папка",
-            "Advisor unchanged: home folder not found"
-        ));
-    };
-    // У портативного Claude Code свой файл, но вкладка Code у Claude Desktop и установленный
-    // Claude Code читают общий — галочка одна на оба.
-    let mut paths = vec![path];
-    if next.code_portable
-        && let Some(shared) = crate::cc_settings::settings_path()
-        && shared != paths[0]
-    {
-        paths.push(shared);
-    }
-    let mut changed = Vec::new();
-    for path in &paths {
-        match crate::cc_settings::set_advisor(path, on) {
-            Ok(true) => changed.push(path.display().to_string()),
-            Ok(false) => {}
-            Err(exc) => {
-                let path = path.display();
-                return warn(tr!(
-                    "Советник не изменён в {path}: {exc}",
-                    "Advisor unchanged in {path}: {exc}"
-                ));
-            }
-        }
-    }
-    next.advisor_decided = true;
-    let path = changed.join(", ");
-    (!changed.is_empty()).then(|| crate::model::Notice {
-        text: if on {
-            tr!("советник включён в {path}", "advisor turned on in {path}")
-        } else {
-            tr!("советник выключен в {path}", "advisor turned off in {path}")
-        },
-        warning: false,
-    })
-}
-
-/// «Скопировать команду для Claude Code»: те же переменные, что у кнопки «Claude Code».
-#[tauri::command]
-pub fn code_command(shared: State<'_, AppShared>) -> Result<String, String> {
-    let config = shared.config.lock().unwrap().clone();
-    let roles = claude::role_aliases(&config);
-    claude::code_command(&config, &runtime::status(&shared), &roles)
 }
 
 #[tauri::command]

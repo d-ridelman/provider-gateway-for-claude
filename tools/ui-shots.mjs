@@ -72,8 +72,7 @@ const STUB = String.raw`
     port: 17899, token: "ctp-0000000000000000000000000000000000000", claudePath: null, detectedClaude: home, providers,
     russianUi: false, builtinBrowser: false, russianFile: true, configDir: "C:\\Users\\user\\AppData\\Roaming\\app.provider-gateway-for-claude",
     codeDir: null, language: lang, languagePref: "auto", themePref, autoUpdate: true, version: "0.2.2",
-    modelRoles: providers.length ? { sonnet: { provider: providers[0].id, model: providers[0].models[0] }, opus: null, haiku: null } : { sonnet: null, opus: null, haiku: null },
-    advisorModel: "opus", advisorDecided: true, claudeSettings: "C:\\Users\\user\\.claude\\settings.json", claudeSettingsError: null, advisorNotice: null,
+    modelRoles: { sonnet: providers.length ? { provider: providers[0].id, model: providers[0].models[0] } : null },
     codePortable: scenario === "portable",
     detectedCode: scenario === "empty" ? null : "C:\\Users\\user\\.local\\bin\\claude.exe",
     installed: scenario === "portable"
@@ -96,7 +95,7 @@ const STUB = String.raw`
     launch_claude: () => scenario === "error" ? fail("Could not start claude.exe: access denied (stubbed)") : ({ message: "Claude started (PID 4242)", warning: false }),
     launch_claude_code: () => "Claude Code opened", tail_log: () => "2026-11-22T10:00:00Z INFO gateway started port=17899\n".repeat(30),
     open_logs: () => null, copy_text: () => null, pick_folder: () => null, app_exit: () => null, check_update: () => ({ available: false }),
-    install_update: () => null, win_minimize: () => null, win_toggle_maximize: () => null, win_close: () => null, code_command: () => "$env:X=1\nclaude",
+    install_update: () => null, win_minimize: () => null, win_toggle_maximize: () => null, win_close: () => null,
     // Downloads: progress events while the answer waits (the "downloading" shot catches the middle).
     download_code: () => downloadStub("code"), download_desktop: () => downloadStub("desktop"),
     // Proxy: "vpn" — on with two subscriptions; "vpnerror" — the system proxy blocked by a policy;

@@ -45,14 +45,16 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - **Built-in browser switch in Settings** ("Claude Desktop built-in browser"): third-party Claude turns its built-in browser off by default; the app now writes `builtinBrowserEnabled` into the 3p configuration entry, so it can be switched on from the gateway. Default off.
 - **The full list of 3p settings** (222 keys in 8 categories, from the decompiled app) is in `docs/claude-3p-settings.md`, with the ones worth surfacing next (auto mode, browser domains, model pricing, default effort).
 
-- **Advisor switch in Settings** ("Strong is the advisor (/advisor)"): the app writes `advisorModel` to Claude Code's shared settings (`~/.claude/settings.json`, or `CLAUDE_CONFIG_DIR`), so `/advisor` is no longer needed. One line changes, the rest of the file stays byte for byte; the first original is kept as `settings.json.bak`. Ticked by default until you decide, and the first save writes it once; after that the app never turns it on by itself. A model already chosen with `/advisor` is kept; an unreadable settings file is left alone, and the other settings are saved anyway. The tooltip says what it affects (the regular Claude Code too).
-
 - **Window redesign: one style, crisper text, your own theme and language.**
   - Settings are grouped (Claude Desktop, Claude Code, App) with shorter hints; "Save settings" is active only when something changed and says what applies when.
   - A status strip in the footer shows whether Claude is open in the gateway's profile and whether it still runs with the current settings ("restart needed"); a failed launch stays there instead of vanishing with the toast. Toasts sit above the footer and no longer cover the title bar or the card's buttons; "Stopped" is red.
   - One scale for the whole window: three corner radii (5 / 9 / 14 px), five whole-pixel type sizes (12 / 13 / 14 / 16 / 20 px), controls 34 px high (small ones 26 px). Text is drawn on the pixel grid: line heights in pixels, no blurred translucent bars, disabled buttons dimmed by colour instead of opacity (both made ClearType fall back to grey smoothing). Monospace is Cascadia Mono / Consolas.
   - Light and dark theme can be chosen in the app (title-bar button and Settings, "Same as Windows" is still the default), and so can the language (RU / EN button next to it). The choice is remembered and painted before the first frame.
   - The light theme is neutral grey instead of cream; placeholders and accent text pass WCAG AA; no coloured glow or gradient on buttons. The window passes the Impeccable detector in both themes (`node tools/ui-shots.mjs --detect`); `node tools/ui-shots.mjs` takes the snapshot set (light / dark, 1920 / 1280 / 1100 / 1000 / 900 px and Windows display scales x1.25 / x1.5, empty / error / loading / long text) into `state/shots/` with measurements.
+
+### Removed
+
+- **Strong and fast models for Claude Code, the advisor switch and the copied command.** Settings keep one model for Claude Code, the main one: the `opus` and `haiku` roles (and `model: fable`) now go to it too. Gone with them: the "Strong is the advisor (/advisor)" box, which wrote `advisorModel` into Claude Code's shared `settings.json`, the advisor that the gateway ran on the strong model, and "Copy the Claude Code command". The app no longer touches Claude Code's settings file; an `advisorModel` written there earlier stays until `/advisor off`. Roles saved by 0.2.1 are read and dropped.
 
 ### Fixed
 

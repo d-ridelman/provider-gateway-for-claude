@@ -53,8 +53,8 @@ const el = Object.fromEntries(
     "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
     "dialogText", "dialogOk", "dialogCancel", "dialogAlt", "dialogCheckRow", "dialogCheck", "dialogCheckText",
-    "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn", "roleSonnet", "roleOpus", "roleHaiku",
-    "advisorInput", "advisorRow", "desktopPortableBtn", "desktopInstallBtn", "desktopGetHint", "codeFound",
+    "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn", "roleSonnet",
+    "desktopPortableBtn", "desktopInstallBtn", "desktopGetHint", "codeFound",
     "codePortableInput", "codePortableBtn", "codeInstallBtn", "codeGetHint",
     "proxyBtn", "proxyChip", "proxyChipText", "proxyPanel", "proxyError", "proxyCoreLine", "proxyCoreBtn",
     "proxyCoreHint", "subList", "subForm", "subNameInput", "subUrlInput", "subIntervalInput", "subAddBtn",
@@ -731,69 +731,13 @@ function settingsDirty() {
     el.builtinBrowserInput.checked !== !!c.builtinBrowser ||
     el.autoUpdateInput.checked !== (c.autoUpdate !== false) ||
     el.codePortableInput.checked !== !!c.codePortable ||
-    el.advisorInput.checked !== advisorShown ||
     ROLES.some(([role, id]) => el[id].value !== roleKey(c.modelRoles?.[role]))
   );
 }
 
-// Claude Code's advisor (advisorModel in its shared settings). Available when the strong
-// role is on an OpenAI-compatible provider (as claude::advisor_available). Ticked when the
-// settings already have an advisor or, until the person decides, by default.
-let advisorTouched = false;
-let advisorShown = false;
-
-function advisorAvailable() {
-  const strong = readRole(el.roleOpus);
-  if (!strong) return false;
-  const provider = state.config.providers.find((p) => p.id === strong.provider);
-  return (
-    !!provider &&
-    (provider.kind ?? "").toLowerCase() !== "anthropic" &&
-    (provider.aliases ?? []).some((row) => bareId(row.model) === bareId(strong.model))
-  );
-}
-
-function renderAdvisor() {
-  const c = state.config;
-  // An unreadable settings file is not touched at all.
-  if (c.claudeSettingsError) {
-    el.advisorInput.disabled = true;
-    el.advisorInput.checked = false;
-    el.advisorRow.title = t("settings.advisorBroken", { path: c.claudeSettings, error: c.claudeSettingsError });
-    return;
-  }
-  const available = advisorAvailable();
-  const fileOn = !!c.advisorModel;
-  // Without a strong model it can still be turned off, not on.
-  el.advisorInput.disabled = !available && !fileOn;
-  if (!advisorTouched) el.advisorInput.checked = fileOn || (available && !c.advisorDecided);
-  const now = c.advisorModel ?? t("settings.advisorOff");
-  el.advisorRow.title = available
-    ? t("settings.advisorTitle", { path: c.claudeSettings, now })
-    : fileOn
-      ? t("settings.advisorOnUnavailable", { path: c.claudeSettings, now })
-      : t("settings.advisorUnavailable");
-}
-
-// What to tell save_settings: a change of the shared file, or the person's first decision;
-// otherwise null, and Claude Code's settings stay untouched.
-function advisorChoice() {
-  const c = state.config;
-  if (c.claudeSettingsError || el.advisorInput.disabled) return null;
-  const on = el.advisorInput.checked;
-  if (on && !advisorAvailable()) return null;
-  if (on !== !!c.advisorModel) return on;
-  // Same as the file: nothing to write, but the first save records the decision, so a
-  // later /advisor off (it deletes the key) is not undone by the default.
-  return c.advisorDecided ? null : on;
-}
-
-// Model roles of Claude Code: role, select id, text of the "not chosen" option.
-const ROLES = [
-  ["sonnet", "roleSonnet", "settings.roleFirst"],
-  ["opus", "roleOpus", "settings.roleAsMain"],
-  ["haiku", "roleHaiku", "settings.roleAsMain"],
-];
+// The model role of Claude Code: role, select id, text of the "not chosen" option. Only the
+// main one: the strong and fast roles are gone, every role goes to the main model.
+const ROLES = [["sonnet", "roleSonnet", "settings.roleFirst"]];
 
 // A role is stored as provider + model id (no [1m]): the alias changes with the provider.
 function roleKey(ref) {
@@ -852,9 +796,6 @@ function renderSettings() {
   el.claudePathInput.value = state.config.claudePath ?? "";
   el.codeDirInput.value = state.config.codeDir ?? "";
   for (const [role, id, emptyText] of ROLES) fillRole(el[id], state.config.modelRoles?.[role], emptyText);
-  advisorTouched = false;
-  renderAdvisor();
-  advisorShown = el.advisorInput.checked;
   el.tokenInput.value = state.config.token;
   el.detectedClaude.textContent = state.config.detectedClaude
     ? t("settings.found", { path: state.config.detectedClaude })
@@ -1058,12 +999,7 @@ function bind() {
   $("saveSettingsBtn").addEventListener("click", saveSettings);
   el.settingsPanel.addEventListener("input", syncSettingsSave);
   el.settingsPanel.addEventListener("change", syncSettingsSave);
-  el.roleOpus.addEventListener("change", renderAdvisor);
-  el.advisorInput.addEventListener("change", () => {
-    advisorTouched = true;
-  });
   $("copyTokenBtn").addEventListener("click", () => copyText(el.tokenInput.value, t("toast.tokenCopied")));
-  $("copyEnvBtn").addEventListener("click", copyEnv);
   $("openLogsFolderBtn").addEventListener("click", () => invoke("open_logs").catch((e) => toast(formatError(e), "error")));
   el.updateBtn.addEventListener("click", installUpdate);
   el.checkUpdateBtn.addEventListener("click", checkUpdate);
@@ -1507,18 +1443,13 @@ async function saveSettings() {
         language: el.languageInput.value,
         theme: el.themeInput.value,
         autoUpdate: el.autoUpdateInput.checked,
-        advisor: advisorChoice(),
         codePortable: el.codePortableInput.checked,
       },
     });
     if (state.config.language !== LANG) applyLanguage(state.config.language);
     applyTheme(state.config.themePref);
     render();
-    // What happened to Claude Code's shared file, as the backend saw it.
-    let saved = t(rolesChanged ? "settings.savedRoles" : "settings.saved");
-    const notice = state.config.advisorNotice;
-    if (notice) saved += "; " + notice.text;
-    await restartIfWas(wasRunning, saved, notice?.warning ? "error" : "good");
+    await restartIfWas(wasRunning, t(rolesChanged ? "settings.savedRoles" : "settings.saved"), "good");
     renderStatus();
   } catch (exc) {
     toast(formatError(exc), "error");
@@ -1544,19 +1475,6 @@ async function refreshLogs() {
     if (atBottom) el.logText.scrollTop = el.logText.scrollHeight;
   } catch {
     /* the log may not exist yet */
-  }
-}
-
-// The same variables as the Claude Code button, built in one place (Rust).
-async function copyEnv() {
-  if (!(state.status?.models ?? []).length) {
-    toast(t("toast.needModels"), "error");
-    return;
-  }
-  try {
-    copyText(await invoke("code_command"), t("toast.envCopied"));
-  } catch (exc) {
-    toast(formatError(exc), "error");
   }
 }
 

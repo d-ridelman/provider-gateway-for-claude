@@ -1,5 +1,4 @@
 pub mod catalog;
-pub mod cc_settings;
 pub mod claude;
 pub mod commands;
 pub mod download;
@@ -137,7 +136,6 @@ pub fn run() {
             commands::fetch_models,
             commands::test_provider,
             commands::save_settings,
-            commands::code_command,
             commands::start_gateway,
             commands::stop_gateway,
             commands::status,

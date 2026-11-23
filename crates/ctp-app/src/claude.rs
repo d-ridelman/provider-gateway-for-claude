@@ -7,8 +7,6 @@ use std::process::Command;
 
 /// Постоянный ID записи в `configLibrary`: Claude видит ту же конфигурацию от запуска к запуску.
 const LIBRARY_ID: &str = "6b1f3c52-7a0e-4f7e-9d4b-c1a0de9a7e3d";
-/// Без неё Claude Code объявляет советника (`/advisor`) только прямому API Anthropic.
-const ADVISOR_ENV: &str = "CLAUDE_CODE_ENABLE_EXPERIMENTAL_ADVISOR_TOOL";
 
 pub fn detect(config: &Config) -> Option<PathBuf> {
     if let Some(path) = config
@@ -118,43 +116,24 @@ const HOST_ENV_PREFIXES: [&str; 22] = [
 /// Какие переменные убрать и какие задать.
 pub type CodeEnv = (Vec<String>, Vec<(String, String)>);
 
-/// Псевдонимы моделей, выбранных на роли `sonnet`/`opus`/`haiku` (`None` — не выбрана
-/// или её больше нет у провайдера).
+/// Псевдоним модели, выбранной основной (`None` — не выбрана или её больше нет у
+/// провайдера).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct RoleAliases {
     pub sonnet: Option<String>,
-    pub opus: Option<String>,
-    pub haiku: Option<String>,
-}
-
-/// Советника шлюз исполняет, только если сильная модель (роль opus) выбрана, она ещё
-/// есть у провайдера и провайдер OpenAI-совместимый. По конфигу: шлюз может быть
-/// остановлен.
-pub fn advisor_available(config: &Config) -> bool {
-    let Some(strong) = config.model_roles.opus.as_ref() else {
-        return false;
-    };
-    crate::store::role_alias(config, Some(strong)).is_some()
-        && config
-            .providers
-            .iter()
-            .any(|p| p.id == strong.provider && !p.kind.eq_ignore_ascii_case("anthropic"))
 }
 
 pub fn role_aliases(config: &Config) -> RoleAliases {
-    let roles = &config.model_roles;
     RoleAliases {
-        sonnet: crate::store::role_alias(config, roles.sonnet.as_ref()),
-        opus: crate::store::role_alias(config, roles.opus.as_ref()),
-        haiku: crate::store::role_alias(config, roles.haiku.as_ref()),
+        sonnet: crate::store::role_alias(config, config.model_roles.sonnet.as_ref()),
     }
 }
 
 /// Окружение Claude Code через шлюз: что убрать и что задать. Основная модель — роль
-/// `sonnet` или первая модель шлюза. Алиасы `sonnet`/`opus` задаются, только если роль
-/// выбрана: иначе Claude Code шлёт свой встроенный ID, и шлюз отдаёт его настоящей
-/// модели Claude (если она есть у провайдера) или модели по умолчанию — основной
-/// (`store::build_file`). Так же ведёт себя Desktop с невыбранной ролью.
+/// `sonnet` или первая модель шлюза; на неё же и `haiku` (фоновые мелочи). Алиас `opus`
+/// не задаётся: Claude Code шлёт свой встроенный ID, и шлюз отдаёт его настоящей модели
+/// Claude (если она есть у провайдера) или модели по умолчанию — основной
+/// (`store::build_file`). Так же ведёт себя Desktop.
 pub fn code_env(
     status: &UiStatus,
     roles: &RoleAliases,
@@ -174,8 +153,6 @@ pub fn code_env(
     };
     let sonnet = pick(&roles.sonnet);
     let main = sonnet.unwrap_or(first);
-    let opus = pick(&roles.opus);
-    let haiku = pick(&roles.haiku).unwrap_or(main);
     // Имя шлюза Claude Code не знает и считает окно 1M — у модели без `[1m]` сжатие
     // разговора началось бы слишком поздно. Как в Claude Desktop: без `[1m]` — 200K.
     // По основной модели: на ней сессия и наследующие её субагенты (Explore, Plan).
@@ -204,49 +181,14 @@ pub fn code_env(
             sonnet.alias.clone(),
         ));
     }
-    if let Some(opus) = opus {
-        set.push(("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), opus.alias.clone()));
-        // fable — уровень выше opus (советники, `model: fable`): та же сильная модель.
-        set.push(("ANTHROPIC_DEFAULT_FABLE_MODEL".into(), opus.alias.clone()));
-        // Советник (`/advisor`): Claude Code объявляет его шлюзу, шлюз ведёт к сильной —
-        // если она на OpenAI-совместимом провайдере (другого советника шлюз не исполняет).
-        if opus.openai {
-            set.push((ADVISOR_ENV.into(), "1".into()));
-        }
-    }
     set.extend([
-        // haiku задавалась и до ролей: фоновые мелочи — на основной, если быстрой нет.
-        ("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), haiku.alias.clone()),
+        // Фоновые мелочи — на основной модели.
+        ("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), main.alias.clone()),
         // Устаревшее имя той же роли: его ещё читают старые версии Claude Code.
-        ("ANTHROPIC_SMALL_FAST_MODEL".into(), haiku.alias.clone()),
+        ("ANTHROPIC_SMALL_FAST_MODEL".into(), main.alias.clone()),
         ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window.into()),
     ]);
     Ok((remove, set))
-}
-
-/// Команда PowerShell для своего терминала («Скопировать команду») — те же переменные,
-/// что задаёт кнопка «Claude Code» (чужие переменные своего терминала человек видит сам).
-pub fn code_command(
-    config: &Config,
-    status: &UiStatus,
-    roles: &RoleAliases,
-) -> Result<String, String> {
-    let (_, mut set) = code_env(status, roles, std::iter::empty())?;
-    // Установленный зовётся просто `claude` из PATH своего терминала.
-    let run = if config.code_portable {
-        let (cli, extra) = code_cli(config)?;
-        set.extend(extra);
-        format!("& \"{}\"", cli.display())
-    } else {
-        set.extend(crate::installs::proxy_env());
-        "claude".into()
-    };
-    let mut lines: Vec<String> = set
-        .iter()
-        .map(|(name, value)| format!("$env:{name}=\"{value}\""))
-        .collect();
-    lines.push(run);
-    Ok(lines.join("\n"))
 }
 
 /// Какой `claude` запускать и с какими переменными сверх шлюзовых: портативный — со
@@ -646,11 +588,6 @@ pub fn launch(
     if let Some(real) = real_local_appdata() {
         command.env(crate::ruui::REAL_LOCALAPPDATA_VAR, real);
     }
-    // Советник для сессий Code: Desktop передаёт им своё окружение. Как в консоли — только
-    // если сильная модель на OpenAI-совместимом провайдере.
-    if advisor_available(config) {
-        command.env(ADVISOR_ENV, "1");
-    }
     // Прокси приложения: сам Claude (Chromium, loopback он обходит сам) и сессии Code
     // (окружение). shortcut: смену прокси при открытом Claude окно не замечает как «изменились
     // настройки» — переоткрыть Claude подсказывает окно прокси; учесть в run_state, если
@@ -889,12 +826,9 @@ pub fn local_appdata() -> Option<PathBuf> {
 }
 
 /// Модели для 3p-конфига Claude. С уровнями рассуждения — `behavesAs` и `maxEffort`
-/// (схема `inferenceModels` в Claude 6.6395.0). Выбранные роли — `anthropicFamilyTier`
+/// (схема `inferenceModels` в Claude 6.6395.0). Основная — `anthropicFamilyTier: sonnet`
 /// и `isFamilyDefault`: по ним Desktop задаёт своим сессиям Code
-/// `ANTHROPIC_DEFAULT_{SONNET,OPUS,HAIKU}_MODEL`. Роль `fable` сюда не идёт: вторая запись
-/// той же модели задвоила бы её в выборе модели. Одна модель — одна роль (у записи одно
-/// поле): выбрана на несколько — достаётся первой из sonnet, opus, haiku, а остальные
-/// Desktop решает сам, как без выбора.
+/// `ANTHROPIC_DEFAULT_SONNET_MODEL`; остальные роли Desktop решает сам, как без выбора.
 fn inference_models(
     models: &[crate::model::ModelInfo],
     roles: &RoleAliases,
@@ -911,16 +845,8 @@ fn inference_models(
                 ),
                 "supports1m": model.supports_1m
             });
-            let tier = [
-                ("sonnet", &roles.sonnet),
-                ("opus", &roles.opus),
-                ("haiku", &roles.haiku),
-            ]
-            .into_iter()
-            .find(|(_, alias)| alias.as_deref() == Some(model.alias.as_str()))
-            .map(|(tier, _)| tier);
-            if let Some(tier) = tier {
-                row["anthropicFamilyTier"] = json!(tier);
+            if roles.sonnet.as_deref() == Some(model.alias.as_str()) {
+                row["anthropicFamilyTier"] = json!("sonnet");
                 row["isFamilyDefault"] = json!(true);
             }
             if let Some(max) = &model.max_effort {
@@ -1004,7 +930,7 @@ pub(crate) fn update_desktop_config(
 
 fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
     let text = serde_json::to_string_pretty(value).map_err(|exc| exc.to_string())?;
-    crate::cc_settings::write_file(path, &text)
+    crate::store::write_file(path, &text)
 }
 
 #[cfg(test)]
@@ -1520,47 +1446,13 @@ mod tests {
     }
 
     #[test]
-    fn advisor_is_available_only_on_an_openai_strong_model() {
-        let row = |id: &str, kind: &str| crate::model::ProviderRow {
-            id: id.into(),
-            name: id.into(),
-            kind: kind.into(),
-            base_url: "https://example.com/v1".into(),
-            models: vec!["m1".into()],
-            ..Default::default()
-        };
-        let mut config = Config {
-            providers: vec![row("oa", "openai"), row("an", "anthropic")],
-            ..Default::default()
-        };
-        assert!(!advisor_available(&config));
-        let strong = |provider: &str, model: &str| {
-            Some(crate::model::ModelRef {
-                provider: provider.into(),
-                model: model.into(),
-            })
-        };
-        config.model_roles.opus = strong("oa", "m1");
-        assert!(advisor_available(&config));
-        config.model_roles.opus = strong("an", "m1");
-        assert!(!advisor_available(&config));
-        // Модели больше нет у провайдера — как не выбрана.
-        config.model_roles.opus = strong("oa", "gone");
-        assert!(!advisor_available(&config));
-    }
-
-    #[test]
-    fn roles_go_to_cli_env_and_desktop_tiers() {
-        let mut fast = info("fast", None, true);
-        fast.supports_1m = true;
-        let mut strong = info("strong", None, true);
-        strong.supports_1m = true;
+    fn main_role_goes_to_cli_env_and_desktop_tier() {
+        let mut first = info("first", None, true);
+        first.supports_1m = true;
         let main = info("main", None, true);
-        let status = status_with(vec![fast.clone(), main.clone(), strong.clone()]);
+        let status = status_with(vec![first.clone(), main.clone()]);
         let roles = RoleAliases {
             sonnet: Some(main.alias.clone()),
-            opus: Some(strong.alias.clone()),
-            haiku: Some(fast.alias.clone()),
         };
         let (_, set) = code_env(&status, &roles, std::iter::empty()).unwrap();
         let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
@@ -1569,97 +1461,34 @@ mod tests {
             get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
             Some(main.alias.clone())
         );
-        assert_eq!(
-            get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
-            Some(strong.alias.clone())
-        );
+        // Фоновые мелочи — на основной; opus и fable не задаются (шлюз отдаёт их основной).
         assert_eq!(
             get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
-            Some(fast.alias.clone())
+            Some(main.alias.clone())
         );
-        assert_eq!(get("ANTHROPIC_SMALL_FAST_MODEL"), Some(fast.alias.clone()));
-        // fable (советники) — на сильную, как opus; советник Claude Code включён.
-        assert_eq!(
-            get("ANTHROPIC_DEFAULT_FABLE_MODEL"),
-            Some(strong.alias.clone())
+        assert_eq!(get("ANTHROPIC_SMALL_FAST_MODEL"), Some(main.alias.clone()));
+        assert!(
+            !set.iter()
+                .any(|(n, _)| n.contains("OPUS") || n.contains("FABLE") || n.contains("ADVISOR"))
         );
-        assert_eq!(get(ADVISOR_ENV), Some("1".into()));
-        // Окно — по основной модели (без 1M), даже если у быстрой и сильной 1M.
+        // Окно — по основной модели (без 1M), даже если у первой 1M.
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000".into()));
-
-        // Только opus выбран: основная и haiku — первая модель.
-        let only_opus = RoleAliases {
-            opus: Some(strong.alias.clone()),
-            ..Default::default()
-        };
-        let (_, set) = code_env(&status, &only_opus, std::iter::empty()).unwrap();
-        let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        assert_eq!(get("ANTHROPIC_MODEL"), Some(fast.alias.clone()));
-        assert_eq!(
-            get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
-            Some(fast.alias.clone())
-        );
-        assert_eq!(
-            get("ANTHROPIC_DEFAULT_OPUS_MODEL"),
-            Some(strong.alias.clone())
-        );
-        assert!(get("ANTHROPIC_DEFAULT_SONNET_MODEL").is_none());
-        assert_eq!(
-            get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
-            Some("1000000".into())
-        );
-
-        // Сильная на Anthropic-провайдере: fable — на неё, а советника нет (шлюз его там
-        // не исполняет, и снимать запрет на беты в копии незачем).
-        let anthropic = info("anth", None, false);
-        let mixed = status_with(vec![main.clone(), anthropic.clone()]);
-        let on_anthropic = RoleAliases {
-            opus: Some(anthropic.alias.clone()),
-            ..Default::default()
-        };
-        let (_, set) = code_env(&mixed, &on_anthropic, std::iter::empty()).unwrap();
-        let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        assert_eq!(
-            get("ANTHROPIC_DEFAULT_FABLE_MODEL"),
-            Some(anthropic.alias.clone())
-        );
-        assert!(get(ADVISOR_ENV).is_none());
 
         // Модель роли не запущена (шлюз со старым набором) — роль как не выбранная.
         let stale = RoleAliases {
             sonnet: Some("claude-gone".into()),
-            ..Default::default()
         };
         let (_, set) = code_env(&status, &stale, std::iter::empty()).unwrap();
-        assert!(set.contains(&("ANTHROPIC_MODEL".into(), fast.alias.clone())));
+        assert!(set.contains(&("ANTHROPIC_MODEL".into(), first.alias.clone())));
         assert!(
             !set.iter()
-                .any(|(n, _)| n == "ANTHROPIC_DEFAULT_FABLE_MODEL" || n == ADVISOR_ENV)
+                .any(|(n, _)| n == "ANTHROPIC_DEFAULT_SONNET_MODEL")
         );
 
-        // Desktop: роль — в записи модели; одна модель на две роли — первая из sonnet, opus.
+        // Desktop: основная помечена в своей записи, остальные — без роли.
         let rows = inference_models(&status.models, &roles);
-        assert_eq!(rows[0]["anthropicFamilyTier"], "haiku");
-        assert_eq!(rows[1]["anthropicFamilyTier"], "sonnet");
-        assert_eq!(rows[2]["anthropicFamilyTier"], "opus");
-        assert!(rows.iter().all(|r| r["isFamilyDefault"] == true));
-        // fable в Desktop не дублируется (советника шлюз ведёт к сильной модели сам).
-        assert_eq!(rows.len(), 3);
-        let shared = RoleAliases {
-            sonnet: Some(main.alias.clone()),
-            opus: Some(main.alias.clone()),
-            haiku: None,
-        };
-        let rows = inference_models(&status.models, &shared);
-        assert_eq!(rows[1]["anthropicFamilyTier"], "sonnet");
         assert!(rows[0].get("anthropicFamilyTier").is_none());
-
-        // Команда для своего терминала — из того же окружения.
-        let text = code_command(&Config::default(), &status, &roles).unwrap();
-        assert!(text.contains(&format!(
-            "$env:ANTHROPIC_DEFAULT_OPUS_MODEL=\"{}\"",
-            strong.alias
-        )));
-        assert!(text.ends_with("\nclaude"));
+        assert_eq!(rows[1]["anthropicFamilyTier"], "sonnet");
+        assert_eq!(rows[1]["isFamilyDefault"], true);
     }
 }

@@ -80,30 +80,20 @@ A portable `.exe` is attached to each release as well. Its built-in update runs 
 
 <p align="center">
   <img src="docs/images/new-en.png" width="49%" alt="A new provider: template, address, key and models">
-  <img src="docs/images/settings-en.png" width="49%" alt="Settings: Claude Desktop, Claude Code with model roles and the advisor, the app (language, theme, port, token, updates)">
+  <img src="docs/images/settings-en.png" width="49%" alt="Settings: Claude Desktop, Claude Code with its main model, the app (language, theme, port, token, updates)">
 </p>
 
 ### Reasoning levels
 
 Set **Max reasoning level** on a provider and Claude offers a level picker for its models. The gateway passes the chosen level as `reasoning_effort` (OpenAI-compatible) or `output_config.effort` (Anthropic), capped at the maximum. **Default level** is used when Claude sends none, for example Claude Code without `--effort`.
 
-### Different models for subagents
+### Main model for Claude Code
 
-Claude Code asks for models by role: `sonnet`, `opus` and `haiku`. Settings → **Models for Claude Code** picks a gateway model for each: main (`sonnet`: the console session, subagents that inherit the model such as Explore and Plan, and every role left unassigned), strong (`opus`, for subagents with `model: opus`) and fast (`haiku`, for subagents with `model: haiku` and background tasks). It applies to the **Claude Code** console, the copied command and the Code tab of Claude Desktop (from the next **Open Claude**). A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session. Subagents with `model: fable` get the strong model as well: in the console always, in the Russian copy of Claude Desktop when the strong model is on an OpenAI-compatible provider.
-
-### Advisor
-
-Claude Code's advisor (`/advisor`) lets the working model consult a stronger one in the middle of a task. At Anthropic it is a server-side tool, so through a third-party provider it would simply be off. With a strong model chosen, the gateway runs it itself: the main model calls `advisor`, the gateway asks the strong model with the whole conversation and puts its advice into the same reply, as Anthropic's server does.
-
-Settings → **Strong is the advisor (`/advisor`)** under the model roles turns it on: the app writes `advisorModel` to Claude Code's settings (`~/.claude/settings.json`), the same thing `/advisor` does. That file is shared by every Claude Code on the computer, so in the regular Claude Code with an Anthropic account the advisor is on as well (an Anthropic model there); unticking is `/advisor off`. Until you decide, the box is ticked, and the first save writes it (once: after that the app never turns the advisor on by itself, so a later `/advisor off` stays off); a model you already chose with `/advisor` is kept. If the settings file cannot be read, the app leaves it alone. Whichever Claude model is named, the gateway answers with the strong one. It works with OpenAI-compatible providers, in the **Claude Code** console and in the Code tab of the Russian copy of Claude Desktop. Not covered: the Code tab of the regular Claude Desktop (it turns experimental features off for its sessions) and Anthropic-type providers. The gateway log shows each consultation (`advisor consulted`, model and time).
+Settings → **Model for Claude Code** picks the gateway model for Claude Code: the console session, subagents that inherit the model (Explore, Plan) and every role Claude Code asks for (`opus` and `haiku` included, so subagents with `model: opus` or `model: haiku` land on it as well). It applies to the **Claude Code** console and the Code tab of Claude Desktop (from the next **Open Claude**). A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session.
 
 ### Web search
 
 Claude's `WebSearch` normally runs on Anthropic's servers, so through a third-party provider the model got nothing. The gateway now answers it itself, in the form Anthropic's server uses: it searches DuckDuckGo and Brave with no key (answers are cached for 10 minutes; the tool's `allowed_domains` and `blocked_domains` are honored). When a search engine asks for a human check, the app opens that page in its own WebView2 window as a real visit, and the window shows itself if it needs a tick. There is nothing to set up and no switch yet: the search words go to those search engines (see [Privacy and network](#privacy-and-network)). Checked in the Claude Code console and in the Code tab of Claude Desktop.
-
-### Claude Code by hand
-
-Settings → **Copy the Claude Code command** puts a PowerShell snippet on the clipboard with the same variables the **Claude Code** button sets (gateway address, token, model roles), if you prefer your own terminal.
 
 ### Proxy and VPN
 
