@@ -63,10 +63,10 @@ pub fn fetch_html(url: &str, show: bool) -> Result<String> {
         "встроенный браузер недоступен",
         "built-in browser is not available"
     ))?;
-    let label = "webfetch-search";
-    if let Some(stale) = app.get_webview_window(label) {
-        let _ = stale.destroy();
-    }
+    // Своё окно на каждый поиск: Claude Code шлёт несколько поисков разом, и общая метка
+    // заставляла бы каждый новый уничтожать окно соседа.
+    let label = format!("webfetch-search-{}", uuid::Uuid::new_v4().simple());
+    let label = label.as_str();
     let window = WebviewWindowBuilder::new(app, label, WebviewUrl::External(url.parse()?))
         .title(tr!("Поиск — проверка", "Search — check"))
         .inner_size(720.0, 780.0)

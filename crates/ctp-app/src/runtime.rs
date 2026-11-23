@@ -77,11 +77,10 @@ pub async fn start(shared: &AppShared) -> Result<UiStatus, String> {
     for (model, steps) in gateway_state.profiles.snapshot() {
         tracing::info!(model = %model, steps = ?steps, "known quirks of this model");
     }
-    // Пока шлюз живёт в приложении, у него есть встроенный браузер: поисковики отвечают
-    // проверкой на бота, и пройти её может только он (см. `websearch`).
-    gateway_state.browser = std::env::var("CTP_FETCH_URL")
-        .ok()
-        .filter(|url| !url.trim().is_empty());
+    // Адрес встроенного браузера (поисковики отвечают проверкой на бота, пройти её может
+    // только он) шлюз читает из `CTP_FETCH_URL` при каждом поиске, а не запоминает здесь:
+    // сторож `fetch::spawn_watchdog` может поднять сервер заново на другом порту и с новым
+    // секретом, и запомненный адрес устарел бы до перезапуска шлюза.
 
     let Some(listener) = bind(shared, config.port, epoch).await? else {
         tracing::info!("gateway start superseded by a later command");

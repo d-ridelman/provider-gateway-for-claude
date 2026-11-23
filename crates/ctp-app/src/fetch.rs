@@ -5,12 +5,13 @@
 //! а если она просит галочку — окно показывается, и человек её нажимает. Шлюз ходит
 //! сюда `POST {"url"}`, получает HTML страницы и разбирает его своим парсером.
 //!
-//! Слушает только петля на случайном порту, и порт шлюз узнаёт из окружения
-//! (`CTP_FETCH_URL`), которое задаёт `runtime::start`, — чужие туда не постучатся.
+//! Слушает только петля на случайном порту, а адрес (с секретом в пути) шлюз узнаёт из
+//! окружения (`CTP_FETCH_URL`) при каждом поиске. Чужие процессы и страницы в браузере
+//! секрета не знают, а запросы со страниц (с `Origin`) отклоняются в любом случае.
 
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use axum::{Json, Router};
@@ -42,7 +43,10 @@ pub fn spawn_watchdog() {
             // SAFETY: адрес читают только потоки, созданные после этой записи.
             match serve(true) {
                 Ok(url) => {
-                    tracing::warn!(url = %url, "browser fetch endpoint restarted");
+                    tracing::warn!(
+                        address = address_of(&url),
+                        "browser fetch endpoint restarted"
+                    );
                     unsafe { std::env::set_var("CTP_FETCH_URL", &url) };
                 }
                 Err(exc) => tracing::warn!(error = %exc, "browser fetch endpoint not restarted"),
@@ -65,8 +69,11 @@ pub fn serve(show: bool) -> Result<String, std::io::Error> {
     // accept виснет, и запросы к `/fetch` не получают ответа вовсе.
     listener.set_nonblocking(true)?;
     let port = listener.local_addr()?.port();
+    // Порт случайный, но страница в браузере может перебрать порты: адрес несёт секрет
+    // (его знает только шлюз, из `CTP_FETCH_URL`), а запросы со страниц отсекает `handle`.
+    let secret = uuid::Uuid::new_v4().simple().to_string();
     let router = Router::new()
-        .route("/fetch", post(handle))
+        .route(&format!("/fetch/{secret}"), post(handle))
         .with_state(Fetching { show });
     // Свой поток с циклом tokio: `setup` у Tauri не живёт внутри асинхронного рантайма.
     let started = std::sync::mpsc::channel();
@@ -90,10 +97,23 @@ pub fn serve(show: bool) -> Result<String, std::io::Error> {
             });
         })?;
     let _ = started.1.recv();
-    Ok(format!("http://127.0.0.1:{port}/fetch"))
+    Ok(format!("http://127.0.0.1:{port}/fetch/{secret}"))
 }
 
-async fn handle(State(fetching): State<Fetching>, body: Bytes) -> Response {
+/// Только адрес без секрета для журнала: сам секрет в журнал не пишется.
+pub fn address_of(url: &str) -> &str {
+    url.split('/').nth(2).unwrap_or("")
+}
+
+async fn handle(State(fetching): State<Fetching>, headers: HeaderMap, body: Bytes) -> Response {
+    // Браузер всегда добавляет `Origin` или `Sec-Fetch-Site`; шлюз (reqwest) — нет.
+    if headers.contains_key("origin") || headers.contains_key("sec-fetch-site") {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({"error": "not for web pages"})),
+        )
+            .into_response();
+    }
     let Some(url) = wanted_url(&body) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -156,6 +176,27 @@ fn wanted_url(body: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn only_the_gateway_with_the_secret_may_ask_for_a_page() {
+        // The port is random but a page in the browser can scan ports: the address carries a
+        // secret, and anything that comes from a web page (it has an Origin) is refused anyway.
+        let url = serve(false).unwrap();
+        let secret = url.rsplit('/').next().unwrap();
+        assert!(secret.len() >= 32, "{url}");
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let bare = url.rsplit_once('/').unwrap().0;
+        let status = |request: reqwest::RequestBuilder| async move {
+            request.body("{}").send().await.unwrap().status().as_u16()
+        };
+        assert_eq!(status(client.post(bare)).await, 404);
+        assert_eq!(
+            status(client.post(&url).header("origin", "https://evil.example")).await,
+            403
+        );
+        // The gateway itself: no Origin, the right address; no `url` in the body is a 400.
+        assert_eq!(status(client.post(&url)).await, 400);
+    }
 
     #[test]
     fn only_web_addresses_are_fetched() {

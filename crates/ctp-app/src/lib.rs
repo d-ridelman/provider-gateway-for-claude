@@ -73,7 +73,7 @@ pub fn run() {
             // Адрес для шлюза: поисковики отвечают проверкой на бота, а проходит её
             // встроенный браузер. Окно показывает себя само, если проверка просит галочку.
             if let Ok(url) = fetch::serve(true) {
-                tracing::info!(url = %url, "browser fetch endpoint");
+                tracing::info!(address = fetch::address_of(&url), "browser fetch endpoint");
                 // SAFETY: `setup` идёт до запуска потоков, которые читают окружение.
                 unsafe { std::env::set_var("CTP_FETCH_URL", &url) };
                 fetch::spawn_watchdog();
