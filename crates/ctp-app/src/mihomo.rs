@@ -124,6 +124,10 @@ pub async fn download_core(progress: download::Progress<'_>) -> Result<String> {
 
 /// Удалённая подписка: её скачанный список узлов ядру больше не нужен.
 pub fn forget_provider(id: &str) {
+    // id идёт в путь: только буквы и цифры, как его выдаёт `proxy_add_sub`.
+    if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return;
+    }
     if let Some(dir) = dir() {
         let _ = std::fs::remove_file(
             dir.join("home")
@@ -343,6 +347,9 @@ fn watch(generation: u64) {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_secs(2));
+            // Под той же блокировкой, что смена режима (и в том же порядке: APPLYING, затем
+            // CORE): новое ядро и его системный прокси старый сторож не тронет.
+            let _one = APPLYING.lock().unwrap_or_else(|e| e.into_inner());
             let guard = CORE.lock().unwrap_or_else(|e| e.into_inner());
             let Some(core) = guard.as_ref().filter(|c| c.generation == generation) else {
                 return; // остановлено нами или запущено заново
@@ -352,10 +359,18 @@ fn watch(generation: u64) {
             }
             drop(guard);
             tracing::warn!("mihomo core exited on its own");
-            set_error(Some(tr!(
-                "ядро mihomo остановилось — запросы через VPN не проходят; системный прокси возвращён",
-                "the mihomo core stopped; requests through the VPN fail; the system proxy was put back"
-            )));
+            let system = crate::sysproxy::status().is_some();
+            set_error(Some(if system {
+                tr!(
+                    "ядро mihomo остановилось — запросы через VPN не проходят; системный прокси возвращён",
+                    "the mihomo core stopped; requests through the VPN fail; the system proxy was put back"
+                )
+            } else {
+                tr!(
+                    "ядро mihomo остановилось — запросы через VPN не проходят",
+                    "the mihomo core stopped; requests through the VPN fail"
+                )
+            }));
             if let Err(exc) = crate::sysproxy::disable() {
                 tracing::warn!(error = %format!("{exc:#}"), "system proxy not restored");
             }

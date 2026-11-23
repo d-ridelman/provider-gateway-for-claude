@@ -44,7 +44,14 @@ pub async fn check(app: &tauri::AppHandle) -> Result<Option<UpdateInfo>, String>
 /// Downloads, verifies and runs the installer, then restarts into the new version.
 /// The gateway stops with the app; the installer runs in passive mode.
 pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
-    let updater = app.updater().map_err(|exc| exc.to_string())?;
+    // Ядро и системный прокси убираются прямо перед запуском установщика — после проверки
+    // подписи и распаковки: скачивание может идти через VPN, а сорвавшаяся установка не
+    // должна оставить шлюз без прокси.
+    let updater = app
+        .updater_builder()
+        .on_before_exit(crate::mihomo::shutdown)
+        .build()
+        .map_err(|exc| exc.to_string())?;
     let update = updater
         .check()
         .await
@@ -56,9 +63,7 @@ pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
     // открыта, её след в реестре иначе остался бы до следующего старта.
     crate::claude::repair_registry_on_exit(app);
     update
-        // Скачано — дальше установщик закроет PGC: ядро и системный прокси убираются здесь,
-        // а не раньше (само скачивание может идти через VPN).
-        .download_and_install(|_, _| {}, crate::mihomo::shutdown)
+        .download_and_install(|_, _| {}, || {})
         .await
         .map_err(|exc| {
             tr!(

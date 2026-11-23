@@ -634,7 +634,7 @@ async function setProxyMode(mode) {
   }
   // One change at a time: TUN may wait for the UAC answer, and arrows would apply every mode
   // they pass.
-  const radios = [...document.querySelectorAll('input[name="proxyMode"]')];
+  const radios = [...document.querySelectorAll('input[name="proxyMode"]'), $("proxyToAppBtn")];
   for (const radio of radios) radio.disabled = true;
   let ok;
   try {

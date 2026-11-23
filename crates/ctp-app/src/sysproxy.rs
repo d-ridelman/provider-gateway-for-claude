@@ -124,8 +124,12 @@ pub fn disable() -> Result<()> {
     let ours_file = file.with_file_name("sysproxy-ours.txt");
     let ours = std::fs::read_to_string(&ours_file).unwrap_or_default();
     // Прокси с тех пор сменили (человек, политика, другой VPN) — их выбор не затираем.
-    let still_ours = win::query()
-        .is_ok_and(|now| now.flags & win::PROXY != 0 && now.server.as_deref() == Some(ours.trim()));
+    // Не знаем, что стоит сейчас (запрос не прошёл, файла «нашего» нет — его писала только
+    // эта версия), — возвращаем: потерять снимок человека хуже.
+    let still_ours = ours.trim().is_empty()
+        || win::query().map_or(true, |now| {
+            now.flags & win::PROXY != 0 && now.server.as_deref() == Some(ours.trim())
+        });
     if still_ours {
         let saved: Saved = serde_json::from_slice(&std::fs::read(&file)?)?;
         win::set(&saved)?;
