@@ -150,6 +150,7 @@ const STUB = String.raw`
   window.__TAURI__ = { core: { invoke }, event: { listen } };
   // ?view=settings opens Settings by itself (for scanners that only load the URL).
   if (q.get("view") === "settings") window.addEventListener("load", () => setTimeout(() => document.getElementById("settingsBtn")?.click(), 500));
+  if (q.get("view") === "proxy") window.addEventListener("load", () => setTimeout(() => document.getElementById("proxyBtn")?.click(), 500));
 })();
 `;
 
@@ -415,7 +416,8 @@ if (args.includes("--detect")) {
   const versions = fs.existsSync(pluginRoot) ? fs.readdirSync(pluginRoot).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) : [];
   const bin = versions.length && path.join(pluginRoot, versions.at(-1), "skills", "impeccable", "scripts", "impeccable.cmd");
   if (!bin || !fs.existsSync(bin)) throw new Error("the Impeccable plugin is not installed: claude plugin enable impeccable@impeccable --scope local");
-  const pages = ["normal", "normal&view=settings", "empty", "stale", "warn", "error", "long&view=settings", "forceddark", "forceddark&view=settings", "forcedlight", "normal&lang=en&view=settings"];
+  const pages = ["normal", "normal&view=settings", "empty", "stale", "warn", "error", "long&view=settings", "forceddark", "forceddark&view=settings", "forcedlight", "normal&lang=en&view=settings",
+    "normal&view=proxy", "vpn&view=proxy", "vpnerror&view=proxy", "vpnlong&view=proxy", "vpn&lang=en&view=proxy", "forceddark&view=proxy", "portable&view=settings"];
   let failed = 0;
   for (const page of pages) {
     const url = `${base}/?s=${page}`;
