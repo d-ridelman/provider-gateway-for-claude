@@ -694,6 +694,10 @@ pub fn launch(
     let before_portable = portable
         .as_ref()
         .map(|home| crate::ruui::registry::snapshot(home));
+    // Claude с профилем PGC (и портативный) при старте удаляет у установленного пункт «Open
+    // in Claude Code» целиком: в этом профиле функции нет (проверено вживую). Возвращаем.
+    #[cfg(windows)]
+    let owned = crate::ruui::registry::capture(&crate::ruui::registry::OWNED);
     #[cfg(not(windows))]
     let (before, before_portable): (Option<Before>, Option<Before>) = (None, None);
     let child = command.spawn().map_err(|exc| {
@@ -707,7 +711,7 @@ pub fn launch(
     // Возвращаем ключи установленному Claude после старта копии и ещё раз, когда она
     // закроется. Если окно шлюза закроют раньше — это сделает выход из приложения или
     // следующий старт (repair_registry, уже без снимка).
-    if russian || portable.is_some() {
+    {
         let locked = profile.clone();
         let clean = move || {
             if russian {
@@ -716,6 +720,8 @@ pub fn launch(
             if let Some(home) = &portable {
                 forget_portable(home, before_portable.as_ref());
             }
+            #[cfg(windows)]
+            crate::ruui::registry::put_back(&owned);
         };
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(20));
@@ -1004,6 +1010,77 @@ fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Портативный Claude Desktop из `PGC_LIVE_HOME` (его кладёт `live_portable_downloads`) в
+    /// изолированном профиле, с `--proxy-server` на свой слушатель: идут ли через него
+    /// запросы. Окно Claude откроется на ~30 с; закрываются только процессы из портативной
+    /// папки. `cargo test -p ctp-app live_portable_launch -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_portable_launch_goes_through_the_proxy() {
+        use std::io::{BufRead, BufReader};
+        let home = std::env::var("PGC_LIVE_HOME").expect("set PGC_LIVE_HOME");
+        // SAFETY: до любых потоков, читающих окружение.
+        unsafe { std::env::set_var("CLAUDE_GATEWAY_HOME", &home) };
+        let exe = crate::installs::portable_desktop().expect("no portable Claude in PGC_LIVE_HOME");
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut line = String::new();
+                let _ = BufReader::new(&stream).read_line(&mut line);
+                log.lock().unwrap().push(line.trim().to_string());
+            }
+        });
+        ctp_gateway::proxy::set(Some(format!("http://127.0.0.1:{port}")));
+
+        let config = Config {
+            claude_path: Some(exe.display().to_string()),
+            token: "live-test".into(),
+            ..Config::default()
+        };
+        let status = UiStatus {
+            running: true,
+            port: 9, // никакой шлюз не слушает: нужен только запуск
+            token: "live-test".into(),
+            models: vec![crate::model::ModelInfo {
+                alias: "claude-live-1000".into(),
+                model: "m".into(),
+                provider: "p".into(),
+                supports_1m: false,
+                max_effort: None,
+                openai: true,
+                label: None,
+            }],
+            log_path: String::new(),
+            claude: None,
+            update: None,
+        };
+        let dir = std::path::PathBuf::from(&home);
+        let result = launch(&config, &status, &dir).unwrap();
+        println!("{}", result.message);
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        let folder = exe.parent().unwrap().display().to_string();
+        let kill = format!(
+            "Get-Process claude -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '{folder}*' }} | Stop-Process -Force"
+        );
+        let _ = Command::new("powershell.exe")
+            .args(["-NoProfile", "-Command", &kill])
+            .status();
+        // Поток уборки реестра: два свободных опроса профиля по 5 с.
+        std::thread::sleep(std::time::Duration::from_secs(20));
+        ctp_gateway::proxy::set(None);
+        let seen = seen.lock().unwrap().clone();
+        println!("through the proxy: {seen:?}");
+        assert!(
+            seen.iter()
+                .any(|l| l.starts_with("CONNECT ") || l.starts_with("GET http")),
+            "Claude did not use --proxy-server"
+        );
+    }
 
     #[test]
     fn closing_needs_consecutive_free_polls_not_one() {

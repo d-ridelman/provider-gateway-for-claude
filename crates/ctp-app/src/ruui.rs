@@ -943,6 +943,60 @@ pub mod registry {
         forget_mui(root);
     }
 
+    /// Ключи установленного Claude, которые Claude с другим профилем (PGC, портативный)
+    /// при старте удаляет целиком, если в этом профиле функции нет: пункт «Open in Claude
+    /// Code» в меню папок (проверено вживую 23.11.2026, Claude 6.28899.6) и `claude://`.
+    pub const OWNED: [&str; 6] = [
+        r"Software\Classes\Directory\shell\ClaudeCode",
+        r"Software\Classes\Directory\shell\ClaudeCode\command",
+        r"Software\Classes\Directory\Background\shell\ClaudeCode",
+        r"Software\Classes\Directory\Background\shell\ClaudeCode\command",
+        r"Software\Classes\claude",
+        r"Software\Classes\claude\shell\open\command",
+    ];
+
+    /// Все строковые значения ключей до запуска.
+    pub struct Keys(Vec<(String, String, String)>);
+
+    pub fn capture(paths: &[&str]) -> Keys {
+        let mut out = Vec::new();
+        for path in paths {
+            let Ok(key) = CURRENT_USER.open(path) else {
+                continue;
+            };
+            let Ok(values) = key.values() else {
+                continue;
+            };
+            for (name, value) in values {
+                if let Ok(text) = String::try_from(value) {
+                    out.push((path.to_string(), name, text));
+                }
+            }
+        }
+        Keys(out)
+    }
+
+    /// Возвращает значения, которых после запуска не стало (существующие не трогает: их
+    /// чинят `repair` и `forget`).
+    pub fn put_back(keys: &Keys) {
+        for (path, name, value) in &keys.0 {
+            let gone = CURRENT_USER
+                .open(path)
+                .and_then(|k| k.get_string(name))
+                .is_err();
+            if !gone {
+                continue;
+            }
+            match CURRENT_USER
+                .create(path)
+                .and_then(|k| k.set_string(name, value))
+            {
+                Ok(()) => tracing::info!(key = %path, value = %name, "registry: value put back"),
+                Err(exc) => tracing::warn!(key = %path, error = %exc, "registry: cannot put back"),
+            }
+        }
+    }
+
     /// MuiCache — кэш имён программ: путь копии в имени значения, просто убираем.
     fn forget_mui(copies: &Path) {
         let copies_lower = copies.display().to_string().to_ascii_lowercase();
@@ -961,6 +1015,39 @@ pub mod registry {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// На своём временном ключе в HKCU: удалённый целиком ключ возвращается, а значение,
+    /// которое после запуска есть (пусть другое), не трогается.
+    #[cfg(windows)]
+    #[test]
+    fn deleted_keys_come_back_and_present_ones_stay() {
+        use windows_registry::CURRENT_USER;
+        let root = format!(r"Software\PGC-test-{}", uuid::Uuid::new_v4().simple());
+        let verb = format!(r"{root}\verb");
+        let command = format!(r"{verb}\command");
+        let key = CURRENT_USER.create(&verb).unwrap();
+        key.set_string("", "Open in Claude Code").unwrap();
+        key.set_string("Icon", "\"C:\\x\\claude.exe\",0").unwrap();
+        CURRENT_USER
+            .create(&command)
+            .unwrap()
+            .set_string("", "old")
+            .unwrap();
+        let saved = registry::capture(&[&verb, &command]);
+        CURRENT_USER.remove_tree(&verb).unwrap();
+        CURRENT_USER
+            .create(&command)
+            .unwrap()
+            .set_string("", "new")
+            .unwrap();
+        registry::put_back(&saved);
+        let key = CURRENT_USER.open(&verb).unwrap();
+        assert_eq!(key.get_string("").unwrap(), "Open in Claude Code");
+        assert_eq!(key.get_string("Icon").unwrap(), "\"C:\\x\\claude.exe\",0");
+        let command = CURRENT_USER.open(&command).unwrap().get_string("").unwrap();
+        assert_eq!(command, "new", "a present value is left to repair/forget");
+        CURRENT_USER.remove_tree(&root).unwrap();
+    }
 
     #[test]
     fn portable_traces_go_back_to_what_was_there_or_away() {
