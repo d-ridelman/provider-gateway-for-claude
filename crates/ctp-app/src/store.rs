@@ -423,8 +423,56 @@ pub fn get_key(id: &str) -> Option<String> {
     read_key(id).ok().flatten()
 }
 
+/// Подмена Credential Manager для тестов: живёт в потоке теста и включается им самим, поэтому
+/// ни настоящая служба, ни ключи релиза в тестах не затрагиваются.
+#[cfg(test)]
+pub(crate) mod fake_keys {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    #[derive(Default)]
+    pub struct Fake {
+        pub keys: HashMap<String, String>,
+        pub fail_read: bool,
+        pub fail_write: bool,
+    }
+
+    thread_local! {
+        static ACTIVE: RefCell<Option<Fake>> = const { RefCell::new(None) };
+    }
+
+    /// Пока жива, ключи этого потока идут в память.
+    pub struct Guard;
+
+    pub fn install() -> Guard {
+        ACTIVE.with(|active| *active.borrow_mut() = Some(Fake::default()));
+        Guard
+    }
+
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            ACTIVE.with(|active| *active.borrow_mut() = None);
+        }
+    }
+
+    /// `None` — подмена не включена, ключи настоящие.
+    pub fn with<R>(f: impl FnOnce(&mut Fake) -> R) -> Option<R> {
+        ACTIVE.with(|active| active.borrow_mut().as_mut().map(f))
+    }
+}
+
 /// `Ok(None)` — ключа нет; `Err` — Credential Manager не ответил (не путать с «нет ключа»).
 pub fn read_key(id: &str) -> Result<Option<String>, String> {
+    #[cfg(test)]
+    if let Some(result) = fake_keys::with(|fake| {
+        if fake.fail_read {
+            Err("fake Credential Manager: read failed".to_string())
+        } else {
+            Ok(fake.keys.get(id).cloned())
+        }
+    }) {
+        return result;
+    }
     match entry(id)?.get_password() {
         Ok(key) => Ok(Some(key)),
         Err(keyring::Error::NoEntry) => Ok(None),
@@ -433,6 +481,17 @@ pub fn read_key(id: &str) -> Result<Option<String>, String> {
 }
 
 pub fn set_key(id: &str, key: &str) -> Result<(), String> {
+    #[cfg(test)]
+    if let Some(result) = fake_keys::with(|fake| {
+        if fake.fail_write {
+            Err("fake Credential Manager: write failed".to_string())
+        } else {
+            fake.keys.insert(id.to_string(), key.to_string());
+            Ok(())
+        }
+    }) {
+        return result;
+    }
     entry(id)?.set_password(key).map_err(|exc| {
         tr!(
             "Не удалось сохранить ключ в Windows Credential Manager: {exc}",
@@ -442,6 +501,14 @@ pub fn set_key(id: &str, key: &str) -> Result<(), String> {
 }
 
 pub fn delete_key(id: &str) {
+    #[cfg(test)]
+    if fake_keys::with(|fake| {
+        fake.keys.remove(id);
+    })
+    .is_some()
+    {
+        return;
+    }
     if let Ok(entry) = entry(id) {
         let _ = entry.delete_credential();
     }

@@ -17,6 +17,11 @@ pub fn save_provider(
     shared: State<'_, AppShared>,
     input: SaveProviderInput,
 ) -> Result<UiConfig, String> {
+    save_provider_in(&shared, input)
+}
+
+/// Ядро `save_provider` без Tauri: ключ и конфиг пишутся в два шага, и тесты ходят сюда.
+fn save_provider_in(shared: &AppShared, input: SaveProviderInput) -> Result<UiConfig, String> {
     let row = store::clean_row(input.provider)?;
     let original = input.original_id.as_deref();
     let renamed_from = original.filter(|old| *old != row.id);
@@ -74,7 +79,7 @@ pub fn save_provider(
     *config = next;
     let ui = store::ui_config(&config, &shared.config_dir);
     drop(config);
-    runtime::stop(&shared);
+    runtime::stop(shared);
     Ok(ui)
 }
 
@@ -136,16 +141,20 @@ pub async fn test_provider(input: ProbeInput) -> Result<String, String> {
 
 #[tauri::command]
 pub fn delete_provider(shared: State<'_, AppShared>, id: String) -> Result<UiConfig, String> {
+    delete_provider_in(&shared, &id)
+}
+
+fn delete_provider_in(shared: &AppShared, id: &str) -> Result<UiConfig, String> {
     let mut config = shared.config.lock().unwrap();
     let mut next = config.clone();
     next.providers.retain(|provider| provider.id != id);
     // Disk first: if the write fails, memory and the key stay as they were.
     store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
     *config = next;
-    store::delete_key(&id);
+    store::delete_key(id);
     let ui = store::ui_config(&config, &shared.config_dir);
     drop(config);
-    runtime::stop(&shared);
+    runtime::stop(shared);
     Ok(ui)
 }
 
@@ -436,6 +445,137 @@ pub fn app_exit(app: tauri::AppHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::ProviderRow;
+    use crate::store::fake_keys;
+
+    /// Состояние приложения в своей папке, как после первого старта; Credential Manager —
+    /// подмена этого потока (живёт, пока жив возвращаемый `Guard`).
+    fn app() -> (AppShared, std::path::PathBuf, fake_keys::Guard) {
+        let guard = fake_keys::install();
+        let dir = std::env::temp_dir()
+            .join("agents")
+            .join(format!("ctp-cmd-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let config = store::load_or_create(&dir).unwrap();
+        (AppShared::new(dir.clone(), config), dir, guard)
+    }
+
+    fn provider(id: &str) -> ProviderRow {
+        ProviderRow {
+            id: id.into(),
+            kind: "openai".into(),
+            base_url: "https://api.example.com/v1".into(),
+            models: vec!["m1".into()],
+            ..Default::default()
+        }
+    }
+
+    fn input(
+        id: &str,
+        original: Option<&str>,
+        key: Option<&str>,
+        clear: bool,
+    ) -> SaveProviderInput {
+        SaveProviderInput {
+            provider: provider(id),
+            original_id: original.map(str::to_string),
+            api_key: key.map(str::to_string),
+            clear_key: clear,
+        }
+    }
+
+    fn key_of(id: &str) -> Option<String> {
+        fake_keys::with(|fake| fake.keys.get(id).cloned()).flatten()
+    }
+
+    fn ids(shared: &AppShared) -> Vec<String> {
+        let config = shared.config.lock().unwrap();
+        config.providers.iter().map(|p| p.id.clone()).collect()
+    }
+
+    /// Папка на месте временного файла: запись конфига не удаётся (а прежний остаётся целым).
+    fn block_config_writes(dir: &std::path::Path) {
+        std::fs::create_dir(dir.join("config.json.ctp-tmp")).unwrap();
+    }
+
+    #[test]
+    fn a_new_provider_gets_its_key_and_a_row_in_the_config() {
+        let (shared, dir, _fake) = app();
+        save_provider_in(&shared, input("p1", None, Some(" sk-1 "), false)).unwrap();
+        assert_eq!(key_of("p1").as_deref(), Some("sk-1"));
+        assert_eq!(ids(&shared), ["p1"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_rename_carries_the_key_over_and_drops_the_old_one() {
+        let (shared, dir, _fake) = app();
+        save_provider_in(&shared, input("p1", None, Some("sk-1"), false)).unwrap();
+        save_provider_in(&shared, input("p2", Some("p1"), None, false)).unwrap();
+        assert_eq!(key_of("p2").as_deref(), Some("sk-1"));
+        assert_eq!(key_of("p1"), None);
+        assert_eq!(ids(&shared), ["p2"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_failed_config_write_gives_the_previous_key_back() {
+        let (shared, dir, _fake) = app();
+        save_provider_in(&shared, input("p1", None, Some("old"), false)).unwrap();
+        block_config_writes(&dir);
+        // A new key for an existing provider: the old one must come back.
+        assert!(save_provider_in(&shared, input("p1", Some("p1"), Some("new"), false)).is_err());
+        assert_eq!(key_of("p1").as_deref(), Some("old"));
+        // A key for a provider that did not exist: nothing is left behind.
+        assert!(save_provider_in(&shared, input("p9", None, Some("sk-9"), false)).is_err());
+        assert_eq!(key_of("p9"), None);
+        assert_eq!(ids(&shared), ["p1"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn clearing_the_key_deletes_it_and_an_orphan_under_a_new_id_is_not_inherited() {
+        let (shared, dir, _fake) = app();
+        save_provider_in(&shared, input("p1", None, Some("sk-1"), false)).unwrap();
+        save_provider_in(&shared, input("p1", Some("p1"), None, true)).unwrap();
+        assert_eq!(key_of("p1"), None);
+        // A key left under an id by an earlier failure must not go to a new provider with it.
+        fake_keys::with(|fake| fake.keys.insert("p3".into(), "orphan".into()));
+        save_provider_in(&shared, input("p3", None, None, false)).unwrap();
+        assert_eq!(key_of("p3"), None);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_key_that_cannot_be_read_stops_a_rename_instead_of_losing_it() {
+        let (shared, dir, _fake) = app();
+        save_provider_in(&shared, input("p1", None, Some("sk-1"), false)).unwrap();
+        fake_keys::with(|fake| fake.fail_read = true);
+        assert!(save_provider_in(&shared, input("p2", Some("p1"), None, false)).is_err());
+        fake_keys::with(|fake| fake.fail_read = false);
+        assert_eq!(key_of("p1").as_deref(), Some("sk-1"));
+        assert_eq!(ids(&shared), ["p1"]);
+        // The key store refuses a write: the config stays as it was.
+        fake_keys::with(|fake| fake.fail_write = true);
+        assert!(save_provider_in(&shared, input("p5", None, Some("sk-5"), false)).is_err());
+        assert_eq!(ids(&shared), ["p1"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn deleting_a_provider_keeps_its_key_when_the_config_cannot_be_written() {
+        let (shared, dir, _fake) = app();
+        save_provider_in(&shared, input("p1", None, Some("sk-1"), false)).unwrap();
+        block_config_writes(&dir);
+        assert!(delete_provider_in(&shared, "p1").is_err());
+        assert_eq!(key_of("p1").as_deref(), Some("sk-1"));
+        assert_eq!(ids(&shared), ["p1"]);
+        std::fs::remove_dir(dir.join("config.json.ctp-tmp")).unwrap();
+        delete_provider_in(&shared, "p1").unwrap();
+        assert_eq!(key_of("p1"), None);
+        assert!(ids(&shared).is_empty());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 
     #[test]
     fn theme_and_language_choices_keep_only_known_values() {
