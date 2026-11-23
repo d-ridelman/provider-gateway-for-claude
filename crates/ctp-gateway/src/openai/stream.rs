@@ -49,6 +49,8 @@ pub struct StreamTranslator {
     prior_output_tokens: u64,
     /// Текст текущего отрезка: из него шлюз собирает ответ ассистента для продолжения.
     segment_text: String,
+    /// Всё рассуждение текущего отрезка, как пришло от провайдера (для продолжения после советника).
+    segment_reasoning: String,
     /// Рассуждение, пришедшее, когда текст ответа уже начался: пока оно короткое, текстовый
     /// блок не рвётся, а оно выходит отдельным блоком после текста (`close_current`).
     late_thinking: String,
@@ -67,6 +69,9 @@ pub struct AdvisorCall {
     pub server_id: String,
     /// Текст отрезка до вызова — содержимое ответа ассистента в продолжении.
     pub text: String,
+    /// Рассуждение отрезка: в продолжении оно уходит назад (`reasoning_content`, как требует
+    /// DeepSeek в режиме рассуждения).
+    pub reasoning: String,
     /// Другие вызовы инструментов в том же ответе: тогда продолжения нет.
     pub others: bool,
 }
@@ -85,6 +90,7 @@ impl StreamTranslator {
             provider_input: None,
             prior_output_tokens: 0,
             segment_text: String::new(),
+            segment_reasoning: String::new(),
             late_thinking: String::new(),
             finish_reason: None,
             done: false,
@@ -171,6 +177,7 @@ impl StreamTranslator {
         let reasoning = reasoning_delta(delta);
         if !reasoning.is_empty() {
             self.output_chars += reasoning.chars().count() as u64;
+            self.segment_reasoning.push_str(&reasoning);
             // Some providers send the tail of the reasoning (even a lone ".") after the first
             // token of the answer: opening a thinking block there cut "Пробую" into "П" and
             // "робую". A short straggler waits; a long one is real interleaved thinking.
@@ -426,6 +433,7 @@ impl StreamTranslator {
             call_id,
             server_id,
             text: std::mem::take(&mut self.segment_text),
+            reasoning: std::mem::take(&mut self.segment_reasoning),
             others: !self.tools.is_empty(),
         };
         Some((advisor, events))
@@ -454,6 +462,7 @@ impl StreamTranslator {
         self.provider_input = None;
         self.output_chars = 0;
         self.segment_text.clear();
+        self.segment_reasoning.clear();
         self.late_thinking.clear();
         self.finish_reason = None;
     }
@@ -1093,8 +1102,10 @@ mod tests {
                 tool_call(crate::openai::request::ADVISOR),
             ],
         );
-        let (_, events) = translator.take_advisor_call().expect("advisor call");
+        let (call, events) = translator.take_advisor_call().expect("advisor call");
         assert_eq!(block_kinds(&events), ["thinking", "server_tool_use"]);
         assert_eq!(streamed(&events, "thinking"), " ask them");
+        // The continuation after the advice sends the reasoning of this segment back too.
+        assert_eq!(call.reasoning, "plan ask them");
     }
 }

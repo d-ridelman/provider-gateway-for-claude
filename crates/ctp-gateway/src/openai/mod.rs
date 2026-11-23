@@ -451,7 +451,7 @@ pub async fn messages(
             }
 
             if let Some(messages) = payload["messages"].as_array_mut() {
-                messages.push(json!({
+                let mut asked = json!({
                     "role": "assistant",
                     "content": if call.text.is_empty() { Value::Null } else { json!(call.text) },
                     "tool_calls": [{
@@ -459,7 +459,13 @@ pub async fn messages(
                         "type": "function",
                         "function": {"name": request::ADVISOR, "arguments": "{}"}
                     }]
-                }));
+                });
+                // Рассуждение отрезка уходит назад вместе с ним (DeepSeek в режиме рассуждения
+                // требует это при запросе с инструментами; лесенка уберёт поле, если не так).
+                if !call.reasoning.is_empty() {
+                    asked["reasoning_content"] = json!(call.reasoning);
+                }
+                messages.push(asked);
                 messages.push(json!({"role": "tool", "tool_call_id": call.call_id, "content": advice}));
             }
             if advisor_calls >= advisor::MAX_CALLS

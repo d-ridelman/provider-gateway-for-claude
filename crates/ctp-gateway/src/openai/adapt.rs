@@ -29,6 +29,9 @@ const TOOL_CAP: usize = 128;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Step {
+    /// Рассуждение прошлых ответов (`reasoning_content`) убирается: DeepSeek его требует, а
+    /// провайдер, которому оно незнакомо, отвечает 400.
+    Reasoning,
     /// Картинки заменяются пометкой в тексте.
     Images,
     /// Уровень рассуждения (`reasoning_effort`) убирается.
@@ -49,7 +52,8 @@ pub enum Step {
 
 /// Порядок проб: от самого вероятного и безобидного к самому грубому. Поля убираются по
 /// одному виду: выучится только то, что помогло, а не всё сразу.
-pub const LADDER: [Step; 8] = [
+pub const LADDER: [Step; 9] = [
+    Step::Reasoning,
     Step::Images,
     Step::Effort,
     Step::Sampling,
@@ -63,6 +67,7 @@ pub const LADDER: [Step; 8] = [
 impl Step {
     pub fn label(self) -> &'static str {
         match self {
+            Self::Reasoning => "reasoning of earlier replies left out",
             Self::Images => "images left out",
             Self::Effort => "reasoning effort left out",
             Self::Sampling => "sampling parameters left out",
@@ -78,6 +83,7 @@ impl Step {
 /// Применить шаг к запросу провайдеру. `true` — запрос изменился (иначе повторять нечего).
 pub fn apply(step: Step, payload: &mut Value, provider: &Provider) -> bool {
     match step {
+        Step::Reasoning => crate::openai::request::strip_reasoning(payload) > 0,
         Step::Images => crate::openai::request::strip_images(payload) > 0,
         Step::Effort => drop_fields(payload, provider, &["reasoning_effort"]),
         Step::Sampling => drop_fields(

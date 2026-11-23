@@ -138,7 +138,13 @@ pub fn build(provider: &Provider, body: &Value, stream: bool, advisor: bool) -> 
         request.insert(key.clone(), value.clone());
     }
 
-    Value::Object(request)
+    let mut payload = Value::Object(request);
+    // Рассуждение прошлых ответов нужно только запросу с инструментами (DeepSeek без них его
+    // игнорирует, другие провайдеры могут отказать на незнакомом поле).
+    if !has_tools {
+        strip_reasoning(&mut payload);
+    }
+    payload
 }
 
 fn convert_messages(body: &Value) -> Vec<Value> {
@@ -281,6 +287,10 @@ fn convert_assistant(message: &Value, out: &mut Vec<Value>) {
 
     let mut texts = Vec::new();
     let mut tool_calls = Vec::new();
+    // Рассуждение ответа (блоки `thinking`): DeepSeek в режиме рассуждения при запросе с
+    // инструментами требует `reasoning_content` прошлых ответов назад, иначе 400. Claude Code
+    // присылает блоки в истории.
+    let mut reasoning = Vec::new();
     // Советник (серверный инструмент) — внутри ответа ассистента: `server_tool_use`, затем
     // `advisor_tool_result`. Для OpenAI ответ режется на границе: assistant с вызовом
     // `advisor` → tool с советом → дальше новый assistant. Вызов без результата выпадает.
@@ -305,12 +315,19 @@ fn convert_assistant(message: &Value, out: &mut Vec<Value>) {
                     "type": "function",
                     "function": {"name": ADVISOR, "arguments": "{}"}
                 }));
-                flush_assistant(&mut texts, &mut tool_calls, out);
+                flush_assistant(&mut texts, &mut tool_calls, &mut reasoning, out);
                 out.push(json!({
                     "role": "tool",
                     "tool_call_id": id,
                     "content": advisor_text(block.get("content").unwrap_or(&Value::Null))
                 }));
+            }
+            "thinking" => {
+                if let Some(text) = block.get("thinking").and_then(Value::as_str)
+                    && !text.is_empty()
+                {
+                    reasoning.push(text.to_string());
+                }
             }
             "text" => {
                 if let Some(text) = block.get("text").and_then(Value::as_str)
@@ -338,29 +355,58 @@ fn convert_assistant(message: &Value, out: &mut Vec<Value>) {
                     "function": {"name": name, "arguments": arguments}
                 }));
             }
-            // thinking/redacted_thinking бесполезны для OpenAI-провайдера.
+            // redacted_thinking бесполезен для OpenAI-провайдера.
             _ => {}
         }
     }
-    flush_assistant(&mut texts, &mut tool_calls, out);
+    flush_assistant(&mut texts, &mut tool_calls, &mut reasoning, out);
 }
 
-fn flush_assistant(texts: &mut Vec<String>, tool_calls: &mut Vec<Value>, out: &mut Vec<Value>) {
-    if !tool_calls.is_empty() {
+/// Ответ ассистента из накопленного. Рассуждение уходит вместе с ним полем `reasoning_content`
+/// (прикладывается к первому сообщению, которое выходит из блоков); ответ из одних
+/// рассуждений ничего не выпускает.
+fn flush_assistant(
+    texts: &mut Vec<String>,
+    tool_calls: &mut Vec<Value>,
+    reasoning: &mut Vec<String>,
+    out: &mut Vec<Value>,
+) {
+    let mut message = if !tool_calls.is_empty() {
         let content = if texts.is_empty() {
             Value::Null
         } else {
             Value::String(texts.join("\n\n"))
         };
-        out.push(json!({
+        json!({
             "role": "assistant",
             "content": content,
             "tool_calls": std::mem::take(tool_calls)
-        }));
+        })
     } else if !texts.is_empty() {
-        out.push(json!({"role": "assistant", "content": texts.join("\n\n")}));
+        json!({"role": "assistant", "content": texts.join("\n\n")})
+    } else {
+        return;
+    };
+    if !reasoning.is_empty() {
+        message["reasoning_content"] = json!(reasoning.join("\n\n"));
+        reasoning.clear();
     }
+    out.push(message);
     texts.clear();
+}
+
+/// Убирает `reasoning_content` из сообщений: без `tools` DeepSeek его игнорирует, а другие
+/// провайдеры могут отказать на незнакомом поле. Сколько сообщений изменилось.
+pub fn strip_reasoning(payload: &mut Value) -> usize {
+    let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) else {
+        return 0;
+    };
+    messages
+        .iter_mut()
+        .filter_map(Value::as_object_mut)
+        .map(|message| message.remove("reasoning_content").is_some())
+        .filter(|removed| *removed)
+        .count()
 }
 
 /// Текст результата советника для модели (как его видела бы она у Anthropic).
@@ -877,6 +923,60 @@ mod tests {
             out["properties"]["patternProperties"]
                 .get("pattern")
                 .is_none()
+        );
+    }
+
+    fn thinking_history(tools: bool) -> Value {
+        let mut body = json!({
+            "model": "m", "max_tokens": 10,
+            "messages": [
+                {"role": "user", "content": "go"},
+                {"role": "assistant", "content": [
+                    {"type": "thinking", "thinking": "plan A", "signature": ""},
+                    {"type": "thinking", "thinking": "", "signature": ""},
+                    {"type": "thinking", "thinking": "then B", "signature": ""},
+                    {"type": "text", "text": "calling"},
+                    {"type": "tool_use", "id": "toolu_1", "name": "read", "input": {}}
+                ]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": "ok"}]}
+            ]
+        });
+        if tools {
+            body["tools"] =
+                json!([{"name": "read", "description": "r", "input_schema": {"type": "object"}}]);
+        }
+        body
+    }
+
+    #[test]
+    fn the_reasoning_of_an_earlier_reply_goes_back_to_the_provider_when_tools_are_on() {
+        // DeepSeek (thinking mode): with `tools` in the request the earlier reasoning_content
+        // must come back, or the answer is a 400. Claude Code sends the thinking blocks back.
+        let payload = build(&provider(), &thinking_history(true), false, false);
+        let assistant = payload["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["role"] == "assistant")
+            .unwrap();
+        assert_eq!(assistant["reasoning_content"], "plan A\n\nthen B");
+        assert_eq!(assistant["content"], "calling");
+        // Without tools DeepSeek ignores the field and other providers may refuse it: not sent.
+        let plain = build(&provider(), &thinking_history(false), false, false);
+        assert!(!plain.to_string().contains("reasoning_content"), "{plain}");
+    }
+
+    #[test]
+    fn a_reply_without_thinking_gets_no_reasoning_field() {
+        let mut body = thinking_history(true);
+        body["messages"][1]["content"] = json!([
+            {"type": "text", "text": "calling"},
+            {"type": "tool_use", "id": "toolu_1", "name": "read", "input": {}}
+        ]);
+        let payload = build(&provider(), &body, false, false);
+        assert!(
+            !payload.to_string().contains("reasoning_content"),
+            "{payload}"
         );
     }
 
