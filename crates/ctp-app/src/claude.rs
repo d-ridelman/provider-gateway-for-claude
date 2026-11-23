@@ -651,6 +651,14 @@ pub fn launch(
     if advisor_available(config) {
         command.env(ADVISOR_ENV, "1");
     }
+    // Прокси приложения: сам Claude (Chromium, loopback он обходит сам) и сессии Code
+    // (окружение). shortcut: смену прокси при открытом Claude окно не замечает как «изменились
+    // настройки» — переоткрыть Claude подсказывает окно прокси; учесть в run_state, если
+    // будут жаловаться.
+    if let Some(proxy) = ctp_gateway::proxy::current() {
+        command.arg(format!("--proxy-server={proxy}"));
+        command.envs(crate::installs::proxy_env());
+    }
     if running {
         // Второй запуск с тем же профилем только показывает первый экземпляр и выходит;
         // новых настроек он не подхватит — человек закрывает Claude сам, мы его не трогаем.

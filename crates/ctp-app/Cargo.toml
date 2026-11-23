@@ -25,7 +25,7 @@ tracing-appender.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
 sha2.workspace = true
-reqwest.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
 futures-util.workspace = true
 sha1 = "0.10"
 zip = { version = "9", default-features = false, features = ["deflate"] }
@@ -49,8 +49,10 @@ windows-sys = { version = "0.61", features = [
     "Win32_System_Threading",
     "Win32_Networking_WinInet",
     "Win32_UI_Shell",
+    "Win32_System_Registry",
     "Win32_UI_WindowsAndMessaging",
 ] }
 
 [dev-dependencies]
 wiremock.workspace = true
+base64 = "0.22"

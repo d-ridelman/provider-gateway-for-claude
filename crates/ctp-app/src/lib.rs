@@ -6,11 +6,13 @@ pub mod download;
 pub mod fetch;
 pub mod i18n;
 pub mod installs;
+pub mod mihomo;
 pub mod model;
 pub mod runtime;
 pub mod ruui;
 pub mod state;
 pub mod store;
+pub mod sysproxy;
 pub mod tray;
 pub mod updates;
 pub mod upkeep;
@@ -59,6 +61,11 @@ pub fn run() {
             };
             std::fs::create_dir_all(&dir)?;
             claude::set_flavor(&app.config().identifier);
+            // Первым делом: если прошлый запуск упал с включённым системным прокси, браузеры
+            // смотрят в неработающий порт — вернуть то, что было до нас.
+            if let Err(exc) = sysproxy::disable() {
+                eprintln!("system proxy not restored: {exc:#}");
+            }
             // После create_dir_all: service_for раскрывает путь, а для этого папка должна быть.
             // Окно и команды появляются только после setup, ключей до этой строки никто не читает.
             store::use_key_service(store::key_service(
@@ -92,6 +99,17 @@ pub fn run() {
                 && let Err(exc) = upkeep::apply_rules(&dir, &exe)
             {
                 tracing::warn!(error = %format!("{exc:#}"), "Claude model rules");
+            }
+            // Прокси шлюза — до его автозапуска из окна, ядро — в фоне (в TUN ждёт ответа UAC).
+            if config.proxy.is_on() {
+                if config.proxy.port != 0 {
+                    ctp_gateway::proxy::set(Some(format!(
+                        "http://127.0.0.1:{}",
+                        config.proxy.port
+                    )));
+                }
+                let handle = app.handle().clone();
+                std::thread::spawn(move || commands::start_proxy_in_background(&handle));
             }
             let for_repair = config.clone();
             let check_dir = dir.clone();
@@ -136,6 +154,14 @@ pub fn run() {
             commands::install_update,
             commands::download_code,
             commands::download_desktop,
+            commands::proxy_state,
+            commands::proxy_set_mode,
+            commands::proxy_download_core,
+            commands::proxy_add_sub,
+            commands::proxy_remove_sub,
+            commands::proxy_update_sub,
+            commands::proxy_select,
+            commands::proxy_measure,
             commands::win_minimize,
             commands::win_toggle_maximize,
             commands::win_close,

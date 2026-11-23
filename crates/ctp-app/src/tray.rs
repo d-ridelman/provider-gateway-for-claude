@@ -40,6 +40,7 @@ pub fn build(app: &tauri::AppHandle) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_main(app),
             "quit" => {
+                crate::mihomo::shutdown();
                 crate::claude::repair_registry_on_exit(app);
                 app.exit(0)
             }
