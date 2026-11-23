@@ -373,6 +373,84 @@ mod tests {
         assert_eq!(serde_json::from_str::<Saved>(&text).unwrap(), saved);
     }
 
+    /// Живая проверка ТОЛЬКО в Windows Sandbox (`PGC_SANDBOX=1`): меняет прокси Windows.
+    /// Исходное состояние — как на доменном ПК: PAC и автоопределение. Включение должно стать
+    /// действующим (реестр, запрос программы с системным прокси приходит к нам), выключение —
+    /// вернуть всё как было.
+    #[cfg(windows)]
+    #[tokio::test]
+    #[ignore]
+    async fn live_system_proxy_in_sandbox() {
+        use std::io::{BufRead, BufReader};
+        use windows_registry::CURRENT_USER;
+        assert_eq!(
+            std::env::var("PGC_SANDBOX").as_deref(),
+            Ok("1"),
+            "sandbox only"
+        );
+        let home = std::env::var("PGC_LIVE_HOME").expect("set PGC_LIVE_HOME");
+        // SAFETY: до потоков, читающих окружение.
+        unsafe { std::env::set_var("CLAUDE_GATEWAY_HOME", &home) };
+        let original = win::query().unwrap();
+        let domain = Saved {
+            flags: win::DIRECT | 4 | 8, // + PAC + автоопределение
+            server: None,
+            bypass: Some("<local>;*.corp.example".into()),
+            autoconfig: Some("http://wpad.corp.example/proxy.pac".into()),
+        };
+        win::set(&domain).unwrap();
+        let before = win::query().unwrap();
+        println!("before: {before:?}");
+        assert_eq!(
+            before.flags & 8,
+            8,
+            "auto-detect must be readable (FLAGS_UI)"
+        );
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let log = seen.clone();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let mut line = String::new();
+                let _ = BufReader::new(&stream).read_line(&mut line);
+                log.lock().unwrap().push(line.trim().to_string());
+            }
+        });
+        enable(port).unwrap();
+        let on = win::query().unwrap();
+        println!("on: {on:?}");
+        let key = CURRENT_USER
+            .open(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
+            .unwrap();
+        let enabled = key.get_u32("ProxyEnable").unwrap_or(0);
+        let server = key.get_string("ProxyServer").unwrap_or_default();
+        println!("registry: ProxyEnable={enabled} ProxyServer={server}");
+        assert_eq!(enabled, 1);
+        assert_eq!(server, format!("127.0.0.1:{port}"));
+        assert!(status().unwrap().on);
+        // Программа с системным прокси (reqwest читает его из реестра) идёт к нам.
+        let _ = reqwest::Client::new()
+            .get("http://example.test/through-the-system-proxy")
+            .timeout(std::time::Duration::from_secs(3))
+            .send()
+            .await;
+        let lines = seen.lock().unwrap().clone();
+        println!("listener saw: {lines:?}");
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("example.test/through-the-system-proxy"))
+        );
+
+        disable().unwrap();
+        let after = win::query().unwrap();
+        println!("after: {after:?}");
+        assert_eq!(after, before, "the domain setup is back");
+        win::set(&original).unwrap();
+    }
+
     /// Чтение настроек Windows ничего не меняет и должно работать на любой машине.
     #[cfg(windows)]
     #[test]

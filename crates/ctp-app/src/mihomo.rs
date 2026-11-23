@@ -231,18 +231,23 @@ pub fn build_config(
             "dns-hijack": ["any:53"],
             "route-exclude-address": DIRECT_NETS,
         });
-        // Своё DNS: запросы идут через выбранный узел (respect-rules), домены локальной
-        // сети и проверки сети Windows — без подмены адресов.
+        // Своё DNS с подменными адресами (fake-ip): программы получают адрес из 198.18/16,
+        // ядро знает по нему имя и ведёт соединение по имени. Без `respect-rules`: с ним
+        // прямой выход разрешал имя тем же подменным DNS и стучался в 198.18.x (проверено в
+        // Windows Sandbox). Домены локальной сети и проверки сети Windows — без подмены.
         config["dns"] = json!({
             "enable": true,
             "ipv6": false,
             "enhanced-mode": "fake-ip",
             "fake-ip-range": "198.18.0.1/16",
             "fake-ip-filter": ["+.lan", "+.local", "+.localdomain", "+.home.arpa", "+.msftconnecttest.com", "+.msftncsi.com"],
-            "respect-rules": true,
             "default-nameserver": ["1.1.1.1", "8.8.8.8"],
-            "proxy-server-nameserver": ["1.1.1.1", "8.8.8.8"],
             "nameserver": ["https://1.1.1.1/dns-query", "https://dns.google/dns-query"],
+        });
+        // Имя по TLS SNI и HTTP Host: соединение по имени, даже если адрес пришёл не от нас.
+        config["sniffer"] = json!({
+            "enable": true,
+            "sniff": { "TLS": { "ports": [443] }, "HTTP": { "ports": [80], "override-destination": true } },
         });
     }
     config
@@ -985,6 +990,10 @@ mod win {
         }
         let stop = Owned(stop);
         let me = std::env::current_exe()?;
+        // Тест в песочнице идёт из test-бинаря, который роль надсмотрщика не знает: ему
+        // подставляется собранный exe приложения.
+        #[cfg(test)]
+        let me = std::env::var_os("PGC_SUPERVISOR_EXE").map_or(me, std::path::PathBuf::from);
         let params = [
             "--mihomo-supervisor".to_string(),
             pid.to_string(),
@@ -1134,6 +1143,9 @@ mod tests {
         let tun = build_config(&subs, 7890, 9090, "k", true);
         assert_eq!(tun["tun"]["enable"], true);
         assert_eq!(tun["dns"]["enable"], true);
+        // С respect-rules прямой выход стучался в подменные 198.18.x (проверено в песочнице).
+        assert!(tun["dns"].get("respect-rules").is_none());
+        assert_eq!(tun["sniffer"]["enable"], true);
 
         // Без подписок — одна группа напрямую: ядро не примет пустую.
         let empty = build_config(&[], 7890, 9090, "k", false);
@@ -1273,6 +1285,119 @@ mod tests {
         assert!(!running());
         crate::store::delete_key(&sub_key("s1"));
         crate::store::delete_key(&sub_key("s2"));
+        ctp_gateway::proxy::set(None);
+    }
+
+    /// Живой TUN ТОЛЬКО в Windows Sandbox (`PGC_SANDBOX=1`, пользователь там администратор):
+    /// настоящий путь — `apply` → повышенный надсмотрщик (`PGC_SUPERVISOR_EXE` — собранный exe
+    /// приложения) → ядро с TUN. Без подписок группа идёт напрямую, поэтому интернет работает,
+    /// а запрос без всякого прокси должен пройти через ядро (виден в его `/connections`).
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn live_tun_in_sandbox() {
+        assert_eq!(
+            std::env::var("PGC_SANDBOX").as_deref(),
+            Ok("1"),
+            "sandbox only"
+        );
+        let home = std::env::var("PGC_LIVE_HOME").expect("set PGC_LIVE_HOME");
+        assert!(
+            std::env::var_os("PGC_SUPERVISOR_EXE").is_some(),
+            "set PGC_SUPERVISOR_EXE"
+        );
+        // SAFETY: до потоков, читающих окружение.
+        unsafe { std::env::set_var("CLAUDE_GATEWAY_HOME", &home) };
+        if installed_version().is_none() {
+            download_core(&|_, _| {}).await.unwrap();
+        }
+        let mut config = Config::default();
+        config.proxy.mode = "tun".into();
+        config.proxy.port = pick_port().unwrap();
+        let run = config.clone();
+        tokio::task::spawn_blocking(move || apply(&run))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(running() && is_tun());
+        // TUN встаёт через несколько секунд после REST (адаптер, маршруты).
+        let mut configs = Value::Null;
+        for _ in 0..30 {
+            configs = get("/configs").await.unwrap();
+            if configs["tun"]["enable"] == true {
+                break;
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+        println!("tun: {}", configs["tun"]);
+        assert_eq!(configs["tun"]["enable"], true);
+        // Маршруты Windows встают чуть позже адаптера.
+        tokio::time::sleep(Duration::from_secs(3)).await;
+
+        // Прямой запрос, никакого прокси: его должен поймать TUN.
+        let direct = reqwest::Client::builder().no_proxy().build().unwrap();
+        let mut answer = None;
+        for attempt in 1..=3 {
+            match direct
+                .get("https://www.gstatic.com/generate_204")
+                .send()
+                .await
+            {
+                Ok(ok) => {
+                    answer = Some(ok);
+                    break;
+                }
+                Err(exc) => println!("attempt {attempt}: {exc:?}"),
+            }
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+        let log = std::fs::read_to_string(dir().unwrap().join("mihomo.log")).unwrap_or_default();
+        println!("core log:\n{log}");
+        let answer = answer.expect("no answer through TUN");
+        println!("direct request: {}", answer.status());
+        let connections = get("/connections").await.unwrap();
+        let hosts: Vec<String> = connections["connections"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default()
+            .iter()
+            .map(|c| {
+                c["metadata"]["host"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string()
+            })
+            .collect();
+        println!("core connections: {hosts:?}");
+        assert!(
+            hosts.iter().any(|h| h.contains("gstatic")),
+            "TUN did not capture the request"
+        );
+        let adapters = std::process::Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-NetAdapter | Format-Table Name, InterfaceDescription, Status | Out-String",
+            ])
+            .output()
+            .unwrap();
+        println!(
+            "adapters (on):{}",
+            String::from_utf8_lossy(&adapters.stdout)
+        );
+
+        shutdown();
+        assert!(!running());
+        std::thread::sleep(Duration::from_secs(3));
+        let left = std::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq mihomo.exe"])
+            .output()
+            .unwrap();
+        let left = String::from_utf8_lossy(&left.stdout).to_string();
+        println!("mihomo after stop: {left}");
+        assert!(
+            !left.contains("mihomo.exe"),
+            "the core outlived the supervisor"
+        );
         ctp_gateway::proxy::set(None);
     }
 

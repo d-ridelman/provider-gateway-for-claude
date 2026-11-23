@@ -27,6 +27,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
   - Checks: sha256 from the Claude Code manifest, sha1 from `RELEASES`, and an Authenticode signature by exactly "Anthropic, PBC" on every `claude.exe`.
   - An update keeps a portable Claude that is still open whole, because its folder is renamed before it is removed.
 - **Claude downloads go through the VPN when it is on.** The downloader uses the core's mixed port; the installers get `HTTPS_PROXY`. A VPN that is on with no core running stops the download with a plain message. The core itself is always downloaded directly.
+- **System proxy and TUN checked live in Windows Sandbox** (ignored tests `live_system_proxy_in_sandbox`, `live_tun_in_sandbox`, run only there).
+  - System proxy: from a domain-like setup (PAC and auto-detect), turning it on writes the effective proxy, and a program using the system proxy came through ours; turning it off brought back the flags (auto-detect included), the PAC address and the bypass list exactly.
+  - TUN: the core started elevated through the helper; a request without any proxy went through the TUN adapter by name and was answered; nothing was left running after the stop.
+  - The live run found a bug, now fixed. With `respect-rules` the direct outbound resolved names with the core's own fake-ip DNS and dialled `198.18.x`. TUN DNS now goes without it, and the TLS/HTTP sniffer is on.
 - **Hardening after review.**
   - Every core start checks the sha256 of `mihomo.exe` itself and keeps the file locked against writes until it runs (the elevated TUN helper included).
   - A refused UAC prompt puts the previous mode back.
