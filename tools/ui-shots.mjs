@@ -128,7 +128,10 @@ const STUB = String.raw`
       { id: "s1", name: scenario === "vpnlong" ? "A very long subscription name from the provider's panel that goes on" : "Home VPN", host: "panel.example.com:8443", count: 4, updatedAt: "2026-11-23T14:05:32+04:00", upload: 1073741824, download: 2147483648, total: 10737418240, expire: 1893456000 },
       { id: "s2", name: "Backup", host: "sub.example.org", count: 2, updatedAt: "2026-11-23T09:00:00+04:00", upload: null, download: null, total: null, expire: null },
     ],
-    error: scenario === "vpnerror" ? "Windows proxy settings are locked by a group policy, so the system proxy cannot be set here; the Claude and providers only mode works" : null,
+    // The backend sends its texts in the window's language.
+    error: scenario !== "vpnerror" ? null : lang === "ru"
+      ? "настройки прокси Windows закреплены групповой политикой — системный прокси здесь не включить; режим «Только Claude и провайдеры» работает"
+      : "Windows proxy settings are locked by a group policy, so the system proxy cannot be set here; the Claude and providers only mode works",
     system: scenario === "vpnerror" ? { on: false, error: null } : null,
   } : { mode: "off", running: false, tun: false, port: 0, coreVersion: null, pinnedVersion: "v1.19.34", selected: null, autoNow: null, nodes: [], subs: [], error: null, system: null };
   const listeners = {};
@@ -350,7 +353,28 @@ const MEASURE = `(() => {
     const r = card.getBoundingClientRect(), bar = (card.querySelector('.form-actions') ?? card).getBoundingClientRect();
     cardClipped = r.top < host.top - 1 || r.bottom > host.bottom + 1 || bar.bottom > r.bottom + 1 || bar.bottom > innerHeight;
   }
-  return { hscroll: doc.scrollWidth > innerWidth + 1, docH: doc.scrollHeight, winH: innerHeight, clipped: clipped.slice(0, 8), scrollers, cardClipped,
+  // Controls side by side in one form row (a .grid of fields with a button, a .key-row) end on the
+  // same line: their bottom edges are measured, not eyeballed.
+  const misaligned = [];
+  for (const row of document.querySelectorAll('.grid.sub-form, .key-row, .node-grid')) {
+    if (row.closest('.hidden')) continue;
+    const controls = [...row.querySelectorAll(':scope > .field > input, :scope > .field > select, :scope > button, :scope > input')]
+      .filter((c) => c.getBoundingClientRect().height > 0);
+    const lines = {};
+    for (const c of controls) { const r = c.getBoundingClientRect(); (lines[Math.round(r.top / 20)] ??= []).push(r); }
+    for (const line of Object.values(lines)) {
+      const bottoms = line.map((r) => Math.round(r.bottom)), heights = line.map((r) => Math.round(r.height));
+      if (Math.max(...bottoms) - Math.min(...bottoms) > 1 || Math.max(...heights) - Math.min(...heights) > 1)
+        misaligned.push((row.id || row.className) + ' ' + bottoms.join('/'));
+    }
+    // A grid row of a form: all its controls share one baseline whatever their top.
+    if (row.classList.contains('sub-form')) {
+      const bottoms = controls.map((c) => Math.round(c.getBoundingClientRect().bottom));
+      const byRow = {}; for (const b of bottoms) (byRow[Math.round(b / 40)] ??= []).push(b);
+      for (const group of Object.values(byRow)) if (Math.max(...group) - Math.min(...group) > 1) misaligned.push('sub-form bottoms ' + group.join('/'));
+    }
+  }
+  return { hscroll: doc.scrollWidth > innerWidth + 1, docH: doc.scrollHeight, winH: innerHeight, clipped: clipped.slice(0, 8), scrollers, cardClipped, misaligned,
            settingsVisible: !!panel && !panel.classList.contains('hidden') };
 })()`;
 
@@ -385,7 +409,8 @@ fs.mkdirSync(outDir, { recursive: true });
 await cdp("Page.enable");
 if (args.includes("--audit")) {
   const merged = { buttons: {}, radii: {}, sizes: {} };
-  const screens = [["normal", "main"], ["normal", "settings"], ["normal", "new"], ["normal", "dialog"], ["empty", "main"], ["stale", "main"]];
+  const screens = [["normal", "main"], ["normal", "settings"], ["normal", "new"], ["normal", "dialog"], ["empty", "main"], ["stale", "main"],
+    ["normal", "proxy"], ["vpn", "proxy"], ["vpnerror", "proxy"], ["vpn", "main"], ["portable", "settings"]];
   await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   for (const [scenario, screen] of screens) {
     await cdp("Page.navigate", { url: `${base}/?s=${scenario}&lang=ru` });
@@ -490,7 +515,7 @@ for (const shot of shots) {
   const png = await cdp("Page.captureScreenshot", { format: "png" });
   fs.writeFileSync(path.join(outDir, name + ".png"), Buffer.from(png.data, "base64"));
   report.push({ name, ...m });
-  const flags = [hoverNote, m.cardClipped && "CARD-CLIPPED", m.hscroll && "HSCROLL", m.clipped.length && "CLIPPED " + m.clipped.join(", "), m.scrollers.length && "SCROLL " + m.scrollers.join(", ")].filter(Boolean);
+  const flags = [hoverNote, m.cardClipped && "CARD-CLIPPED", m.hscroll && "HSCROLL", m.misaligned?.length && "MISALIGNED " + m.misaligned.join(", "), m.clipped.length && "CLIPPED " + m.clipped.join(", "), m.scrollers.length && "SCROLL " + m.scrollers.join(", ")].filter(Boolean);
   console.log(name.padEnd(42), flags.join(" | ") || "ok");
 }
 fs.writeFileSync(path.join(outDir, "report.json"), JSON.stringify(report, null, 1));

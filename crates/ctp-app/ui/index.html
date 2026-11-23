@@ -32,7 +32,7 @@
         </button>
         <button type="button" id="updateBtn" class="update-btn hidden" data-i18n-title="update.title"></button>
         <button type="button" id="claudeWarn" class="warn-btn hidden" data-i18n="claudeWarn.label" data-i18n-title="claudeWarn.title"></button>
-        <button type="button" id="proxyChip" class="proxy-chip hidden"><span class="dot" aria-hidden="true"></span><span id="proxyChipText"></span></button>
+        <button type="button" id="proxyChip" class="status proxy-chip hidden"><span class="dot" aria-hidden="true"></span><span id="proxyChipText"></span></button>
         <div class="status" role="status" aria-live="polite" data-i18n-title="status.title">
           <span id="statusDot" class="dot" aria-hidden="true"></span>
           <span id="statusText"></span>
@@ -205,22 +205,38 @@
           <div class="card-body">
           <section class="group">
             <h3 class="group-title" data-i18n="proxy.groupMode"></h3>
-            <div id="proxyModes" class="mode-list" role="radiogroup" data-i18n-aria="proxy.groupMode">
-              <label class="mode"><input type="radio" name="proxyMode" value="off"><span><b data-i18n="proxy.modeOff"></b><small data-i18n="proxy.modeOffHint"></small></span></label>
-              <label class="mode"><input type="radio" name="proxyMode" value="app"><span><b data-i18n="proxy.modeApp"></b><small data-i18n="proxy.modeAppHint"></small></span></label>
-              <label class="mode"><input type="radio" name="proxyMode" value="system"><span><b data-i18n="proxy.modeSystem"></b><small data-i18n="proxy.modeSystemHint"></small></span></label>
-              <label class="mode"><input type="radio" name="proxyMode" value="tun"><span><b data-i18n="proxy.modeTun"></b><small data-i18n="proxy.modeTunHint"></small></span></label>
+            <div id="proxyModes" class="grid two" role="radiogroup" data-i18n-aria="proxy.groupMode">
+              <div class="field">
+                <label class="check"><input type="radio" name="proxyMode" value="off"><span data-i18n="proxy.modeOff"></span></label>
+                <small data-i18n="proxy.modeOffHint"></small>
+              </div>
+              <div class="field">
+                <label class="check"><input type="radio" name="proxyMode" value="app"><span data-i18n="proxy.modeApp"></span></label>
+                <small data-i18n="proxy.modeAppHint"></small>
+              </div>
+              <div class="field">
+                <label class="check"><input type="radio" name="proxyMode" value="system"><span data-i18n="proxy.modeSystem"></span></label>
+                <small data-i18n="proxy.modeSystemHint"></small>
+              </div>
+              <div class="field">
+                <label class="check"><input type="radio" name="proxyMode" value="tun"><span data-i18n="proxy.modeTun"></span></label>
+                <small data-i18n="proxy.modeTunHint"></small>
+              </div>
             </div>
-            <p id="proxyError" class="error-line hidden" role="alert"></p>
-            <div class="core-row">
-              <span id="proxyCoreLine" class="muted small"></span>
-              <button type="button" id="proxyCoreBtn" class="ghost small"></button>
+            <div id="proxyErrorBox" class="field hidden">
+              <p id="proxyError" class="error-line no-margin" role="alert"></p>
+              <div><button type="button" id="proxyToAppBtn" class="ghost small hidden" data-i18n="proxy.toApp"></button></div>
             </div>
-            <small id="proxyCoreHint" class="muted small" aria-live="polite"></small>
+            <div class="field">
+              <span class="field-label" data-i18n="proxy.core"></span>
+              <p id="proxyCoreLine" class="muted small no-margin"></p>
+              <div><button type="button" id="proxyCoreBtn" class="ghost small"></button></div>
+              <small id="proxyCoreHint" aria-live="polite"></small>
+            </div>
           </section>
 
           <section class="group">
-            <div class="group-head">
+            <div class="field-head group-head">
               <h3 class="group-title" data-i18n="proxy.groupNodes"></h3>
               <button type="button" id="measureBtn" class="ghost small" data-i18n="proxy.measure"></button>
             </div>
@@ -231,7 +247,7 @@
           <section class="group">
             <h3 class="group-title" data-i18n="proxy.groupSubs"></h3>
             <ul id="subList" class="sub-list"></ul>
-            <form id="subForm" class="sub-form" autocomplete="off" novalidate>
+            <form id="subForm" class="grid sub-form" autocomplete="off" novalidate>
               <label class="field">
                 <span data-i18n="proxy.subName"></span>
                 <input id="subNameInput" spellcheck="false" data-i18n-placeholder="proxy.subNamePlaceholder">
@@ -248,9 +264,9 @@
                   <option value="24" data-i18n="proxy.every24"></option>
                 </select>
               </label>
-              <button type="submit" id="subAddBtn" class="accent" data-i18n="proxy.subAdd"></button>
+              <button type="submit" id="subAddBtn" class="primary" data-i18n="proxy.subAdd"></button>
             </form>
-            <small data-i18n="proxy.subHint"></small>
+            <div class="field"><small data-i18n="proxy.subHint"></small></div>
           </section>
           </div>
         </div>
@@ -283,7 +299,7 @@
               <span class="field-label" data-i18n="settings.getDesktop"></span>
               <div class="button-row">
                 <button type="button" id="desktopPortableBtn" class="ghost small"></button>
-                <button type="button" id="desktopInstallBtn" class="ghost small" data-i18n="settings.install"></button>
+                <button type="button" id="desktopInstallBtn" class="ghost small"></button>
               </div>
               <small id="desktopGetHint" aria-live="polite"></small>
             </div>
@@ -342,7 +358,7 @@
               </label>
               <div class="button-row">
                 <button type="button" id="codePortableBtn" class="ghost small"></button>
-                <button type="button" id="codeInstallBtn" class="ghost small" data-i18n="settings.install"></button>
+                <button type="button" id="codeInstallBtn" class="ghost small"></button>
               </div>
               <small id="codeGetHint" aria-live="polite"></small>
             </div>

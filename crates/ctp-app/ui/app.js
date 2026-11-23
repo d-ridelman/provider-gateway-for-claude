@@ -382,6 +382,7 @@ async function loadMcp() {
     name.textContent = server.name;
     const what = document.createElement("small");
     what.textContent = server.present ? t("settings.mcpPresent") : server.what;
+    if (server.present) what.className = "present";
     label.append(box, name, what);
     list.append(label);
   }
@@ -499,7 +500,9 @@ function renderProxy() {
   for (const radio of document.querySelectorAll('input[name="proxyMode"]')) radio.checked = radio.value === p.mode;
   const errors = [p.error, p.system?.error].filter(Boolean);
   el.proxyError.textContent = errors.join("\n");
-  el.proxyError.classList.toggle("hidden", !errors.length);
+  $("proxyErrorBox").classList.toggle("hidden", !errors.length);
+  // The system proxy failed (a policy, say): one click to the mode that needs no Windows setting.
+  $("proxyToAppBtn").classList.toggle("hidden", !(errors.length && p.mode === "system"));
   el.proxyCoreLine.textContent = !p.coreVersion
     ? t("proxy.coreMissing", { version: p.pinnedVersion })
     : p.running
@@ -534,7 +537,7 @@ function renderSubs(p) {
       parts.push(t("proxy.subMeta", { nodes: nodeWord(sub.count), time }));
     }
     if (sub.total) {
-      const gb = (bytes) => (bytes / 1073741824).toFixed(1);
+      const gb = (bytes) => (bytes / 1073741824).toLocaleString(LANG, { maximumFractionDigits: 1 });
       parts.push(t("proxy.subTraffic", { used: gb((sub.upload ?? 0) + (sub.download ?? 0)), total: gb(sub.total) }));
     }
     if (sub.expire) parts.push(t("proxy.subExpire", { date: new Date(sub.expire * 1000).toLocaleDateString(LANG) }));
@@ -559,25 +562,23 @@ function renderSubs(p) {
   }
 }
 
-function nodeButton(name, label, meta, delay, pressed) {
+// `meta` is shown under the name (Auto: what it chose); `hint` only on hover (the protocol).
+// A plain 34 px ghost button: the name on the left, the latency on the right; the protocol
+// only on hover.
+function nodeButton(name, label, delay, pressed, hint = "") {
   const button = document.createElement("button");
   button.type = "button";
-  button.className = "node";
+  button.className = "ghost node";
   button.setAttribute("aria-pressed", String(pressed));
+  button.title = [label, hint].filter(Boolean).join(" · ");
   const title = document.createElement("span");
   title.className = "node-name";
   title.textContent = label;
-  title.title = label;
-  const row = document.createElement("span");
-  row.className = "node-meta";
-  const kind = document.createElement("span");
-  kind.textContent = meta;
   const ms = document.createElement("span");
   const d = delayText(delay);
   ms.className = `delay ${d.kind}`;
   ms.textContent = d.text;
-  row.append(kind, ms);
-  button.append(title, row);
+  button.append(title, ms);
   button.addEventListener("click", () => {
     if (!pressed) proxyCall("proxy_select", { name });
   });
@@ -587,13 +588,17 @@ function nodeButton(name, label, meta, delay, pressed) {
 function renderNodes(p) {
   el.nodeGrid.replaceChildren();
   el.measureBtn.disabled = !p.running || !p.nodes.length;
-  const empty = !p.subs.length ? "proxy.nodesNoSubs" : !p.running ? "proxy.nodesOff" : !p.nodes.length ? "proxy.nodesLoading" : null;
+  const empty = !p.subs.length
+    ? "proxy.nodesNoSubs"
+    : !p.running
+      ? p.mode === "off" ? "proxy.nodesOff" : "proxy.nodesStopped"
+      : !p.nodes.length ? "proxy.nodesLoading" : null;
   el.nodesEmpty.textContent = empty ? t(empty) : "";
   el.nodesEmpty.classList.toggle("hidden", !empty);
   if (empty) return;
   const auto = p.nodes.find((n) => n.name === p.autoNow);
   el.nodeGrid.append(
-    nodeButton("AUTO", t("proxy.auto"), auto ? t("proxy.autoNow", { name: auto.label }) : "", auto?.delay, p.selected === "AUTO"),
+    nodeButton("AUTO", auto ? t("proxy.autoNow", { name: auto.label }) : t("proxy.auto"), auto?.delay, p.selected === "AUTO", t("proxy.auto")),
   );
   const several = p.subs.length > 1;
   for (const sub of p.subs) {
@@ -604,7 +609,7 @@ function renderNodes(p) {
       head.textContent = sub.name;
       el.nodeGrid.append(head);
     }
-    for (const node of nodes) el.nodeGrid.append(nodeButton(node.name, node.label, node.kind, node.delay, p.selected === node.name));
+    for (const node of nodes) el.nodeGrid.append(nodeButton(node.name, node.label, node.delay, p.selected === node.name, node.kind));
   }
 }
 
@@ -614,6 +619,8 @@ async function setProxyMode(mode) {
   if (mode === p?.mode) return;
   const ask_ = { system: "proxy.askSystem", tun: "proxy.askTun" }[mode];
   if (ask_) {
+    // The new mode is lit only after the answer: until then the current one stays marked.
+    renderProxy();
     const answer = await ask({ title: t(`${ask_}Title`), text: t(`${ask_}Text`), ok: t("proxy.askOk"), cancel: t("dialog.cancel") });
     if (answer.value !== "ok") {
       renderProxy();
@@ -898,10 +905,16 @@ function renderDownloads() {
   const c = state.config;
   const got = c.installed ?? {};
   el.desktopPortableBtn.textContent = t(got.desktopPortable ? "settings.unpackUpdate" : "settings.unpack");
+  // Over an existing regular install the button updates it (and asks first).
+  el.desktopInstallBtn.textContent = t(got.desktopInstalled ? "settings.installUpdate" : "settings.install");
+  el.codeInstallBtn.textContent = t(c.detectedCode ? "settings.installUpdate" : "settings.install");
+  // With the app's VPN on, downloads go through it: say so under both rows.
+  const vpn = state.proxy && state.proxy.mode !== "off" ? " " + t("settings.viaVpn") : "";
   if (!downloading.desktop) {
-    el.desktopGetHint.textContent = got.desktopPortable
-      ? t("settings.desktopPortableHint", { version: got.desktopPortable })
-      : t("settings.desktopGetHint");
+    el.desktopGetHint.textContent =
+      (got.desktopPortable
+        ? t("settings.desktopPortableHint", { version: got.desktopPortable })
+        : t("settings.desktopGetHint")) + vpn;
   }
   el.codeFound.textContent = c.detectedCode
     ? t("settings.codeFound", { path: c.detectedCode })
@@ -911,9 +924,10 @@ function renderDownloads() {
   el.codePortableInput.disabled = !got.codePortable && !c.codePortable;
   el.codePortableBtn.textContent = t(got.codePortable ? "settings.codePortableUpdate" : "settings.codePortableGet");
   if (!downloading.code) {
-    el.codeGetHint.textContent = got.codePortable
-      ? t("settings.codePortableHint", { version: got.codePortable })
-      : t("settings.codeGetHint");
+    el.codeGetHint.textContent =
+      (got.codePortable
+        ? t("settings.codePortableHint", { version: got.codePortable })
+        : t("settings.codeGetHint")) + vpn;
   }
 }
 
@@ -1089,6 +1103,7 @@ function bind() {
     radio.addEventListener("change", () => radio.checked && setProxyMode(radio.value));
   }
   el.proxyCoreBtn.addEventListener("click", downloadCore);
+  $("proxyToAppBtn").addEventListener("click", () => setProxyMode("app"));
   el.subForm.addEventListener("submit", addSub);
   el.measureBtn.addEventListener("click", () => proxyCall("proxy_measure", {}, el.measureBtn, t("proxy.measuring")));
   el.desktopPortableBtn.addEventListener("click", () => getClaude("desktop", true));
