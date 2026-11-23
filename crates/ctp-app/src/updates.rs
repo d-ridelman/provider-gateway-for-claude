@@ -47,9 +47,14 @@ pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
     // Ядро и системный прокси убираются прямо перед запуском установщика — после проверки
     // подписи и распаковки: скачивание может идти через VPN, а сорвавшаяся установка не
     // должна оставить шлюз без прокси.
+    // Свой хук заменяет штатный плагина (`cleanup_before_exit`: трей и пр.) — зовём оба.
+    let handle = app.clone();
     let updater = app
         .updater_builder()
-        .on_before_exit(crate::mihomo::shutdown)
+        .on_before_exit(move || {
+            crate::mihomo::shutdown();
+            handle.cleanup_before_exit();
+        })
         .build()
         .map_err(|exc| exc.to_string())?;
     let update = updater
