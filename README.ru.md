@@ -89,7 +89,7 @@ Get-FileHash .\Provider-Gateway-for-Claude_*_x64-setup.exe -Algorithm SHA256
 
 ### Основная модель для Claude Code
 
-Настройки → **Модель для Claude Code** выбирает модель шлюза для Claude Code: сессия в консоли, субагенты, которые наследуют модель (Explore, Plan), и все роли, которые просит Claude Code (в том числе `opus` и `haiku`, так что субагенты с `model: opus` или `model: haiku` тоже попадают на неё). Выбор действует в консоли кнопки **Claude Code** и во вкладке Code у Claude Desktop (со следующего **«Открыть Claude»**). Ещё субагент может прямо указать любую модель шлюза в поле `model:`, а `/model <имя>` переключает сессию.
+Настройки → **Модель для Claude Code** выбирает модель шлюза для Claude Code. В консоли кнопки **Claude Code** на неё идут все роли, которые просит Claude Code: сессия, субагенты, которые наследуют модель (Explore, Plan), `model: opus`, `model: haiku` и `model: fable`, а каждый пункт `/model` показывает её по имени вместо Opus и Fable от Anthropic. Во вкладке Code у Claude Desktop (со следующего **«Открыть Claude»**) это основная модель (`sonnet`); остальные роли там Desktop выбирает сам. Ещё субагент может прямо указать любую модель шлюза в поле `model:`, а `/model <имя>` переключает сессию.
 
 ### Веб-поиск
 

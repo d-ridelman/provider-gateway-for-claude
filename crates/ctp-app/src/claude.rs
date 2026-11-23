@@ -130,10 +130,7 @@ pub fn role_aliases(config: &Config) -> RoleAliases {
 }
 
 /// Окружение Claude Code через шлюз: что убрать и что задать. Основная модель — роль
-/// `sonnet` или первая модель шлюза; на неё же и `haiku` (фоновые мелочи). Алиас `opus`
-/// не задаётся: Claude Code шлёт свой встроенный ID, и шлюз отдаёт его настоящей модели
-/// Claude (если она есть у провайдера) или модели по умолчанию — основной
-/// (`store::build_file`). Так же ведёт себя Desktop.
+/// `sonnet` или первая модель шлюза; на неё же все роли Claude Code (opus, haiku, fable).
 pub fn code_env(
     status: &UiStatus,
     roles: &RoleAliases,
@@ -151,8 +148,7 @@ pub fn code_env(
             .as_ref()
             .and_then(|alias| status.models.iter().find(|m| &m.alias == alias))
     };
-    let sonnet = pick(&roles.sonnet);
-    let main = sonnet.unwrap_or(first);
+    let main = pick(&roles.sonnet).unwrap_or(first);
     // Имя шлюза Claude Code не знает и считает окно 1M — у модели без `[1m]` сжатие
     // разговора началось бы слишком поздно. Как в Claude Desktop: без `[1m]` — 200K.
     // По основной модели: на ней сессия и наследующие её субагенты (Explore, Plan).
@@ -175,16 +171,35 @@ pub fn code_env(
         ("ANTHROPIC_AUTH_TOKEN".into(), status.token.clone()),
         ("ANTHROPIC_MODEL".into(), main.alias.clone()),
     ];
-    if let Some(sonnet) = sonnet {
-        set.push((
-            "ANTHROPIC_DEFAULT_SONNET_MODEL".into(),
-            sonnet.alias.clone(),
-        ));
+    // Каждая роль — на основную, с её именем в `/model`. Роль без переменной Claude Code
+    // показал бы встроенной моделью Anthropic с ценой (Opus 5.5, Fable 5.2), которой
+    // через шлюз нет, а без `_NAME` — голым псевдонимом шлюза.
+    let name = format!(
+        "{} · {}",
+        main.label.as_deref().unwrap_or(&main.model),
+        main.provider
+    );
+    for (role, title) in [
+        ("SONNET", "Sonnet"),
+        ("OPUS", "Opus"),
+        ("HAIKU", "Haiku"),
+        ("FABLE", "Fable"),
+    ] {
+        let var = format!("ANTHROPIC_DEFAULT_{role}_MODEL");
+        set.extend([
+            (format!("{var}_NAME"), name.clone()),
+            (
+                format!("{var}_DESCRIPTION"),
+                tr!(
+                    "Основная модель PGC (вместо {title})",
+                    "PGC main model (in place of {title})"
+                ),
+            ),
+            (var, main.alias.clone()),
+        ]);
     }
     set.extend([
-        // Фоновые мелочи — на основной модели.
-        ("ANTHROPIC_DEFAULT_HAIKU_MODEL".into(), main.alias.clone()),
-        // Устаревшее имя той же роли: его ещё читают старые версии Claude Code.
+        // Устаревшее имя роли haiku: его ещё читают старые версии Claude Code.
         ("ANTHROPIC_SMALL_FAST_MODEL".into(), main.alias.clone()),
         ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window.into()),
     ]);
@@ -1299,14 +1314,13 @@ mod tests {
         assert_eq!(get("ANTHROPIC_BASE_URL"), Some("http://127.0.0.1:17899"));
         assert_eq!(get("ANTHROPIC_AUTH_TOKEN"), Some("tok"));
         assert_eq!(get("ANTHROPIC_MODEL"), Some("claude-p-claude-p-1"));
-        // Без выбора ролей — как до появления настройки: haiku на первой модели, а
-        // sonnet/opus не задаются (встроенный ID → настоящая модель Claude или основная).
-        assert_eq!(
-            get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
-            Some("claude-p-claude-p-1")
-        );
-        assert!(get("ANTHROPIC_DEFAULT_SONNET_MODEL").is_none());
-        assert!(get("ANTHROPIC_DEFAULT_OPUS_MODEL").is_none());
+        // Основная не выбрана — все роли на первой модели.
+        for role in ["SONNET", "OPUS", "HAIKU", "FABLE"] {
+            assert_eq!(
+                get(&format!("ANTHROPIC_DEFAULT_{role}_MODEL")),
+                Some("claude-p-claude-p-1")
+            );
+        }
         assert!(get("ANTHROPIC_API_KEY").is_none());
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000"));
         let mut big = status.clone();
@@ -1457,20 +1471,15 @@ mod tests {
         let (_, set) = code_env(&status, &roles, std::iter::empty()).unwrap();
         let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
         assert_eq!(get("ANTHROPIC_MODEL"), Some(main.alias.clone()));
-        assert_eq!(
-            get("ANTHROPIC_DEFAULT_SONNET_MODEL"),
-            Some(main.alias.clone())
-        );
-        // Фоновые мелочи — на основной; opus и fable не задаются (шлюз отдаёт их основной).
-        assert_eq!(
-            get("ANTHROPIC_DEFAULT_HAIKU_MODEL"),
-            Some(main.alias.clone())
-        );
+        // Все роли `/model` — основная под её именем, а не встроенные модели Anthropic.
+        for role in ["SONNET", "OPUS", "HAIKU", "FABLE"] {
+            let var = format!("ANTHROPIC_DEFAULT_{role}_MODEL");
+            assert_eq!(get(&var), Some(main.alias.clone()));
+            assert_eq!(get(&format!("{var}_NAME")), Some("main · P".into()));
+            assert!(get(&format!("{var}_DESCRIPTION")).is_some());
+        }
         assert_eq!(get("ANTHROPIC_SMALL_FAST_MODEL"), Some(main.alias.clone()));
-        assert!(
-            !set.iter()
-                .any(|(n, _)| n.contains("OPUS") || n.contains("FABLE") || n.contains("ADVISOR"))
-        );
+        assert!(!set.iter().any(|(n, _)| n.contains("ADVISOR")));
         // Окно — по основной модели (без 1M), даже если у первой 1M.
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000".into()));
 
@@ -1480,10 +1489,7 @@ mod tests {
         };
         let (_, set) = code_env(&status, &stale, std::iter::empty()).unwrap();
         assert!(set.contains(&("ANTHROPIC_MODEL".into(), first.alias.clone())));
-        assert!(
-            !set.iter()
-                .any(|(n, _)| n == "ANTHROPIC_DEFAULT_SONNET_MODEL")
-        );
+        assert!(set.contains(&("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), first.alias.clone())));
 
         // Desktop: основная помечена в своей записи, остальные — без роли.
         let rows = inference_models(&status.models, &roles);

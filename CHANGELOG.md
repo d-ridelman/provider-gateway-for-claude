@@ -54,7 +54,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Removed
 
-- **Strong and fast models for Claude Code, the advisor switch and the copied command.** Settings keep one model for Claude Code, the main one: the `opus` and `haiku` roles (and `model: fable`) now go to it too. Gone with them: the "Strong is the advisor (/advisor)" box, which wrote `advisorModel` into Claude Code's shared `settings.json`, the advisor that the gateway ran on the strong model, and "Copy the Claude Code command". The app no longer touches Claude Code's settings file; an `advisorModel` written there earlier stays until `/advisor off`. Roles saved by 0.2.1 are read and dropped.
+- **Strong and fast models for Claude Code, the advisor switch and the copied command.** Settings keep one model for Claude Code, the main one. In the console every role goes to it (`opus`, `haiku`, `fable`), and each row of `/model` shows it by name (`ANTHROPIC_DEFAULT_*_MODEL_NAME`) instead of Anthropic's Opus and Fable with their prices, which are not reachable through the gateway. Gone with them: the "Strong is the advisor (/advisor)" box, which wrote `advisorModel` into Claude Code's shared `settings.json`, the advisor that the gateway ran on the strong model, and "Copy the Claude Code command". The app no longer touches Claude Code's settings file; an `advisorModel` written there earlier stays until `/advisor off`. Roles saved by 0.2.1 are read and dropped.
 
 ### Fixed
 

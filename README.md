@@ -89,7 +89,7 @@ Set **Max reasoning level** on a provider and Claude offers a level picker for i
 
 ### Main model for Claude Code
 
-Settings → **Model for Claude Code** picks the gateway model for Claude Code: the console session, subagents that inherit the model (Explore, Plan) and every role Claude Code asks for (`opus` and `haiku` included, so subagents with `model: opus` or `model: haiku` land on it as well). It applies to the **Claude Code** console and the Code tab of Claude Desktop (from the next **Open Claude**). A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session.
+Settings → **Model for Claude Code** picks the gateway model for Claude Code. In the **Claude Code** console every role Claude Code asks for goes to it: the session, subagents that inherit the model (Explore, Plan), `model: opus`, `model: haiku` and `model: fable`, and every row of `/model` shows it by name instead of Anthropic's own Opus or Fable. In the Code tab of Claude Desktop (from the next **Open Claude**) it is the main (`sonnet`) model; the other roles there are Desktop's own choice. A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session.
 
 ### Web search
 
