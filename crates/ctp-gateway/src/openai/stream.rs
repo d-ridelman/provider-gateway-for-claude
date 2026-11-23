@@ -209,10 +209,7 @@ impl StreamTranslator {
 
         if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
             for (position, call) in calls.iter().enumerate() {
-                let index = call
-                    .get("index")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(position as u64);
+                let index = self.tool_slot(call, position, calls.len());
                 let entry = self.tools.entry(index).or_default();
                 if let Some(id) = call
                     .get("id")
@@ -262,6 +259,10 @@ impl StreamTranslator {
                 tracing::warn!("tool call without a name skipped");
                 continue;
             }
+            if response::cut_arguments(&call.arguments, self.finish_reason.as_deref()) {
+                tracing::warn!(tool = %call.name, "tool call cut by the token limit dropped");
+                continue;
+            }
             if call.id.is_empty() {
                 call.id = format!("toolu_{}", Uuid::new_v4().simple());
             }
@@ -304,6 +305,30 @@ impl StreamTranslator {
 
     pub fn is_done(&self) -> bool {
         self.done
+    }
+
+    /// Какому вызову принадлежит кусок. С `index` всё ясно. Без него позиция в куске ничего
+    /// не значит, если провайдер шлёт по вызову на кусок: новый `id` — новый вызов, кусок
+    /// без `id` продолжает последний. Несколько вызовов в одном куске держатся по позиции.
+    fn tool_slot(&self, call: &Value, position: usize, siblings: usize) -> u64 {
+        if let Some(index) = call.get("index").and_then(Value::as_u64) {
+            return index;
+        }
+        let last = self.tools.keys().next_back().copied();
+        match call
+            .get("id")
+            .and_then(Value::as_str)
+            .filter(|id| !id.is_empty())
+        {
+            Some(id) => self
+                .tools
+                .iter()
+                .find(|(_, entry)| entry.id == id)
+                .map(|(key, _)| *key)
+                .unwrap_or_else(|| last.map_or(0, |key| key + 1)),
+            None if siblings == 1 => last.unwrap_or(0),
+            None => position as u64,
+        }
     }
 
     fn segment_tokens(&self) -> u64 {
@@ -746,6 +771,126 @@ mod tests {
                 "message_stop"
             ]
         );
+    }
+
+    /// A chunk with a piece of a tool call and an optional finish reason.
+    fn tool_piece(arguments: &str, finish: Option<&str>) -> Value {
+        json!({"choices": [{"index": 0, "finish_reason": finish, "delta": {"tool_calls": [
+            {"index": 0, "id": "c1", "function": {"name": "Write", "arguments": arguments}}
+        ]}}]})
+    }
+
+    fn stop_reason(events: &[Value]) -> &str {
+        events
+            .iter()
+            .find(|e| e["type"] == "message_delta")
+            .and_then(|e| e["delta"]["stop_reason"].as_str())
+            .unwrap()
+    }
+
+    /// (name, arguments) of every tool_use block, in order.
+    fn tool_uses(events: &[Value]) -> Vec<(String, String)> {
+        let mut out: Vec<(String, String)> = Vec::new();
+        for event in events {
+            if event["type"] == "content_block_start"
+                && event["content_block"]["type"] == "tool_use"
+            {
+                out.push((
+                    event["content_block"]["name"].as_str().unwrap().to_string(),
+                    String::new(),
+                ));
+            }
+            if let Some(part) = event["delta"]["partial_json"].as_str() {
+                out.last_mut().unwrap().1.push_str(part);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn tool_calls_without_an_index_are_told_apart_by_their_id() {
+        // A provider that sends every call in a chunk of its own and no `index`: the position
+        // in the chunk is always 0, so the calls used to melt into one with `{}`.
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        feed(
+            &mut translator,
+            &[
+                json!({"tool_calls": [{"id": "a", "function": {"name": "Read", "arguments": "{\"path\":"}}]}),
+                json!({"tool_calls": [{"function": {"arguments": "\"a\"}"}}]}),
+                json!({"tool_calls": [{"id": "b", "function": {"name": "Write", "arguments": "{\"path\":\"b\"}"}}]}),
+            ],
+        );
+        let events = translator.finish();
+        assert_eq!(
+            tool_uses(&events),
+            [
+                ("Read".to_string(), "{\"path\":\"a\"}".to_string()),
+                ("Write".to_string(), "{\"path\":\"b\"}".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn several_calls_in_one_chunk_without_an_index_keep_their_positions() {
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        feed(
+            &mut translator,
+            &[
+                json!({"tool_calls": [
+                    {"id": "a", "function": {"name": "Read", "arguments": "{\"p\":"}},
+                    {"id": "b", "function": {"name": "Write", "arguments": "{\"q\":"}}
+                ]}),
+                json!({"tool_calls": [
+                    {"function": {"arguments": "1}"}},
+                    {"function": {"arguments": "2}"}}
+                ]}),
+            ],
+        );
+        let events = translator.finish();
+        assert_eq!(
+            tool_uses(&events),
+            [
+                ("Read".to_string(), "{\"p\":1}".to_string()),
+                ("Write".to_string(), "{\"q\":2}".to_string())
+            ]
+        );
+    }
+
+    #[test]
+    fn a_tool_call_cut_by_the_token_limit_is_dropped_not_sent_empty() {
+        // The provider ran out of tokens in the middle of the arguments: `{}` would run Write
+        // without a path and the model would repeat the same call; `max_tokens` makes Claude
+        // Code raise the limit or ask to continue.
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        translator.on_chunk(&tool_piece(
+            "{\"file_path\": \"a.txt\", \"content\": \"abc",
+            None,
+        ));
+        translator.on_chunk(&tool_piece("", Some("length")));
+        let events = translator.finish();
+        assert!(block_kinds(&events).is_empty(), "{events:?}");
+        assert_eq!(stop_reason(&events), "max_tokens");
+    }
+
+    #[test]
+    fn a_complete_tool_call_and_a_cut_one_keep_the_complete_one() {
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        translator.on_chunk(&json!({"choices": [{"index": 0, "finish_reason": "length", "delta": {"tool_calls": [
+            {"index": 0, "id": "c1", "function": {"name": "Read", "arguments": "{\"path\":\"a\"}"}},
+            {"index": 1, "id": "c2", "function": {"name": "Write", "arguments": "{\"path\":\"b\",\"content\":\"x"}}
+        ]}}]}));
+        let events = translator.finish();
+        assert_eq!(block_kinds(&events), ["tool_use"]);
+        assert_eq!(stop_reason(&events), "tool_use");
+    }
+
+    #[test]
+    fn empty_arguments_are_a_tool_without_parameters_even_at_the_limit() {
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        translator.on_chunk(&tool_piece("", Some("length")));
+        let events = translator.finish();
+        assert_eq!(block_kinds(&events), ["tool_use"]);
+        assert_eq!(stop_reason(&events), "tool_use");
     }
 
     #[test]

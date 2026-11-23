@@ -46,10 +46,16 @@ pub async fn messages(
             .get("retry-after")
             .and_then(|value| value.to_str().ok())
             .map(str::to_string);
-        let payload = match upstream.bytes().await {
+        let mut payload = match upstream.bytes().await {
             Ok(payload) => payload,
             Err(exc) => return error::anthropic_error(502, "api_error", exc.to_string()),
         };
+        // Провайдер или прокси может повторить ключ в тексте отказа; в окно Claude и в его
+        // журнал он не должен попасть (OpenAI-путь вырезает его так же).
+        if !status.is_success() {
+            let text = String::from_utf8_lossy(&payload);
+            payload = error::without_secret(&text, &provider.api_key).into();
+        }
         info!(
             provider = %provider.id,
             status = status.as_u16(),
@@ -98,6 +104,10 @@ pub async fn count_tokens(
         .map_err(|_| anyhow::anyhow!("count_tokens: 120 s timeout"))??;
 
     let status = upstream.status();
+    // Нет счётчика (404) или он отказал: Claude всё равно получит число, локальную оценку.
+    if !status.is_success() {
+        anyhow::bail!("count_tokens: HTTP {status}");
+    }
     let content_type = upstream
         .headers()
         .get(reqwest::header::CONTENT_TYPE)

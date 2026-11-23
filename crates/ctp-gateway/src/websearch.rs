@@ -94,12 +94,19 @@ pub(crate) async fn lookup(
     let browser = browser_endpoint(state);
     match find(&http, browser.as_deref(), query, language).await {
         Ok(results) => Ok(results),
-        Err(why) if why.contains("no results") && !why.contains("blocked") => Ok(Vec::new()),
+        Err(why) if is_empty_answer(&why) => Ok(Vec::new()),
         Err(why) => {
             warn!(query = %query, error = %why, "websearch failed");
             Err(why)
         }
     }
+}
+
+/// Пустая выдача — честный ответ, только если источники ответили «ничего нет». Блокировка
+/// или пауза источника («resting») — не он: Claude должен получить отказ (`too_many_requests`),
+/// а не «No links found», иначе он минутами переписывает запросы.
+fn is_empty_answer(reasons: &str) -> bool {
+    reasons.contains("no results") && !reasons.contains("blocked") && !reasons.contains("resting")
 }
 
 /// Маршрут без ключа: страница в браузере человека не должна гонять через него поиск.
@@ -758,6 +765,21 @@ mod tests {
     use crate::state::ModelRouter;
 
     const DDG: &str = include_str!("../tests/fixtures/ddg.html");
+
+    #[test]
+    fn only_an_honest_nothing_found_is_an_empty_answer() {
+        // Every source answered "no results": an empty list is true.
+        assert!(is_empty_answer(
+            "brave: no results; ddg: no results; ddg-lite: no results"
+        ));
+        // A source on pause plus an empty browser pass is a refusal, not an empty list.
+        assert!(!is_empty_answer(
+            "brave: resting; ddg: resting; ddg-lite: resting; browser: no results"
+        ));
+        assert!(!is_empty_answer(
+            "brave: blocked (bot check); browser: no results"
+        ));
+    }
 
     #[test]
     fn web_pages_are_refused_but_plain_clients_pass() {

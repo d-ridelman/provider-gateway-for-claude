@@ -408,6 +408,65 @@ async fn anthropic_count_tokens_uses_upstream_counter() {
 }
 
 #[tokio::test]
+async fn anthropic_without_count_tokens_gets_the_local_estimate() {
+    // A provider with an Anthropic-style endpoint but no counter answers 404: Claude must still
+    // get a number, as it does when the provider is unreachable.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages/count_tokens"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+        .mount(&upstream)
+        .await;
+
+    let state = state_with(&upstream.uri(), "anthropic", "claude-test");
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/messages/count_tokens")
+        .header("x-api-key", "local-token")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            json!({
+                "model": "claude-p-00000000",
+                "messages": [{"role": "user", "content": "x"}]
+            })
+            .to_string(),
+        ))
+        .unwrap();
+    let response = app(state).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(json_body(response).await["input_tokens"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn anthropic_error_body_does_not_carry_the_upstream_key() {
+    // Some providers and proxies echo the key in their 401 text; the OpenAI path cuts it out,
+    // the passthrough must too (the text lands in Claude's window and its transcript).
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "type": "error",
+            "error": {"type": "authentication_error", "message": "invalid x-api-key: sk-upstream"}
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = state_with(&upstream.uri(), "anthropic", "claude-test");
+    let response = app(state)
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000",
+            "max_tokens": 8,
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    let text = text_body(response).await;
+    assert!(!text.contains("sk-upstream"), "{text}");
+    assert!(text.contains("authentication_error"), "{text}");
+}
+
+#[tokio::test]
 async fn openai_count_tokens_is_local() {
     let state = state_with("http://127.0.0.1:9", "openai", "gpt-5.2");
     let request = Request::builder()

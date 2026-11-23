@@ -48,6 +48,7 @@ pub fn translate(
         content.push(json!({"type": "text", "text": text}));
     }
 
+    let finish = choice.get("finish_reason").and_then(Value::as_str);
     let tool_calls = message
         .get("tool_calls")
         .and_then(Value::as_array)
@@ -60,6 +61,14 @@ pub fn translate(
             .and_then(Value::as_str)
             .unwrap_or("");
         if name.is_empty() {
+            continue;
+        }
+        if let Some(Value::String(arguments)) = call
+            .get("function")
+            .and_then(|function| function.get("arguments"))
+            && cut_arguments(arguments, finish)
+        {
+            tracing::warn!(tool = %name, "tool call cut by the token limit dropped");
             continue;
         }
         let id = call
@@ -79,7 +88,6 @@ pub fn translate(
     let has_tools = content
         .iter()
         .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"));
-    let finish = choice.get("finish_reason").and_then(Value::as_str);
     let stop_reason = map_stop_reason(finish, has_tools);
 
     let fallback_output = if content.is_empty() {
@@ -247,6 +255,19 @@ pub fn map_stop_reason(finish: Option<&str>, has_tools: bool) -> &'static str {
     }
 }
 
+/// Вызов инструмента, оборванный на пределе токенов: аргументы непустые и не разбираются
+/// как объект. Отправленный как `{}`, он запустил бы инструмент без параметров, и модель
+/// повторяла бы тот же вызов; без него ответ кончается `max_tokens`. Пустые аргументы —
+/// инструмент без параметров.
+pub fn cut_arguments(arguments: &str, finish: Option<&str>) -> bool {
+    finish == Some("length")
+        && !arguments.trim().is_empty()
+        && !matches!(
+            serde_json::from_str::<Value>(arguments),
+            Ok(Value::Object(_))
+        )
+}
+
 fn tool_input(arguments: Option<&Value>) -> Value {
     match arguments {
         Some(Value::String(text)) => match serde_json::from_str::<Value>(text) {
@@ -313,6 +334,36 @@ pub fn input_usage(usage: &Value) -> Option<(u64, Option<u64>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_tool_call_cut_by_the_token_limit_ends_with_max_tokens() {
+        let call = |id: &str, arguments: &str| json!({"id": id, "type": "function", "function": {"name": "Write", "arguments": arguments}});
+        let cut = json!({
+            "choices": [{"index": 0, "finish_reason": "length", "message": {
+                "role": "assistant", "content": null,
+                "tool_calls": [call("c1", "{\"file_path\":\"a\",\"content\":\"abc")]
+            }}]
+        });
+        let message = translate(&cut, "m", 1).unwrap();
+        assert_eq!(message["content"], json!([]));
+        assert_eq!(message["stop_reason"], "max_tokens");
+        // A whole call next to a cut one stays; no arguments at all is a tool without parameters.
+        let mixed = json!({
+            "choices": [{"index": 0, "finish_reason": "length", "message": {
+                "role": "assistant", "content": null,
+                "tool_calls": [call("c1", "{\"file_path\":\"a\"}"), call("c2", "{\"x\":\"cut"), call("c3", "")]
+            }}]
+        });
+        let message = translate(&mixed, "m", 1).unwrap();
+        let ids: Vec<_> = message["content"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|block| block["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, ["c1", "c3"]);
+        assert_eq!(message["stop_reason"], "tool_use");
+    }
 
     #[test]
     fn tool_calls_finish_without_a_named_call_ends_the_turn() {
