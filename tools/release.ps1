@@ -22,6 +22,13 @@ $conf = Get-Content (Join-Path $root 'crates\ctp-app\tauri.conf.json') -Raw | Co
 if ($conf.version -ne $version) { throw "tauri.conf.json version $($conf.version) != Cargo.toml $version" }
 $tag = "v$version"
 
+# A release is built from what is on GitHub: no uncommitted edits, HEAD already pushed.
+$head = (git -C $root rev-parse HEAD).Trim()
+if ($Publish) {
+    if (git -C $root status --porcelain --untracked-files=no) { throw 'uncommitted changes: commit them before -Publish' }
+    if ((git -C $root rev-parse origin/main).Trim() -ne $head) { throw 'HEAD is not pushed to origin/main' }
+}
+
 $ownKey = -not $env:TAURI_SIGNING_PRIVATE_KEY
 if ($ownKey) {
     $keyDir = Join-Path $env:USERPROFILE '.tauri'
@@ -40,7 +47,9 @@ try {
 }
 
 $bundle = Join-Path $root 'target\release\bundle\nsis'
-$setup = Get-ChildItem $bundle -Filter "*_${version}_x64-setup.exe" | Select-Object -First 1
+# The exact name: a wildcard also matches "<product> (dev)_<version>_..." left by build-dev.ps1,
+# which sorts first and has no signature.
+$setup = Get-Item (Join-Path $bundle "$($conf.productName)_${version}_x64-setup.exe") -ErrorAction SilentlyContinue
 if (-not $setup) { throw "installer for $version not found in $bundle" }
 $sig = "$($setup.FullName).sig"
 if (-not (Test-Path $sig)) { throw "updater signature not found: $sig (is createUpdaterArtifacts on?)" }
@@ -93,7 +102,7 @@ if ($Publish) {
     $files = Get-ChildItem $out | ForEach-Object FullName
     $page = Join-Path $root "docs\releases\$tag.md"
     $body = if (Test-Path $page) { @('--notes-file', $page) } else { @('--notes', $Notes) }
-    & gh release create $tag @files --repo $Repo --title "Provider Gateway for Claude $version" @body
+    & gh release create $tag @files --repo $Repo --target $head --title "Provider Gateway for Claude $version" @body
     if ($LASTEXITCODE -ne 0) { throw "gh release create failed ($LASTEXITCODE)" }
     Write-Host "Published: https://github.com/$Repo/releases/tag/$tag"
 }

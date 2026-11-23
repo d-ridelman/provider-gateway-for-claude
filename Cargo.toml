@@ -29,7 +29,6 @@ sha2 = "0.10"
 subtle = "2"
 tauri = { version = "2.12.7", features = ["tray-icon"] }
 tauri-build = "2.7.6"
-thiserror = "2"
 tiktoken-rs = "0.12"
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }

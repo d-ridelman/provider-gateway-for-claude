@@ -107,8 +107,9 @@ The app talks to:
 | `models.opencode.ai` | On **Load from provider**, for model names and limits; nothing about you is sent |
 | `claude.ai/i18n/ru.json` | Only with the Russian Claude interface turned on, when Claude updates |
 | `github.com` (this repository's releases) | Update check at start and once a day; turn it off in Settings |
+| `html.duckduckgo.com`, `lite.duckduckgo.com`, `search.brave.com` | When Claude's built-in web search runs: the gateway answers it itself and sends the words the model chose to search for (no account, no keys). It is always on (there is no switch for it yet) |
 
-There is no telemetry. Prompts and answers go only between Claude and your provider through the local gateway.
+There is no telemetry. Prompts and answers go only between Claude and your provider through the local gateway; the search words of a web search also go to the search engines above. Those search words are written to `gateway.log` next to the settings, in plain text.
 
 ## Where things are
 
