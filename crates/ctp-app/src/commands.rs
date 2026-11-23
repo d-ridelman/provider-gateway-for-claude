@@ -429,6 +429,7 @@ pub async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 /// Полный выход (как «Выход» в трее): шлюз останавливается вместе с программой.
 #[tauri::command]
 pub fn app_exit(app: tauri::AppHandle) {
+    crate::claude::repair_registry_on_exit(&app);
     app.exit(0);
 }
 

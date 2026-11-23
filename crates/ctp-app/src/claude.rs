@@ -520,6 +520,16 @@ fn profile_in_use(profile: &Path) -> bool {
     }
 }
 
+/// Ждёт, пока Claude закроется совсем: профиль свободен несколько опросов подряд. Один
+/// свободный опрос ничего не значит — при самоперезапуске профиль на миг свободен.
+fn wait_until_closed(mut is_open: impl FnMut() -> bool, poll: std::time::Duration, free: u32) {
+    let mut quiet = 0;
+    while quiet < free {
+        std::thread::sleep(poll);
+        quiet = if is_open() { 0 } else { quiet + 1 };
+    }
+}
+
 pub fn launch(
     config: &Config,
     status: &UiStatus,
@@ -631,7 +641,7 @@ pub fn launch(
     let before = russian.then(|| crate::ruui::registry::snapshot(&copies));
     #[cfg(not(windows))]
     let before: Option<Before> = None;
-    let mut child = command.spawn().map_err(|exc| {
+    let child = command.spawn().map_err(|exc| {
         let exe = exe.display();
         tr!(
             "Не удалось запустить {exe}: {exc}",
@@ -640,13 +650,21 @@ pub fn launch(
     })?;
     let pid = child.id();
     // Возвращаем ключи установленному Claude после старта копии и ещё раз, когда она
-    // закроется. Если окно шлюза закроют раньше — это сделает следующий старт
-    // (repair_registry, уже без снимка).
+    // закроется. Если окно шлюза закроют раньше — это сделает выход из приложения или
+    // следующий старт (repair_registry, уже без снимка).
     if russian {
+        let locked = profile.clone();
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_secs(20));
             repair_for(&copies, &original, before.as_ref());
-            let _ = child.wait();
+            // Не `child.wait()`: Claude перезапускает сам себя (после «Save & Restart» в своём
+            // окне настроек), запущенный нами процесс выходит, а копия живёт дальше и снова
+            // пишет в реестр свой путь. Закрытие — это свободный `lockfile` профиля.
+            wait_until_closed(
+                || profile_in_use(&locked),
+                std::time::Duration::from_secs(5),
+                2,
+            );
             repair_for(&copies, &original, before.as_ref());
         });
     }
@@ -685,6 +703,22 @@ fn repair_for(copies: &Path, original_exe: &Path, before: Option<&Before>) {
     }
     #[cfg(not(windows))]
     let _ = (copies, original_exe, before);
+}
+
+/// Перед выходом из приложения: поток, что вернёт ключи после закрытия копии, умирает вместе
+/// с ним, и пока копия открыта, её след в реестре остался бы до следующего старта
+/// (`claude://` и клик по уведомлению обычного Claude открывали бы копию). Чинятся только
+/// ключи установленного Claude, копия не трогается.
+pub fn repair_registry_on_exit(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(shared) = app.try_state::<crate::state::AppShared>() {
+        let config = shared
+            .config
+            .lock()
+            .unwrap_or_else(|exc| exc.into_inner())
+            .clone();
+        repair_registry(&config);
+    }
 }
 
 /// При старте приложения: след русской копии в реестре, оставшийся с прошлого раза.
@@ -890,6 +924,23 @@ fn write_json(path: &Path, value: &serde_json::Value) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closing_needs_consecutive_free_polls_not_one() {
+        // Claude restarts itself: for an instant the profile is free, and the registry must not be
+        // repaired then (the new process writes its own path right after).
+        let mut answers = vec![true, false, true, true, false, false].into_iter();
+        let mut polls = 0;
+        wait_until_closed(
+            || {
+                polls += 1;
+                answers.next().unwrap()
+            },
+            std::time::Duration::from_millis(1),
+            2,
+        );
+        assert_eq!(polls, 6);
+    }
 
     #[test]
     fn our_keys_overwrite_the_entry_and_the_rest_of_it_survives() {

@@ -60,6 +60,7 @@ pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
                 "Update not installed: {exc}"
             )
         })?;
+    crate::claude::repair_registry_on_exit(&app);
     app.restart();
 }
 
