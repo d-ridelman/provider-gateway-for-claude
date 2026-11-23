@@ -16,7 +16,13 @@ $maps = @(
     "--remap-path-prefix=$root=/src",
     "--remap-path-prefix=$env:USERPROFILE=/home"
 )
-$env:RUSTFLAGS = (@($env:RUSTFLAGS) + $maps | Where-Object { $_ }) -join ' '
+# CARGO_ENCODED_RUSTFLAGS (separator 0x1f), not RUSTFLAGS: cargo splits RUSTFLAGS at spaces,
+# and a profile like "C:\Users\John Smith" would break the flag (see build-app.ps1).
+$sep = [char]0x1f
+$callerFlags = if ($env:CARGO_ENCODED_RUSTFLAGS) { $env:CARGO_ENCODED_RUSTFLAGS -split $sep }
+    elseif ($env:RUSTFLAGS) { $env:RUSTFLAGS -split ' ' | Where-Object { $_ } }
+    else { @() }
+$env:CARGO_ENCODED_RUSTFLAGS = (@($callerFlags) + $maps) -join $sep
 
 $dist = Join-Path $root 'dist-dev'
 New-Item -ItemType Directory -Force -Path $dist | Out-Null

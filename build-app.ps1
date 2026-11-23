@@ -18,7 +18,14 @@ $maps = @(
     "--remap-path-prefix=$root=/src",
     "--remap-path-prefix=$env:USERPROFILE=/home"
 )
-$env:RUSTFLAGS = (@($env:RUSTFLAGS) + $maps | Where-Object { $_ }) -join ' '
+# CARGO_ENCODED_RUSTFLAGS (separator 0x1f), not RUSTFLAGS: cargo splits RUSTFLAGS at spaces,
+# and a profile like "C:\Users\John Smith" would break the flag. It overrides RUSTFLAGS, so
+# the caller's own flags are carried over.
+$sep = [char]0x1f
+$callerFlags = if ($env:CARGO_ENCODED_RUSTFLAGS) { $env:CARGO_ENCODED_RUSTFLAGS -split $sep }
+    elseif ($env:RUSTFLAGS) { $env:RUSTFLAGS -split ' ' | Where-Object { $_ } }
+    else { @() }
+$env:CARGO_ENCODED_RUSTFLAGS = (@($callerFlags) + $maps) -join $sep
 
 # License notices of the linked crates go into the installer; refresh them when Python is here.
 if (Get-Command python -ErrorAction SilentlyContinue) {
