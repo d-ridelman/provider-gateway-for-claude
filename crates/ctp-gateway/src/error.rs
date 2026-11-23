@@ -147,6 +147,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_key_is_cut_out_of_bytes_and_a_short_one_is_left_alone() {
+        // Bytes that are not UTF-8 stay as they are, the key (ASCII) goes, every occurrence.
+        let body = [&[0xCF, 0xF0][..], b" sk-abcdef ", b"sk-abcdef", &[0xE8]].concat();
+        let clean = without_secret_bytes(&body, "sk-abcdef");
+        assert_eq!(
+            clean,
+            [&[0xCF, 0xF0][..], " … …".as_bytes(), &[0xE8]].concat()
+        );
+        // Shorter than 4 bytes it would cut half of the text: left as it is.
+        assert_eq!(without_secret_bytes(b"abc abc", "abc"), b"abc abc");
+        assert_eq!(without_secret_bytes(b"text", ""), b"text");
+    }
+
+    #[test]
     fn classified_errors_carry_anthropics_status_kind_and_overflow_numbers() {
         let (status, kind, message) = classify(429, r#"{"error":{"message":"slow"}}"#, "");
         assert_eq!(
