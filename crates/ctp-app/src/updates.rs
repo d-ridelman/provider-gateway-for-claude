@@ -48,11 +48,14 @@ pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
     // подписи и распаковки: скачивание может идти через VPN, а сорвавшаяся установка не
     // должна оставить шлюз без прокси.
     // Свой хук заменяет штатный плагина (`cleanup_before_exit`: трей и пр.) — зовём оба.
-    let handle = app.clone();
+    // Флаг: прокси остановил именно хук (а не ядро упало раньше само).
+    let stopped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (handle, flag) = (app.clone(), stopped.clone());
     let updater = app
         .updater_builder()
         .on_before_exit(move || {
             crate::mihomo::shutdown();
+            flag.store(true, std::sync::atomic::Ordering::SeqCst);
             handle.cleanup_before_exit();
         })
         .build()
@@ -71,11 +74,13 @@ pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
         .download_and_install(|_, _| {}, || {})
         .await
         .map_err(|exc| {
-            // Хук мог уже снять ядро (установщик не запустился — например, отказ в UAC):
-            // поднять прокси снова, иначе шлюз остался бы на мёртвом порту.
+            // Хук уже снял ядро, а установщик не запустился (например, отказ в UAC): поднять
+            // прокси снова, иначе шлюз остался бы на мёртвом порту. Только после хука: ядро,
+            // упавшее раньше само, здесь не трогаем (в TUN это был бы лишний UAC).
+            // shortcut: штатный cleanup_before_exit плагина при этом уже спрятал окно и трей
+            // (так было и до этой ветки), окно вернёт следующий запуск ярлыка.
             let handle = app.clone();
-            // Только если ядро и правда снято: иначе (сбой до хука) TUN спросил бы UAC зря.
-            if !crate::mihomo::running() {
+            if stopped.load(std::sync::atomic::Ordering::SeqCst) {
                 std::thread::spawn(move || crate::commands::start_proxy_in_background(&handle));
             }
             tr!(
