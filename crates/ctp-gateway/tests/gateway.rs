@@ -1657,6 +1657,36 @@ async fn a_provider_that_refuses_the_field_and_a_picture_gets_both_taken_out() {
     );
 }
 
+#[tokio::test]
+async fn when_only_the_reasoning_field_was_tried_and_nothing_helps_the_model_cools_down() {
+    // The request is broken for another reason: the field comes out once (and goes back), the
+    // client gets the first refusal, and the next request is not walked down the ladder again.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+            "error": {"message": "[invalid_request] the request is invalid"}
+        })))
+        .mount(&upstream)
+        .await;
+    let state = state_with(&upstream.uri(), "openai", "broken-x");
+    let ask = || {
+        post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32,
+            "tools": [{"name": "read", "description": "r", "input_schema": {"type": "object"}}],
+            "messages": history_with_thinking()
+        }))
+    };
+    let first = app(state.clone()).oneshot(ask()).await.unwrap();
+    assert_eq!(first.status(), StatusCode::BAD_REQUEST);
+    // The original request and one without the field.
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 2);
+    let second = app(state.clone()).oneshot(ask()).await.unwrap();
+    assert_eq!(second.status(), StatusCode::BAD_REQUEST);
+    // Cooled down: one request, no ladder.
+    assert_eq!(upstream.received_requests().await.unwrap().len(), 3);
+}
+
 fn chat_ok() -> ResponseTemplate {
     ResponseTemplate::new(200).set_body_json(json!({
         "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}]
