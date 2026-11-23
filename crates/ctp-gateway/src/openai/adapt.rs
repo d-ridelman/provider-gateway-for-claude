@@ -697,7 +697,23 @@ impl Profiles {
     /// картинок: Claude Code шлёт всю историю каждый раз, и один битый скриншот
     /// отказывал бы на каждом ходе. Подтверждение засчитывается, только если ни одной из
     /// картинок ещё не было среди подтверждений (пусто — шаг не про картинки).
+    /// Запрос, начатый сейчас (отдельный от всех идущих): так его видят тесты.
+    #[cfg(test)]
     pub fn record_success(&self, key: &str, flipped: Step, images: &[u64]) -> Option<Vec<Step>> {
+        self.record_success_since(key, flipped, images, Instant::now())
+    }
+
+    /// `started` — когда начат запрос, которому помогло упрощение. Подтверждением считается
+    /// только запрос, начатый после прошлого засчитанного успеха: несколько запросов, что шли
+    /// одновременно (субагенты) и поймали один и тот же разовый отказ, — это один случай,
+    /// а не несколько.
+    pub fn record_success_since(
+        &self,
+        key: &str,
+        flipped: Step,
+        images: &[u64],
+        started: Instant,
+    ) -> Option<Vec<Step>> {
         let mut inner = self.lock();
         let known: Vec<Step> = inner
             .learned
@@ -730,9 +746,12 @@ impl Profiles {
                     at: Instant::now(),
                 };
             }
+            // Запрос, шедший одновременно с тем, что уже засчитан, — тот же случай.
+            let sequential = entry.count == 0 || started >= entry.at;
             // Только набор, целиком состоящий из невиденных картинок: пока в истории
             // остаётся прежняя битая, отказ полностью объясняется ею, а не новыми.
-            let fresh = images.is_empty() || images.iter().all(|id| !entry.seen.contains(id));
+            let fresh = sequential
+                && (images.is_empty() || images.iter().all(|id| !entry.seen.contains(id)));
             if fresh {
                 entry.count += 1;
                 entry.seen.extend_from_slice(images);
@@ -1178,6 +1197,29 @@ mod tests {
             ),
             None,
             "30769 < 32768 requested+prompt: no honest numbers, the text goes as is"
+        );
+    }
+
+    #[test]
+    fn requests_that_ran_at_the_same_time_are_one_confirmation() {
+        // Two subagents hit the same one-off refusal at once and both got through the same step:
+        // that is one case. A later, separate request is the second one.
+        let profiles = Profiles::in_memory();
+        let first_started = Instant::now();
+        let second_started = Instant::now();
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(
+            profiles.record_success_since("p/m", Step::Effort, &[], first_started),
+            None
+        );
+        assert_eq!(
+            profiles.record_success_since("p/m", Step::Effort, &[], second_started),
+            None
+        );
+        assert!(profiles.steps("p/m").is_empty());
+        assert_eq!(
+            profiles.record_success_since("p/m", Step::Effort, &[], Instant::now()),
+            Some(vec![Step::Effort])
         );
     }
 

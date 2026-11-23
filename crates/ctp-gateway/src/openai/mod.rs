@@ -70,6 +70,7 @@ async fn send(
     upstream_model: &str,
     payload: &mut Value,
 ) -> Result<reqwest::Response, SendError> {
+    let started = Instant::now();
     let url = provider.chat_url();
     let key = format!("{}/{}", provider.id, upstream_model);
     let known = state.profiles.steps(&key);
@@ -112,7 +113,10 @@ async fn send(
                 } else {
                     &[]
                 };
-                if let Some(learned) = state.profiles.record_success(&key, flipped, images) {
+                if let Some(learned) = state
+                    .profiles
+                    .record_success_since(&key, flipped, images, started)
+                {
                     info!(
                         provider = %provider.id,
                         model = %upstream_model,
