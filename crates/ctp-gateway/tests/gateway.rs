@@ -1430,6 +1430,49 @@ async fn screenshots_count_by_size_where_claude_code_reads_the_context() {
     assert!(tokens < 3000, "{tokens}");
 }
 
+fn unreadable_body() -> Body {
+    // A body that fails when it is read: a gateway that reads it before it checks the token
+    // answers something other than 401 (and with a huge real body it would buffer it first).
+    Body::from_stream(futures_util::stream::iter(vec![
+        Err::<axum::body::Bytes, _>(std::io::Error::other("body must not be read")),
+    ]))
+}
+
+#[tokio::test]
+async fn an_unauthorized_request_is_refused_before_its_body_is_read() {
+    let state = state_with("http://127.0.0.1:9", "openai", "gpt-5.2");
+    for uri in ["/v1/messages", "/v1/messages/count_tokens"] {
+        let request = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("x-api-key", "wrong-token")
+            .header("content-type", "application/json")
+            .body(unreadable_body())
+            .unwrap();
+        let response = app(state.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{uri}");
+        let body = json_body(response).await;
+        assert_eq!(body["error"]["type"], "authentication_error", "{uri}");
+    }
+}
+
+#[tokio::test]
+async fn the_small_routes_do_not_take_big_bodies() {
+    // The oauth stubs and /search carry a few bytes; a big body there is refused, not buffered.
+    let state = state_with("http://127.0.0.1:9", "openai", "gpt-5.2");
+    let big = "x".repeat(70 * 1024);
+    for uri in ["/v1/oauth/token", "/v1/oauth/org/authorize", "/search"] {
+        let request = Request::builder()
+            .method("POST")
+            .uri(uri)
+            .header("content-type", "application/json")
+            .body(Body::from(big.clone()))
+            .unwrap();
+        let response = app(state.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE, "{uri}");
+    }
+}
+
 #[tokio::test]
 async fn a_broken_provider_stream_ends_with_the_error_not_with_a_normal_stop() {
     // After an `error` event Anthropic's stream is over. A `message_delta` with end_turn and

@@ -14,7 +14,7 @@ use std::time::Instant;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-const AUTH_ERROR: &str = "invalid x-api-key";
+pub(crate) const AUTH_ERROR: &str = "invalid x-api-key";
 
 pub async fn health(State(state): State<AppState>) -> Response {
     (

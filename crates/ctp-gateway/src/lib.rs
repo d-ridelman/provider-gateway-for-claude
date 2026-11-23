@@ -14,23 +14,53 @@ use crate::state::{AppState, ModelRouter};
 use crate::websearch::search;
 use anyhow::{Context, bail};
 use axum::Router;
-use axum::extract::DefaultBodyLimit;
+use axum::extract::{DefaultBodyLimit, Request, State};
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::{any, get, post};
 use ctp_core::config::ProvidersFile;
 use std::path::Path;
 
+/// Предел тела у `/v1/messages` (у Anthropic — 128 МБ). У служебных маршрутов тело — считанные
+/// байты: им хватает `SMALL_BODY`.
+const BODY_LIMIT: usize = 256 * 1024 * 1024;
+const SMALL_BODY: usize = 64 * 1024;
+
+/// Токен проверяется до чтения тела: иначе чужой POST на сотни мегабайт сначала целиком
+/// оказался бы в памяти и только потом получил бы 401.
+async fn require_token(State(state): State<AppState>, request: Request, next: Next) -> Response {
+    if !auth::authorized(request.headers(), &state.token, state.open_mode) {
+        return error::anthropic_error(401, "authentication_error", handlers::AUTH_ERROR);
+    }
+    next.run(request).await
+}
+
 pub fn app(state: AppState) -> Router {
+    let checked = || middleware::from_fn_with_state(state.clone(), require_token);
+    let small = || DefaultBodyLimit::max(SMALL_BODY);
     Router::new()
         .route("/health", get(handlers::health))
         .route("/v1/models", get(handlers::models))
-        .route("/v1/messages", post(handlers::messages))
-        .route("/v1/messages/count_tokens", post(handlers::count_tokens))
-        .route("/v1/oauth/{org}/authorize", post(handlers::oauth_authorize))
-        .route("/v1/oauth/token", post(handlers::oauth_token))
-        .route("/search", post(search))
+        .route(
+            "/v1/messages",
+            post(handlers::messages).route_layer(checked()),
+        )
+        .route(
+            "/v1/messages/count_tokens",
+            post(handlers::count_tokens).route_layer(checked()),
+        )
+        .route(
+            "/v1/oauth/{org}/authorize",
+            post(handlers::oauth_authorize).layer(small()),
+        )
+        .route(
+            "/v1/oauth/token",
+            post(handlers::oauth_token).layer(small()),
+        )
+        .route("/search", post(search).layer(small()))
         .route("/api/{*tail}", any(handlers::api_stub))
         .fallback(handlers::not_found)
-        .layer(DefaultBodyLimit::max(256 * 1024 * 1024))
+        .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(state)
 }
 
