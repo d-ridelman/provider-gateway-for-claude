@@ -100,7 +100,16 @@ pub(crate) fn write_file(path: &Path, text: &str) -> Result<(), String> {
         return fs::write(path, text).map_err(|exc| format!("{}: {exc}", path.display()));
     }
     let temp = path.with_extension("json.ctp-tmp");
-    fs::write(&temp, text).map_err(|exc| format!("{}: {exc}", temp.display()))?;
+    // На диск до замены: иначе при сбое питания rename мог бы закрепить пустой файл. Не вышло —
+    // временный файл не остаётся мусором.
+    let written = fs::File::create(&temp).and_then(|mut file| {
+        std::io::Write::write_all(&mut file, text.as_bytes())?;
+        file.sync_all()
+    });
+    if let Err(exc) = written {
+        let _ = fs::remove_file(&temp);
+        return Err(format!("{}: {exc}", temp.display()));
+    }
     fs::rename(&temp, path).map_err(|exc| {
         let _ = fs::remove_file(&temp);
         format!("{}: {exc}", path.display())

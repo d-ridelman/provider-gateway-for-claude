@@ -323,6 +323,8 @@ pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String>
     for name in &remove {
         command.env_remove(name);
     }
+    // Адрес с секретом браузерного эндпоинта нужен только шлюзу, не Claude Code и его инструментам.
+    command.env_remove(crate::fetch::URL_ENV);
     command.envs(set.iter().map(|(k, v)| (k, v)));
     command.env(CLI_VAR, &cli);
     command.spawn().map_err(|exc| {
@@ -599,6 +601,8 @@ pub fn launch(
         .arg(format!("--user-data-dir={}", profile.display()))
         .env("LOCALAPPDATA", &base)
         .env("CLAUDE_USER_DATA_DIR", &profile)
+        // Адрес с секретом браузерного эндпоинта нужен только шлюзу, не Claude и его инструментам.
+        .env_remove(crate::fetch::URL_ENV)
         .current_dir(exe.parent().unwrap_or_else(|| Path::new(".")));
     // Настоящая AppData\Local для процессов, которые запускает копия (ruui::ENV_PRELUDE).
     // Из системной папки Windows, а не из окружения: приложение могли запустить из сессии

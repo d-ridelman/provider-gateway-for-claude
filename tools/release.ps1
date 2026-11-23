@@ -26,6 +26,9 @@ $tag = "v$version"
 $head = (git -C $root rev-parse HEAD).Trim()
 if ($Publish) {
     if (git -C $root status --porcelain --untracked-files=no) { throw 'uncommitted changes: commit them before -Publish' }
+    # Свежая ссылка origin/main: без неё сравнение шло бы с тем, что было при последнем fetch.
+    git -C $root fetch origin main --quiet
+    if ($LASTEXITCODE -ne 0) { throw 'git fetch origin failed' }
     if ((git -C $root rev-parse origin/main).Trim() -ne $head) { throw 'HEAD is not pushed to origin/main' }
 }
 

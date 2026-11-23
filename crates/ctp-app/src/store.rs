@@ -52,8 +52,10 @@ pub fn load_or_create(dir: &Path) -> anyhow::Result<Config> {
     let path = dir.join("config.json");
     // Нужно ли писать файл: его нет, он был битый или нормализация что-то изменила. Прежний
     // конфиг при каждом старте не переписывается: лишняя запись — лишний шанс его потерять.
-    let mut write = !path.exists();
-    let mut config: Config = if path.exists() {
+    // `try_exists`: ошибка доступа не должна сойти за «файла нет» (тогда записались бы умолчания).
+    let exists = path.try_exists()?;
+    let mut write = !exists;
+    let mut config: Config = if exists {
         // Любая ошибка чтения, кроме «не текст» (занят, нет доступа), останавливает старт:
         // пустой конфиг поверх временно недоступного файла стёр бы провайдеров.
         let bytes = std::fs::read(&path)?;

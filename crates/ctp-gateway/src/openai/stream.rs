@@ -308,39 +308,64 @@ impl StreamTranslator {
     }
 
     /// Какому вызову принадлежит кусок. С `index` всё ясно. Несколько вызовов в одном куске
-    /// держатся по позиции. Без `index` и в куске из одного вызова позиция ничего не значит
-    /// (провайдер шлёт по вызову на кусок): совпавший `id` — тот же вызов; новый `id` или
-    /// новое имя — следующий вызов; остальное (кусок с аргументами, `id` позже имени) —
-    /// продолжение последнего.
+    /// держатся по позиции, если она не занята вызовом с другим `id`. Без `index` и в куске из
+    /// одного вызова позиция ничего не значит (провайдер шлёт по вызову на кусок): совпавший
+    /// `id` — тот же вызов; новый `id` или другое имя — следующий; то же имя — следующий, только
+    /// если аргументы последнего уже целый объект; остальное (кусок с аргументами, `id` позже
+    /// имени) — продолжение последнего.
     fn tool_slot(&self, call: &Value, position: usize, siblings: usize) -> u64 {
         if let Some(index) = call.get("index").and_then(Value::as_u64) {
             return index;
         }
-        if siblings > 1 {
-            return position as u64;
-        }
-        let last = self.tools.iter().next_back();
-        let last_key = last.map_or(0, |(key, _)| *key);
-        let next = last.map_or(0, |(key, _)| key + 1);
-        let named = call
-            .pointer("/function/name")
-            .and_then(Value::as_str)
-            .is_some_and(|name| !name.is_empty());
-        match call
+        let id = call
             .get("id")
             .and_then(Value::as_str)
-            .filter(|id| !id.is_empty())
-        {
+            .filter(|id| !id.is_empty());
+        let last = self.tools.iter().next_back();
+        let next = last.map_or(0, |(key, _)| key + 1);
+        if siblings > 1 {
+            let taken = id.is_some_and(|id| {
+                self.tools
+                    .get(&(position as u64))
+                    .is_some_and(|entry| !entry.id.is_empty() && entry.id != id)
+            });
+            return if taken { next } else { position as u64 };
+        }
+        let last_key = last.map_or(0, |(key, _)| *key);
+        let name = call
+            .pointer("/function/name")
+            .and_then(Value::as_str)
+            .filter(|name| !name.is_empty());
+        // Аргументы последнего вызова — уже целый JSON-объект: следующий кусок с тем же
+        // именем начинает новый вызов, а не продолжает этот.
+        let whole = |entry: &ToolCallBuf| {
+            matches!(
+                serde_json::from_str::<Value>(&entry.arguments),
+                Ok(Value::Object(_))
+            )
+        };
+        match id {
             Some(id) => match self.tools.iter().find(|(_, entry)| entry.id == id) {
                 Some((key, _)) => *key,
-                // Кусок без имени несёт `id` позднее: он дописывается вызову, у которого
-                // `id` ещё нет.
-                None if !named && last.is_some_and(|(_, entry)| entry.id.is_empty()) => last_key,
+                // `id` пришёл позже имени: он дописывается вызову, у которого `id` ещё нет.
+                None if last.is_some_and(|(_, entry)| {
+                    entry.id.is_empty()
+                        && !whole(entry)
+                        && name.is_none_or(|name| name == entry.name)
+                }) =>
+                {
+                    last_key
+                }
                 None => next,
             },
-            // Новое имя после уже названного вызова начинает следующий.
-            None if named && last.is_some_and(|(_, entry)| !entry.name.is_empty()) => next,
-            None => last_key,
+            None => match (name, last) {
+                (Some(name), Some((_, entry)))
+                    if !entry.name.is_empty() && (entry.name != name || whole(entry)) =>
+                {
+                    next
+                }
+                _ => last_key,
+            },
         }
     }
 
@@ -874,6 +899,61 @@ mod tests {
                 ("Write".to_string(), "{}".to_string())
             ]
         );
+    }
+
+    #[test]
+    fn a_name_repeated_in_every_piece_is_one_call_until_its_arguments_are_whole() {
+        let name = |name: &str, args: &str| json!({"tool_calls": [{"function": {"name": name, "arguments": args}}]});
+        // The name rides along with every piece, no id: one call, not two broken ones.
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        feed(
+            &mut translator,
+            &[name("Read", "{\"p\":"), name("Read", "1}")],
+        );
+        assert_eq!(
+            tool_uses(&translator.finish()),
+            [("Read".to_string(), "{\"p\":1}".to_string())]
+        );
+        // The same name after a whole call is the next call, and so is another name.
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        feed(
+            &mut translator,
+            &[name("Read", "{}"), name("Read", "{}"), name("Write", "{}")],
+        );
+        assert_eq!(tool_uses(&translator.finish()).len(), 3);
+        // The late id comes with the name again: still the same call.
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        feed(
+            &mut translator,
+            &[
+                name("Read", "{\"p\":"),
+                json!({"tool_calls": [{"id": "a", "function": {"name": "Read", "arguments": "1}"}}]}),
+            ],
+        );
+        assert_eq!(
+            tool_uses(&translator.finish()),
+            [("Read".to_string(), "{\"p\":1}".to_string())]
+        );
+    }
+
+    #[test]
+    fn new_calls_in_a_chunk_do_not_land_on_calls_that_are_already_open() {
+        let mut translator = StreamTranslator::new("claude-x", 1);
+        feed(
+            &mut translator,
+            &[
+                json!({"tool_calls": [{"id": "a", "function": {"name": "Read", "arguments": "{}"}}]}),
+                json!({"tool_calls": [
+                    {"id": "c", "function": {"name": "Write", "arguments": "{}"}},
+                    {"id": "d", "function": {"name": "Grep", "arguments": "{}"}}
+                ]}),
+            ],
+        );
+        let names: Vec<String> = tool_uses(&translator.finish())
+            .into_iter()
+            .map(|(name, _)| name)
+            .collect();
+        assert_eq!(names, ["Read", "Write", "Grep"]);
     }
 
     #[test]

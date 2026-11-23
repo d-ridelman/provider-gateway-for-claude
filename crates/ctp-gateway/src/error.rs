@@ -82,6 +82,27 @@ pub fn without_secret(text: &str, secret: &str) -> String {
     }
 }
 
+/// То же в байтах: тело не в UTF-8 (HTML прокси в cp1251) остаётся нетронутым, а ключ из него
+/// вырезается. Ключ ASCII, его байты находятся и в такой кодировке.
+pub fn without_secret_bytes(body: &[u8], secret: &str) -> Vec<u8> {
+    let needle = secret.as_bytes();
+    if needle.len() < 4 {
+        return body.to_vec();
+    }
+    let mut out = Vec::with_capacity(body.len());
+    let mut at = 0;
+    while at < body.len() {
+        if body[at..].starts_with(needle) {
+            out.extend_from_slice("…".as_bytes());
+            at += needle.len();
+        } else {
+            out.push(body[at]);
+            at += 1;
+        }
+    }
+    out
+}
+
 /// Достаёт человеческий текст из OpenAI- или Anthropic-ошибки, иначе режет сырой текст.
 pub fn message_from_error_text(text: &str) -> String {
     clean_error_text(text, "")

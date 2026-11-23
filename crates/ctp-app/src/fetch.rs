@@ -18,6 +18,9 @@ use axum::{Json, Router};
 use serde_json::{Value, json};
 use std::time::Duration;
 
+/// Переменная окружения с адресом эндпоинта: её читает шлюз, а Claude и консоль её не получают.
+pub const URL_ENV: &str = "CTP_FETCH_URL";
+
 /// Ожидание одним куском: обычная страница — секунды; проверка с галочкой — сколько
 /// человек сидит у окна (внутри `webfetch` свой срок и таймауты).
 const TIMEOUT: Duration = Duration::from_secs(120);

@@ -467,10 +467,12 @@ async fn anthropic_error_body_does_not_carry_the_upstream_key() {
 }
 
 #[tokio::test]
-async fn anthropic_error_body_that_is_not_utf8_passes_untouched() {
-    // A proxy's HTML page in cp1251: cutting the key out must not mangle bytes it cannot read.
+async fn anthropic_error_body_that_is_not_utf8_keeps_its_bytes_but_loses_the_key() {
+    // A proxy's HTML page in cp1251 that repeats the key: the key goes, the other bytes stay.
     let upstream = MockServer::start().await;
-    let body: Vec<u8> = vec![0xCF, 0xF0, 0xEE, 0xEA, 0xF1, 0xE8];
+    let mut body: Vec<u8> = vec![0xCF, 0xF0, 0xEE, 0xEA, 0xF1, 0xE8];
+    body.extend_from_slice(b" key sk-upstream ");
+    body.extend_from_slice(&[0xCF, 0xF0]);
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
         .respond_with(ResponseTemplate::new(502).set_body_raw(body.clone(), "text/html"))
@@ -486,8 +488,17 @@ async fn anthropic_error_body_that_is_not_utf8_passes_untouched() {
         .await
         .unwrap();
     assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    let sent = response.into_body().collect().await.unwrap().to_bytes();
-    assert_eq!(sent.to_vec(), body);
+    let sent = response
+        .into_body()
+        .collect()
+        .await
+        .unwrap()
+        .to_bytes()
+        .to_vec();
+    let mut expected: Vec<u8> = vec![0xCF, 0xF0, 0xEE, 0xEA, 0xF1, 0xE8];
+    expected.extend_from_slice(" key … ".as_bytes());
+    expected.extend_from_slice(&[0xCF, 0xF0]);
+    assert_eq!(sent, expected);
 }
 
 #[tokio::test]

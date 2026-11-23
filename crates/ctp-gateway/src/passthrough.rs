@@ -52,12 +52,9 @@ pub async fn messages(
         };
         // Провайдер или прокси может повторить ключ в тексте отказа; в окно Claude и в его
         // журнал он не должен попасть (OpenAI-путь вырезает его так же).
-        // Тело не в UTF-8 (HTML прокси в cp1251) не трогаем: замена испортила бы его байты.
-        if !status.is_success()
-            && let Ok(text) = std::str::from_utf8(&payload)
-        {
-            let clean = error::without_secret(text, &provider.api_key);
-            payload = clean.into();
+        // В байтах, а не в тексте: тело не в UTF-8 (HTML прокси в cp1251) остаётся целым.
+        if !status.is_success() {
+            payload = error::without_secret_bytes(&payload, &provider.api_key).into();
         }
         info!(
             provider = %provider.id,

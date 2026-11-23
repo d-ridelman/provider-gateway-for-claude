@@ -51,6 +51,10 @@ pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
         .map_err(|exc| exc.to_string())?
         .ok_or_else(|| tr!("Обновлений нет", "No update available"))?;
     tracing::info!(version = %update.version, "installing update");
+    // До установки: на Windows установщик запускается, и сам плагин завершает процесс, до
+    // строки после `download_and_install` дело не доходит. Если русская копия Claude ещё
+    // открыта, её след в реестре иначе остался бы до следующего старта.
+    crate::claude::repair_registry_on_exit(app);
     update
         .download_and_install(|_, _| {}, || {})
         .await
@@ -60,7 +64,6 @@ pub async fn install(app: &tauri::AppHandle) -> Result<(), String> {
                 "Update not installed: {exc}"
             )
         })?;
-    crate::claude::repair_registry_on_exit(&app);
     app.restart();
 }
 

@@ -139,7 +139,8 @@ pub async fn chat_check(file: ProvidersFile, model: &str) -> Result<String, Stri
     let response = tokio::time::timeout(CHAT_TIMEOUT, crate::app(state).oneshot(request))
         .await
         .map_err(|_| format!("provider did not respond in {} s", CHAT_TIMEOUT.as_secs()))?
-        .map_err(|exc| exc.to_string())?;
+        // Ошибка роутера — `Infallible`: её не бывает (clippy видел недостижимый вызов).
+        .unwrap_or_else(|never| match never {});
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
         .await
