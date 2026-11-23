@@ -6,6 +6,30 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Added
 
+- **Proxy and VPN on the mihomo core.** A Proxy and VPN page:
+  - VPN subscriptions (Clash/mihomo or base64 v2ray links) as the core's proxy providers, each with a name prefix so equal node names of two subscriptions stay apart;
+  - node tiles with latency, Auto (the fastest) first; traffic and expiry of a subscription;
+  - Update and Remove for each subscription, and a title-bar chip that turns red when the core or the system proxy fails.
+  
+  Modes:
+  - **Claude and providers only**: the gateway's clients, Claude from PGC through `--proxy-server` (seen live: its requests come as `CONNECT claude.ai:443`), the Claude Code console through `HTTPS_PROXY`;
+  - **System proxy**: through WinINet, the previous settings including a PAC script are saved and restored on exit and at the next start, a group policy that locks the proxy is reported;
+  - **All traffic (TUN)**: the core elevated through UAC under a helper instance of PGC that stops it with PGC.
+  
+  Private networks and loopback always go direct. A failed core leaves the gateway on the proxy port, so requests fail instead of going around the VPN.
+  
+  The core itself:
+  - pinned (v1.19.34), downloaded from its GitHub releases on request with its sha256 built in, never bundled (GPL-3.0, a separate process);
+  - runs in a kill-on-close job object; subscription addresses stay in Credential Manager and are cut down to their host in errors.
+- **Claude Desktop and Claude Code downloads.**
+  - Portable (nothing installed): Claude Desktop is unpacked from its full nupkg, its registry traces are removed after it closes; Claude Code gets its own `CLAUDE_CONFIG_DIR` and no self-update.
+  - Regular install: the official installer, or `claude install`. Over an existing Claude the window asks first.
+  - Checks: sha256 from the Claude Code manifest, sha1 from `RELEASES`, and an Authenticode signature by exactly "Anthropic, PBC" on every `claude.exe`.
+  - An update keeps a portable Claude that is still open whole, because its folder is renamed before it is removed.
+- **MCP servers from the regular Claude Desktop** (an idea from Loadout).
+  - Settings lists them read-only, by name and program.
+  - Ticked ones are copied into the PGC profile while its Claude is closed; existing ones are kept, and the previous file stays as `.before-mcp`.
+
 - **Free web search for Claude's built-in `WebSearch` (dev branch `dev/search`).** Claude's `WebSearch` (Claude Code and Claude Desktop) makes a nested request whose only tool is Anthropic's server tool `web_search_20250305`; third-party providers cannot answer it, so the model got nothing. The gateway now answers that request itself, without calling the provider: `server_tool_use`, `web_search_tool_result` and a short list of titles, links and snippets, streamed with `ping`s while the search runs. `allowed_domains` / `blocked_domains` filter the results by host (a single allowed domain is also searched as `site:`; with several, the list may come back empty); a blocked search or an empty result reaches Claude the way Anthropic's server reports it. No API keys: Brave first, DuckDuckGo HTML and lite as fallbacks. Answers are cached for 10 minutes; a source that shows a bot check rests for 5 minutes. `POST /search` (plain `{"q"}` → `{results}`) stays as a helper, closed to requests from web pages. When a search engine asks for a human check, the page is opened in the app's own WebView2 as a real visit, so the check is passed (the window shows itself after 8 s if it needs a tick). The browser pass has one 60 s deadline per question. Details and measurements: `docs/websearch-work.md`.
 - **Built-in browser switch in Settings** ("Claude Desktop built-in browser"): third-party Claude turns its built-in browser off by default; the app now writes `builtinBrowserEnabled` into the 3p configuration entry, so it can be switched on from the gateway. Default off.
 - **The full list of 3p settings** (222 keys in 8 categories, from the decompiled app) is in `docs/claude-3p-settings.md`, with the ones worth surfacing next (auto mode, browser domains, model pricing, default effort).
@@ -20,6 +44,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
   - The light theme is neutral grey instead of cream; placeholders and accent text pass WCAG AA; no coloured glow or gradient on buttons. The window passes the Impeccable detector in both themes (`node tools/ui-shots.mjs --detect`); `node tools/ui-shots.mjs` takes the snapshot set (light / dark, 1920 / 1280 / 1100 / 1000 / 900 px and Windows display scales x1.25 / x1.5, empty / error / loading / long text) into `state/shots/` with measurements.
 
 ### Fixed
+
+- **"Open in Claude Code" in the folder menu no longer disappears after Open Claude.**
+  - Claude started with the PGC profile deletes the installed Claude's `Directory\shell\ClaudeCode` keys as a whole, because the feature is off in that profile (seen live with 6.28899.6), and they stayed gone until the regular Claude restarted.
+  - Every launch now takes the values of those keys and of `claude://`, and puts back whatever disappeared, after the start and after Claude closes.
 
 - **DeepSeek in thinking mode with tools.** DeepSeek's API wants the reasoning of earlier replies (`reasoning_content`) back whenever the request carries `tools`, and answers 400 without it. Claude Code sends the `thinking` blocks back in the history; the gateway now passes them on as `reasoning_content` (also in the continuation after the advisor), and leaves them out when the request has no tools. A provider that does not know the field answers a bare 400: the first rung of the retry ladder takes it out and the model is remembered. Not tried against the official DeepSeek API (no key here): the rule is from its documentation.
 - **A stream broken by an error** (network, invalid JSON from the provider, a failed continuation) now ends with the `error` event; it used to be followed by a normal `message_delta` / `message_stop`, which passed a cut answer off as a finished one.

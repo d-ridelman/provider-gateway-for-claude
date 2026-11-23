@@ -70,6 +70,13 @@ def main() -> None:
         "Provider Gateway for Claude includes the open-source components listed below.",
         "Each is used under its own license, reproduced after the list.",
         "",
+        "Programs it can download on request are NOT included and are not part of it: they",
+        "come from their authors' own release servers and run as separate processes.",
+        "- mihomo (Clash.Meta core) — GPL-3.0 — https://github.com/MetaCubeX/mihomo",
+        "  (the pinned version and its sha256 are in crates/ctp-app/src/mihomo.rs; its source",
+        "  code is at the tag of that version in the repository above)",
+        "- Claude Desktop and Claude Code — Anthropic's own terms — https://claude.ai",
+        "",
     ]
     # Identical texts (most MIT and Apache-2.0 copies) are printed once, with their crates.
     by_text: dict[str, list[str]] = {}
