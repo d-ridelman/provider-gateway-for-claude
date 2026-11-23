@@ -253,19 +253,28 @@ pub fn signer(path: &Path) -> Result<String> {
     bail!("{}: signature checks need Windows", path.display())
 }
 
+/// Подписант Claude Desktop и Claude Code (CN сертификата, сверено на обоих 23.11.2026).
+pub const ANTHROPIC: &str = "Anthropic, PBC";
+
 /// Файл подписан Anthropic (Claude Desktop, Claude Code).
 pub fn ensure_anthropic(path: &Path) -> Result<()> {
     let name = signer(path)?;
     ensure!(
-        name.starts_with("Anthropic"),
-        "{}: signed by {name}, not by Anthropic",
+        name == ANTHROPIC,
+        "{}: signed by {name}, not by {ANTHROPIC}",
         path.display()
     );
     Ok(())
 }
 
+/// То же вне async-воркера: проверка хеширует весь файл (сотни МБ).
+pub async fn ensure_anthropic_async(path: &Path) -> Result<()> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || ensure_anthropic(&path)).await?
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use wiremock::matchers::path;
     use wiremock::{Mock, MockServer, ResponseTemplate};

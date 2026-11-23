@@ -22,9 +22,15 @@ pub fn current() -> Option<String> {
 
 /// Добавляет прокси к сборщику клиента, если он задан.
 pub fn apply(builder: reqwest::ClientBuilder) -> reqwest::ClientBuilder {
-    match current().and_then(|url| reqwest::Proxy::all(url).ok()) {
-        Some(proxy) => builder.proxy(proxy.no_proxy(reqwest::NoProxy::from_string(NO_PROXY))),
-        None => builder,
+    let Some(url) = current() else {
+        return builder;
+    };
+    match reqwest::Proxy::all(&url) {
+        Ok(proxy) => builder.proxy(proxy.no_proxy(reqwest::NoProxy::from_string(NO_PROXY))),
+        Err(exc) => {
+            tracing::warn!(%url, error = %exc, "bad proxy address, going direct");
+            builder
+        }
     }
 }
 

@@ -906,6 +906,14 @@ pub mod registry {
     /// бывшее до него значение (из снимка) возвращается — в системе от него не остаётся
     /// ничего, кроме пустых ключей.
     pub fn forget(root: &Path, before: Option<&Snapshot>) {
+        // Ключи, которые портативный Claude создаёт целиком (`claude://`, «Open in Claude
+        // Code»): если их команда ушла, пустой ключ с `URL Protocol` давал бы ошибку вместо
+        // «программа не найдена» — убираем ключ целиком.
+        const ROOTS: [&str; 3] = [
+            r"Software\Classes\claude",
+            r"Software\Classes\Directory\shell\ClaudeCode",
+            r"Software\Classes\Directory\Background\shell\ClaudeCode",
+        ];
         for (path, name) in watched() {
             if read(&path, &name).is_none_or(|v| !mentions(&v, root)) {
                 continue;
@@ -921,9 +929,12 @@ pub mod registry {
                 super::Fix::Set(old) => CURRENT_USER
                     .create(&path)
                     .and_then(|k| k.set_string(&name, &old)),
-                _ => CURRENT_USER
-                    .create(&path)
-                    .and_then(|k| k.remove_value(&name)),
+                _ => match DEFAULTS.iter().position(|d| d.eq_ignore_ascii_case(&path)) {
+                    Some(i) => CURRENT_USER.remove_tree(ROOTS[i]),
+                    None => CURRENT_USER
+                        .create(&path)
+                        .and_then(|k| k.remove_value(&name)),
+                },
             };
             if let Err(exc) = result {
                 tracing::warn!(key = %path, error = %exc, "registry: cannot clean");

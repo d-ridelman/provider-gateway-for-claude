@@ -12,7 +12,7 @@
 
 use crate::download::{self, Expect};
 use crate::tr;
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 
@@ -90,11 +90,12 @@ pub fn parse_code_manifest(text: &str, platform: &str) -> Result<CodeRelease> {
     })
 }
 
-/// Версия идёт в путь и в URL: только цифры и точки.
+/// Версия идёт в путь и в URL: непустые числа через точку (`.`, `..` и `6.` не годятся).
 fn valid_version(version: &str) -> bool {
-    !version.is_empty()
-        && version.len() < 32
-        && version.chars().all(|c| c.is_ascii_digit() || c == '.')
+    version.len() < 32
+        && version
+            .split('.')
+            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
 }
 
 pub async fn latest_code(client: &reqwest::Client) -> Result<CodeRelease> {
@@ -153,7 +154,7 @@ pub async fn get_code(portable: bool, progress: download::Progress<'_>) -> Resul
         let exe = home.join("claude.exe");
         let fresh = home.join("claude.exe.new");
         download::to_file(&client, &url, &fresh, &expect, progress).await?;
-        if let Err(exc) = download::ensure_anthropic(&fresh) {
+        if let Err(exc) = download::ensure_anthropic_async(&fresh).await {
             let _ = std::fs::remove_file(&fresh);
             return Err(exc);
         }
@@ -179,8 +180,8 @@ pub async fn get_code(portable: bool, progress: download::Progress<'_>) -> Resul
     let staging = home.join("downloads");
     let exe = staging.join(format!("claude-{version}.exe"));
     download::to_file(&client, &url, &exe, &expect, progress).await?;
-    let result = match download::ensure_anthropic(&exe) {
-        Ok(()) => run_hidden(&exe, &["install"], true).await,
+    let result = match download::ensure_anthropic_async(&exe).await {
+        Ok(()) => run_hidden(&exe, &["install"]).await,
         Err(exc) => Err(exc),
     };
     let _ = std::fs::remove_dir_all(&staging);
@@ -192,13 +193,25 @@ pub async fn get_code(portable: bool, progress: download::Progress<'_>) -> Resul
     ))
 }
 
-/// Программа без окна консоли, с прокси приложения в окружении, в отдельном потоке.
-/// `capture` — собрать вывод. Без него потоки закрыты: установщик Claude запускает
-/// Claude, тот унаследовал бы пайпы, и ожидание вывода не кончилось бы до его закрытия.
-async fn run_hidden(exe: &Path, args: &[&str], capture: bool) -> Result<String> {
+/// Программа без окна консоли, с прокси приложения в окружении, в отдельном потоке; ответ —
+/// её вывод. Вывод идёт в файл рядом, а не в пайп: установщик Claude сам запускает Claude,
+/// тот унаследовал бы пайп, и ожидание конца вывода длилось бы до закрытия Claude.
+async fn run_hidden(exe: &Path, args: &[&str]) -> Result<String> {
     use std::process::Stdio;
+    let log = exe.with_extension("log");
+    let out = std::fs::File::create(&log)?;
     let mut command = std::process::Command::new(exe);
-    command.args(args);
+    command
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(out.try_clone()?)
+        .stderr(out)
+        // Секрет браузерного эндпоинта нужен только шлюзу (как в claude::launch).
+        .env_remove(crate::fetch::URL_ENV);
+    // Настоящая AppData\Local: PGC мог быть запущен из процесса с подменённой.
+    if let Some(local) = crate::claude::local_appdata() {
+        command.env("LOCALAPPDATA", local);
+    }
     for (name, value) in proxy_env() {
         command.env(name, value);
     }
@@ -209,23 +222,9 @@ async fn run_hidden(exe: &Path, args: &[&str], capture: bool) -> Result<String> 
     }
     let shown = exe.display().to_string();
     tokio::task::spawn_blocking(move || {
-        if !capture {
-            let status = command
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .with_context(|| shown.clone())?;
-            ensure!(status.success(), "{shown}: {status}");
-            return Ok(String::new());
-        }
-        let output = command.output().with_context(|| shown.clone())?;
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        ensure!(output.status.success(), "{}", text.trim());
+        let status = command.status().with_context(|| shown.clone())?;
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        ensure!(status.success(), "{shown}: {status}: {}", text.trim());
         Ok(text)
     })
     .await?
@@ -372,8 +371,8 @@ pub async fn get_desktop(
             ..Default::default()
         };
         download::to_file(&client, &url, &setup, &expect, progress).await?;
-        let result = match download::ensure_anthropic(&setup) {
-            Ok(()) => run_hidden(&setup, &[], false).await,
+        let result = match download::ensure_anthropic_async(&setup).await {
+            Ok(()) => run_hidden(&setup, &[]).await,
             Err(exc) => Err(exc),
         };
         let _ = std::fs::remove_dir_all(&staging);
@@ -404,7 +403,6 @@ pub async fn get_desktop(
     .await?;
     let _ = std::fs::remove_dir_all(&staging);
     let exe = unpacked?;
-    remove_older(&home, &target);
     let shown = exe.display();
     Ok(DesktopResult {
         message: tr!(
@@ -439,19 +437,33 @@ fn unpack_desktop(package: &Path, home: &Path, target: &Path) -> Result<PathBuf>
     }
     if target.exists() {
         // Та же версия уже есть (повторное скачивание): заменить, если не занята.
-        std::fs::remove_dir_all(target).with_context(|| {
+        if let Err(exc) = discard(home, target) {
+            let _ = std::fs::remove_dir_all(&part);
             let shown = target.display();
-            tr!(
-                "{shown} занята — закройте портативный Claude и повторите",
-                "{shown} is in use; close the portable Claude and try again"
-            )
-        })?;
+            bail!(
+                "{}",
+                tr!(
+                    "{shown} занята ({exc}) — закройте портативный Claude и повторите",
+                    "{shown} is in use ({exc}); close the portable Claude and try again"
+                )
+            );
+        }
     }
     std::fs::rename(&part, target)?;
+    remove_older(home, target);
     Ok(target.join("claude.exe"))
 }
 
-/// Прошлые версии: удаляются, если не заняты (открытый Claude держит свои файлы).
+/// Убирает папку версии целиком или не трогает вовсе: сначала rename (у папки, где открыт
+/// хоть один файл, он не выходит), потом удаление уже не видной никому копии.
+fn discard(home: &Path, dir: &Path) -> std::io::Result<()> {
+    let trash = home.join(format!("trash-{}", uuid::Uuid::new_v4().simple()));
+    std::fs::rename(dir, &trash)?;
+    let _ = std::fs::remove_dir_all(&trash);
+    Ok(())
+}
+
+/// Прошлые версии и недоудалённые остатки: занятая (открытый Claude) остаётся целой.
 fn remove_older(home: &Path, keep: &Path) {
     let Ok(entries) = std::fs::read_dir(home) else {
         return;
@@ -459,10 +471,13 @@ fn remove_older(home: &Path, keep: &Path) {
     for entry in entries.flatten() {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
-        if path != keep
-            && name.starts_with("app-")
-            && path.is_dir()
-            && let Err(exc) = std::fs::remove_dir_all(&path)
+        if path == keep || !path.is_dir() {
+            continue;
+        }
+        if name.starts_with("trash-") {
+            let _ = std::fs::remove_dir_all(&path);
+        } else if name.starts_with("app-")
+            && let Err(exc) = discard(home, &path)
         {
             tracing::info!(path = %path.display(), error = %exc, "old portable Claude kept");
         }
@@ -483,9 +498,11 @@ mod tests {
         assert_eq!(release.size, 387754656);
         assert!(release.sha256.starts_with("fa797c1b"));
         assert!(parse_code_manifest(text, "win32-arm64").is_err());
-        // Версия идёт в путь: всё, кроме цифр и точек, отклоняется.
-        let evil = text.replace("2.1.330", "../../x");
-        assert!(parse_code_manifest(&evil, "win32-x64").is_err());
+        // Версия идёт в путь: всё, кроме чисел через точку, отклоняется.
+        for evil in ["../../x", "..", ".", "6.", "2..1"] {
+            let text = text.replace("2.1.330", evil);
+            assert!(parse_code_manifest(&text, "win32-x64").is_err(), "{evil}");
+        }
         let short = text.replace("fa797c1bc7d4a351", "zz");
         assert!(parse_code_manifest(&short, "win32-x64").is_err());
     }
@@ -535,6 +552,32 @@ mod tests {
                 .is_file()
         );
         assert_eq!(portable_desktop().unwrap(), exe);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_folder_in_use_is_kept_whole() {
+        use std::os::windows::fs::OpenOptionsExt;
+        let home = crate::download::tests::tempdir();
+        let app = home.join("app-1.0.0");
+        std::fs::create_dir_all(app.join("resources")).unwrap();
+        std::fs::write(app.join("resources").join("app.asar"), b"x").unwrap();
+        std::fs::write(app.join("claude.exe"), b"x").unwrap();
+        // Как открытый Claude: файл занят без права удаления.
+        let held = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(app.join("claude.exe"))
+            .unwrap();
+        assert!(discard(&home, &app).is_err());
+        assert!(
+            app.join("resources").join("app.asar").is_file(),
+            "nothing removed"
+        );
+        drop(held);
+        discard(&home, &app).unwrap();
+        assert!(!app.exists());
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

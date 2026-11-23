@@ -271,24 +271,39 @@ fn apply_advisor(next: &mut crate::model::Config, on: bool) -> Option<crate::mod
             "Advisor unchanged: home folder not found"
         ));
     };
-    match crate::cc_settings::set_advisor(&path, on) {
-        Ok(changed) => {
-            next.advisor_decided = true;
-            let path = path.display();
-            changed.then(|| crate::model::Notice {
-                text: if on {
-                    tr!("советник включён в {path}", "advisor turned on in {path}")
-                } else {
-                    tr!("советник выключен в {path}", "advisor turned off in {path}")
-                },
-                warning: false,
-            })
-        }
-        Err(exc) => warn(tr!(
-            "Советник не изменён: {exc}",
-            "Advisor unchanged: {exc}"
-        )),
+    // У портативного Claude Code свой файл, но вкладка Code у Claude Desktop и установленный
+    // Claude Code читают общий — галочка одна на оба.
+    let mut paths = vec![path];
+    if next.code_portable
+        && let Some(shared) = crate::cc_settings::settings_path()
+        && shared != paths[0]
+    {
+        paths.push(shared);
     }
+    let mut changed = Vec::new();
+    for path in &paths {
+        match crate::cc_settings::set_advisor(path, on) {
+            Ok(true) => changed.push(path.display().to_string()),
+            Ok(false) => {}
+            Err(exc) => {
+                let path = path.display();
+                return warn(tr!(
+                    "Советник не изменён в {path}: {exc}",
+                    "Advisor unchanged in {path}: {exc}"
+                ));
+            }
+        }
+    }
+    next.advisor_decided = true;
+    let path = changed.join(", ");
+    (!changed.is_empty()).then(|| crate::model::Notice {
+        text: if on {
+            tr!("советник включён в {path}", "advisor turned on in {path}")
+        } else {
+            tr!("советник выключен в {path}", "advisor turned off in {path}")
+        },
+        warning: false,
+    })
 }
 
 /// «Скопировать команду для Claude Code»: те же переменные, что у кнопки «Claude Code».
