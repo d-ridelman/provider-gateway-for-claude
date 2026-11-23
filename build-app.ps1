@@ -25,7 +25,8 @@ $sep = [char]0x1f
 $callerFlags = if ($env:CARGO_ENCODED_RUSTFLAGS) { $env:CARGO_ENCODED_RUSTFLAGS -split $sep }
     elseif ($env:RUSTFLAGS) { $env:RUSTFLAGS -split ' ' | Where-Object { $_ } }
     else { @() }
-$env:CARGO_ENCODED_RUSTFLAGS = (@($callerFlags) + $maps) -join $sep
+# A repeated run in the same console must not add the remaps a second time.
+$env:CARGO_ENCODED_RUSTFLAGS = (@($callerFlags) + @($maps | Where-Object { $callerFlags -notcontains $_ })) -join $sep
 
 # License notices of the linked crates go into the installer; refresh them when Python is here.
 if (Get-Command python -ErrorAction SilentlyContinue) {

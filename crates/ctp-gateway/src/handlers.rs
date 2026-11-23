@@ -314,9 +314,13 @@ async fn estimate_reply(body: &Value) -> Response {
     let text = json!([body.get("system"), body.get("messages"), body.get("tools")]);
     // Подсчёт длинного разговора — десятки миллисекунд процессора (замер: ~55 мс на 3 МБ
     // с картинками, первый вызов ~250 мс): не на рабочем потоке async-рантайма.
-    let tokens = tokio::task::spawn_blocking(move || ctp_core::tokens::count_json_tokens(&text))
-        .await
-        .unwrap_or(1);
+    let tokens =
+        match tokio::task::spawn_blocking(move || ctp_core::tokens::count_json_tokens(&text)).await
+        {
+            Ok(tokens) => tokens,
+            // Заниженное число помешало бы Claude Code вовремя сжать контекст: лучше отказ.
+            Err(exc) => return error::anthropic_error(500, "api_error", exc.to_string()),
+        };
     (StatusCode::OK, Json(json!({"input_tokens": tokens}))).into_response()
 }
 

@@ -534,6 +534,18 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_write_after_a_rename_with_a_new_key_leaves_both_ids_as_they_were() {
+        let (shared, dir, _fake) = app();
+        save_provider_in(&shared, input("p1", None, Some("old"), false)).unwrap();
+        block_config_writes(&dir);
+        assert!(save_provider_in(&shared, input("p2", Some("p1"), Some("new"), false)).is_err());
+        assert_eq!(key_of("p1").as_deref(), Some("old"));
+        assert_eq!(key_of("p2"), None);
+        assert_eq!(ids(&shared), ["p1"]);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn clearing_the_key_deletes_it_and_an_orphan_under_a_new_id_is_not_inherited() {
         let (shared, dir, _fake) = app();
         save_provider_in(&shared, input("p1", None, Some("sk-1"), false)).unwrap();

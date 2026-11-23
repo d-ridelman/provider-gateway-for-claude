@@ -298,6 +298,8 @@ pub async fn reply(
     language: &str,
 ) -> Response {
     let ids = Ids::new();
+    // Вложенный запрос поиска короткий (одна просьба и один инструмент), не весь разговор:
+    // считается на месте, без блокирующего пула.
     let input_tokens = ctp_core::tokens::count_json_tokens(body);
     if !stream {
         let outcome = run(state, &search, language).await;

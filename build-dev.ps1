@@ -22,7 +22,8 @@ $sep = [char]0x1f
 $callerFlags = if ($env:CARGO_ENCODED_RUSTFLAGS) { $env:CARGO_ENCODED_RUSTFLAGS -split $sep }
     elseif ($env:RUSTFLAGS) { $env:RUSTFLAGS -split ' ' | Where-Object { $_ } }
     else { @() }
-$env:CARGO_ENCODED_RUSTFLAGS = (@($callerFlags) + $maps) -join $sep
+# A repeated run in the same console must not add the remaps a second time.
+$env:CARGO_ENCODED_RUSTFLAGS = (@($callerFlags) + @($maps | Where-Object { $callerFlags -notcontains $_ })) -join $sep
 
 $dist = Join-Path $root 'dist-dev'
 New-Item -ItemType Directory -Force -Path $dist | Out-Null

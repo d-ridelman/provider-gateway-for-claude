@@ -398,15 +398,36 @@ fn flush_assistant(
 /// Убирает `reasoning_content` из сообщений: без `tools` DeepSeek его игнорирует, а другие
 /// провайдеры могут отказать на незнакомом поле. Сколько сообщений изменилось.
 pub fn strip_reasoning(payload: &mut Value) -> usize {
+    take_reasoning(payload).len()
+}
+
+/// То же, но вынутое возвращается — (позиция сообщения, значение): `restore_reasoning` вернёт
+/// его, если запрос без поля всё равно не прошёл.
+pub fn take_reasoning(payload: &mut Value) -> Vec<(usize, Value)> {
     let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) else {
-        return 0;
+        return Vec::new();
     };
     messages
         .iter_mut()
-        .filter_map(Value::as_object_mut)
-        .map(|message| message.remove("reasoning_content").is_some())
-        .filter(|removed| *removed)
-        .count()
+        .enumerate()
+        .filter_map(|(at, message)| {
+            message
+                .as_object_mut()?
+                .remove("reasoning_content")
+                .map(|value| (at, value))
+        })
+        .collect()
+}
+
+pub fn restore_reasoning(payload: &mut Value, saved: Vec<(usize, Value)>) {
+    let Some(messages) = payload.get_mut("messages").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for (at, value) in saved {
+        if let Some(message) = messages.get_mut(at).and_then(Value::as_object_mut) {
+            message.insert("reasoning_content".into(), value);
+        }
+    }
 }
 
 /// Текст результата советника для модели (как его видела бы она у Anthropic).

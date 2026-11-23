@@ -85,6 +85,8 @@ async fn send(
     let had_images = request::has_images(payload);
     // Отпечатки убранных картинок и первый отказ (его текст и вернём, если не поможет).
     let mut removed_images: Vec<u64> = Vec::new();
+    // Вынутое ступенью «без рассуждения» — вернуть, если она не помогла.
+    let mut reasoning_taken: Option<Vec<(usize, Value)>> = None;
     let mut first_refusal: Option<(u16, String)> = None;
     'send: loop {
         let request = state
@@ -156,6 +158,13 @@ async fn send(
         }
         let reason = error::clean_error_text(&text, &provider.api_key);
         if adapt::adaptable(status, &text) && !state.profiles.cooling(&key) {
+            // Запрос без рассуждения всё равно не прошёл: поле нужно этому провайдеру (DeepSeek),
+            // а отказ — по другой причине. Поле возвращается, иначе остальные ступени пробовались
+            // бы на запросе, который сломан заведомо.
+            if let Some(saved) = reasoning_taken.take() {
+                request::restore_reasoning(payload, saved);
+                applied.retain(|step| *step != adapt::Step::Reasoning);
+            }
             while rung < adapt::LADDER.len() {
                 let step = adapt::LADDER[rung];
                 rung += 1;
@@ -165,7 +174,15 @@ async fn send(
                 if step == adapt::Step::Images {
                     removed_images = adapt::image_ids(payload);
                 }
-                if adapt::apply(step, payload, provider) {
+                let changed = if step == adapt::Step::Reasoning {
+                    let saved = request::take_reasoning(payload);
+                    let changed = !saved.is_empty();
+                    reasoning_taken = changed.then_some(saved);
+                    changed
+                } else {
+                    adapt::apply(step, payload, provider)
+                };
+                if changed {
                     first_refusal.get_or_insert((status, text.clone()));
                     info!(
                         provider = %provider.id,
@@ -481,6 +498,8 @@ pub async fn messages(
                     for key in ["tools", "tool_choice", "parallel_tool_calls"] {
                         fields.remove(key);
                     }
+                    // Нет инструментов — рассуждение прошлых ответов не нужно (как в `build`).
+                    request::strip_reasoning(&mut payload);
                 }
             }
             translator.next_segment();
