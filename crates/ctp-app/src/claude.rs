@@ -536,7 +536,7 @@ fn sync_entry(library: &Path, entry: &serde_json::Value, running: bool) -> Resul
 /// Запущен ли уже Claude с этим профилем. Пока он работает, Chromium держит `lockfile` в папке
 /// профиля, а закрытый или упавший Claude его не оставляет (проверено): занятый файл — это
 /// «работает».
-fn profile_in_use(profile: &Path) -> bool {
+pub(crate) fn profile_in_use(profile: &Path) -> bool {
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
@@ -953,7 +953,7 @@ fn set_deployment_mode(path: &Path) -> Result<(), String> {
 
 /// Правка `claude_desktop_config.json`. Claude хранит в этом же файле свои настройки
 /// (`preferences`, папки Cowork…) — их сохраняем, а не затираем; без изменений файл не пишется.
-fn update_desktop_config(
+pub(crate) fn update_desktop_config(
     path: &Path,
     patch: impl FnOnce(&mut serde_json::Value),
 ) -> Result<(), String> {

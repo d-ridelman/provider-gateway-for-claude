@@ -400,6 +400,10 @@ code {
 .card-head p { margin: 4px 0 0; font-size: var(--fs-sm); }
 .badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
 .button-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.mcp-list { display: grid; gap: 2px; }
+.mcp-list:empty { display: none; }
+.mcp-list .check { min-height: 24px; font-weight: 500; font-size: var(--fs-sm); }
+.mcp-list .check small { color: var(--dim); font-size: var(--fs-xs); font-family: var(--mono); }
 
 .grid { display: grid; gap: 12px 14px; margin-bottom: 12px; align-items: start; }
 .grid.two { grid-template-columns: 1fr 1fr; }

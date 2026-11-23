@@ -6,6 +6,7 @@ pub mod download;
 pub mod fetch;
 pub mod i18n;
 pub mod installs;
+pub mod mcp;
 pub mod mihomo;
 pub mod model;
 pub mod runtime;
@@ -162,6 +163,8 @@ pub fn run() {
             commands::proxy_update_sub,
             commands::proxy_select,
             commands::proxy_measure,
+            commands::mcp_sources,
+            commands::mcp_copy,
             commands::win_minimize,
             commands::win_toggle_maximize,
             commands::win_close,
