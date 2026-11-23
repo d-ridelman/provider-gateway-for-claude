@@ -56,6 +56,9 @@ const el = Object.fromEntries(
     "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn", "roleSonnet", "roleOpus", "roleHaiku",
     "advisorInput", "advisorRow", "desktopPortableBtn", "desktopInstallBtn", "desktopGetHint", "codeFound",
     "codePortableInput", "codePortableBtn", "codeInstallBtn", "codeGetHint",
+    "proxyBtn", "proxyChip", "proxyChipText", "proxyPanel", "proxyError", "proxyCoreLine", "proxyCoreBtn",
+    "proxyCoreHint", "subList", "subForm", "subNameInput", "subUrlInput", "subIntervalInput", "subAddBtn",
+    "measureBtn", "nodeGrid", "nodesEmpty",
   ].map((id) => [id, $(id)]),
 );
 el.form = el.providerForm;
@@ -213,6 +216,8 @@ async function pollStatus() {
     renderStatus();
     state.claudeRun = await invoke("claude_state").catch(() => null);
     renderClaudeState();
+    // The proxy is asked only while it matters: its page is open or a mode is on.
+    if (!state.proxy || state.view === "proxy" || state.proxy.mode !== "off") await refreshProxy();
   } catch {
     /* the app is closing */
   }
@@ -282,14 +287,22 @@ function renderProviders() {
 
 function renderMain() {
   const settings = state.view === "settings";
-  const settingsBtn = $("settingsBtn");
-  if (settings) settingsBtn.setAttribute("aria-current", "page");
-  else settingsBtn.removeAttribute("aria-current");
+  const proxy = state.view === "proxy";
+  const page = settings || proxy;
+  for (const [button, on] of [[$("settingsBtn"), settings], [el.proxyBtn, proxy]]) {
+    if (on) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
+  }
   el.settingsPanel.classList.toggle("hidden", !settings);
-  el.form.classList.toggle("hidden", settings || !hasSelection());
-  el.empty.classList.toggle("hidden", settings || hasSelection());
+  el.proxyPanel.classList.toggle("hidden", !proxy);
+  el.form.classList.toggle("hidden", page || !hasSelection());
+  el.empty.classList.toggle("hidden", page || hasSelection());
   if (settings) {
     renderSettings();
+    return;
+  }
+  if (proxy) {
+    renderProxy();
     return;
   }
   if (hasSelection()) renderForm();
@@ -355,6 +368,262 @@ async function closeSettings() {
   if (!(await leaveForm())) return;
   state.view = "provider";
   render();
+}
+
+async function openProxy() {
+  if (state.view === "proxy") return;
+  if (!(await leaveForm())) return;
+  state.view = "proxy";
+  render();
+  refreshProxy();
+}
+
+function closeProxy() {
+  state.view = "provider";
+  render();
+}
+
+// ---- proxy (mihomo) --------------------------------------------------------------------
+// The backend answers every proxy command with the whole state; the view only draws it.
+
+async function refreshProxy() {
+  try {
+    state.proxy = await invoke("proxy_state");
+  } catch {
+    return;
+  }
+  renderChip();
+  if (state.view === "proxy") renderProxy();
+}
+
+// Runs a proxy command; on failure the error goes to a toast and the state is read again.
+async function proxyCall(cmd, args = {}, button = null, label = "") {
+  const work = async () => {
+    try {
+      state.proxy = await invoke(cmd, args);
+      return true;
+    } catch (exc) {
+      toast(formatError(exc), "error");
+      await refreshProxy();
+      return false;
+    }
+  };
+  const ok = button ? await busyValue(button, label, work) : await work();
+  renderChip();
+  if (state.view === "proxy") renderProxy();
+  return ok;
+}
+
+async function busyValue(button, label, work) {
+  let value;
+  await busy(button, label, async () => {
+    value = await work();
+  });
+  return value;
+}
+
+function nodeLabel(name) {
+  const p = state.proxy;
+  return p?.nodes?.find((n) => n.name === name)?.label ?? name;
+}
+
+function delayText(delay) {
+  if (delay === null || delay === undefined) return { text: t("proxy.untested"), kind: "" };
+  if (delay === 0) return { text: t("proxy.timeout"), kind: "bad" };
+  return { text: t("proxy.ms", { ms: delay }), kind: delay < 300 ? "good" : delay < 800 ? "mid" : "bad" };
+}
+
+// The title-bar chip: hidden while the proxy is off; red when the core is not working.
+function renderChip() {
+  const p = state.proxy;
+  const on = !!p && p.mode !== "off";
+  el.proxyChip.classList.toggle("hidden", !on);
+  if (!on) return;
+  const bad = !p.running || !!p.error || p.system?.error;
+  el.proxyChip.classList.toggle("bad", !!bad);
+  el.proxyChip.querySelector(".dot").classList.toggle("on", !bad);
+  if (bad) {
+    el.proxyChipText.textContent = t("proxy.chipBad");
+  } else {
+    const chosen = p.selected === "AUTO" ? p.autoNow : p.selected;
+    const node = p.nodes.find((n) => n.name === chosen);
+    const delay = node?.delay ? ` · ${t("proxy.ms", { ms: node.delay })}` : "";
+    el.proxyChipText.textContent = t("proxy.chip", { name: chosen ? nodeLabel(chosen) : "DIRECT" }) + delay;
+  }
+  el.proxyChip.title = [t("proxy.chipTitle"), p.error, p.system?.error].filter(Boolean).join("\n");
+}
+
+function renderProxy() {
+  const p = state.proxy;
+  if (!p) return;
+  for (const radio of document.querySelectorAll('input[name="proxyMode"]')) radio.checked = radio.value === p.mode;
+  const errors = [p.error, p.system?.error].filter(Boolean);
+  el.proxyError.textContent = errors.join("\n");
+  el.proxyError.classList.toggle("hidden", !errors.length);
+  el.proxyCoreLine.textContent = !p.coreVersion
+    ? t("proxy.coreMissing", { version: p.pinnedVersion })
+    : p.running
+      ? t("proxy.coreRunning", { version: p.coreVersion, port: p.port })
+      : t("proxy.coreStopped", { version: p.coreVersion });
+  if (!downloading.core) {
+    el.proxyCoreBtn.textContent = t(p.coreVersion ? "proxy.coreRedownload" : "proxy.coreDownload");
+    el.proxyCoreHint.textContent = p.system?.on ? t("proxy.systemOn") : "";
+  }
+  el.proxyCoreBtn.classList.toggle("primary", !p.coreVersion);
+  el.proxyCoreBtn.classList.toggle("ghost", !!p.coreVersion);
+  renderSubs(p);
+  renderNodes(p);
+}
+
+function renderSubs(p) {
+  el.subList.replaceChildren();
+  for (const sub of p.subs) {
+    const li = document.createElement("li");
+    li.className = "sub-row";
+    const text = document.createElement("div");
+    const name = document.createElement("b");
+    name.textContent = sub.name;
+    const host = document.createElement("span");
+    host.className = "url";
+    host.textContent = sub.host;
+    const meta = document.createElement("span");
+    meta.className = "meta";
+    const parts = [];
+    if (sub.updatedAt) {
+      const time = new Date(sub.updatedAt).toLocaleString(LANG, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+      parts.push(t("proxy.subMeta", { nodes: nodeWord(sub.count), time }));
+    }
+    if (sub.total) {
+      const gb = (bytes) => (bytes / 1073741824).toFixed(1);
+      parts.push(t("proxy.subTraffic", { used: gb((sub.upload ?? 0) + (sub.download ?? 0)), total: gb(sub.total) }));
+    }
+    if (sub.expire) parts.push(t("proxy.subExpire", { date: new Date(sub.expire * 1000).toLocaleDateString(LANG) }));
+    meta.textContent = parts.join(" · ");
+    text.append(name, host, meta);
+    const buttons = document.createElement("div");
+    buttons.className = "button-row";
+    const update = document.createElement("button");
+    update.type = "button";
+    update.className = "ghost small";
+    update.textContent = t("proxy.subUpdate");
+    update.disabled = !p.running;
+    update.addEventListener("click", () => proxyCall("proxy_update_sub", { id: sub.id }, update, t("proxy.coreBusy")));
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost small danger";
+    remove.textContent = t("proxy.subRemove");
+    remove.addEventListener("click", () => removeSub(sub));
+    buttons.append(update, remove);
+    li.append(text, buttons);
+    el.subList.append(li);
+  }
+}
+
+function nodeButton(name, label, meta, delay, pressed) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "node";
+  button.setAttribute("aria-pressed", String(pressed));
+  const title = document.createElement("span");
+  title.className = "node-name";
+  title.textContent = label;
+  title.title = label;
+  const row = document.createElement("span");
+  row.className = "node-meta";
+  const kind = document.createElement("span");
+  kind.textContent = meta;
+  const ms = document.createElement("span");
+  const d = delayText(delay);
+  ms.className = `delay ${d.kind}`;
+  ms.textContent = d.text;
+  row.append(kind, ms);
+  button.append(title, row);
+  button.addEventListener("click", () => {
+    if (!pressed) proxyCall("proxy_select", { name });
+  });
+  return button;
+}
+
+function renderNodes(p) {
+  el.nodeGrid.replaceChildren();
+  el.measureBtn.disabled = !p.running || !p.nodes.length;
+  const empty = !p.subs.length ? "proxy.nodesNoSubs" : !p.running ? "proxy.nodesOff" : !p.nodes.length ? "proxy.nodesLoading" : null;
+  el.nodesEmpty.textContent = empty ? t(empty) : "";
+  el.nodesEmpty.classList.toggle("hidden", !empty);
+  if (empty) return;
+  const auto = p.nodes.find((n) => n.name === p.autoNow);
+  el.nodeGrid.append(
+    nodeButton("AUTO", t("proxy.auto"), auto ? t("proxy.autoNow", { name: auto.label }) : "", auto?.delay, p.selected === "AUTO"),
+  );
+  const several = p.subs.length > 1;
+  for (const sub of p.subs) {
+    const nodes = p.nodes.filter((n) => n.sub === sub.id);
+    if (several && nodes.length) {
+      const head = document.createElement("h4");
+      head.className = "node-group";
+      head.textContent = sub.name;
+      el.nodeGrid.append(head);
+    }
+    for (const node of nodes) el.nodeGrid.append(nodeButton(node.name, node.label, node.kind, node.delay, p.selected === node.name));
+  }
+}
+
+// The whole-PC modes ask first: they change the route of every program, the regular Claude too.
+async function setProxyMode(mode) {
+  const p = state.proxy;
+  if (mode === p?.mode) return;
+  const ask_ = { system: "proxy.askSystem", tun: "proxy.askTun" }[mode];
+  if (ask_) {
+    const answer = await ask({ title: t(`${ask_}Title`), text: t(`${ask_}Text`), ok: t("proxy.askOk"), cancel: t("dialog.cancel") });
+    if (answer.value !== "ok") {
+      renderProxy();
+      return;
+    }
+  }
+  const ok = await proxyCall("proxy_set_mode", { mode });
+  if (ok && state.claudeRun?.running) toast(t("proxy.reopenClaude"), "");
+}
+
+async function downloadCore() {
+  downloading.core = true;
+  try {
+    if (await proxyCall("proxy_download_core", {}, el.proxyCoreBtn, t("proxy.coreBusy"))) toast(t("proxy.coreReady"), "good");
+  } finally {
+    downloading.core = false;
+    renderProxy();
+  }
+}
+
+async function addSub(event) {
+  event.preventDefault();
+  const url = el.subUrlInput.value.trim();
+  if (!url) {
+    el.subUrlInput.focus();
+    return;
+  }
+  const ok = await proxyCall(
+    "proxy_add_sub",
+    { name: el.subNameInput.value, url, hours: Number(el.subIntervalInput.value) },
+    el.subAddBtn,
+    t("proxy.coreBusy"),
+  );
+  if (!ok) return;
+  el.subNameInput.value = "";
+  el.subUrlInput.value = "";
+  toast(t("proxy.added"), "good");
+  // The core fetches the subscription in the background: look again shortly.
+  setTimeout(refreshProxy, 1500);
+}
+
+async function removeSub(sub) {
+  const answer = await ask({
+    title: t("proxy.subRemoveTitle", { name: sub.name }),
+    text: t("proxy.subRemoveText"),
+    ok: t("proxy.subRemove"),
+    cancel: t("dialog.cancel"),
+    danger: true,
+  });
+  if (answer.value === "ok") await proxyCall("proxy_remove_sub", { id: sub.id });
 }
 
 function renderForm() {
@@ -609,7 +878,7 @@ function renderDownloads() {
 }
 
 function onDownload({ payload }) {
-  const hint = { desktop: el.desktopGetHint, code: el.codeGetHint }[payload?.id];
+  const hint = { desktop: el.desktopGetHint, code: el.codeGetHint, core: el.proxyCoreHint }[payload?.id];
   if (!hint || !downloading[payload.id]) return;
   const mb = (bytes) => (bytes / 1048576).toFixed(0);
   hint.textContent =
@@ -772,6 +1041,15 @@ function bind() {
   el.checkUpdateBtn.addEventListener("click", checkUpdate);
   $("browseClaudeBtn").addEventListener("click", () => browse(el.claudePathInput));
   $("browseCodeBtn").addEventListener("click", () => browse(el.codeDirInput));
+  el.proxyBtn.addEventListener("click", openProxy);
+  el.proxyChip.addEventListener("click", openProxy);
+  $("closeProxy").addEventListener("click", closeProxy);
+  for (const radio of document.querySelectorAll('input[name="proxyMode"]')) {
+    radio.addEventListener("change", () => radio.checked && setProxyMode(radio.value));
+  }
+  el.proxyCoreBtn.addEventListener("click", downloadCore);
+  el.subForm.addEventListener("submit", addSub);
+  el.measureBtn.addEventListener("click", () => proxyCall("proxy_measure", {}, el.measureBtn, t("proxy.measuring")));
   el.desktopPortableBtn.addEventListener("click", () => getClaude("desktop", true));
   el.desktopInstallBtn.addEventListener("click", () => getClaude("desktop", false));
   el.codePortableBtn.addEventListener("click", () => getClaude("code", true));
@@ -792,6 +1070,7 @@ function bind() {
     if (event.key === "Escape") {
       if (el.toast.classList.contains("show")) hideToast();
       else if (state.logsOpen) setLogs(false);
+      else if (state.view === "proxy") closeProxy();
       else if (state.view === "settings") {
         // Without this the same Esc would at once close the "discard changes?" dialog.
         event.preventDefault();

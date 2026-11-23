@@ -32,6 +32,7 @@
         </button>
         <button type="button" id="updateBtn" class="update-btn hidden" data-i18n-title="update.title"></button>
         <button type="button" id="claudeWarn" class="warn-btn hidden" data-i18n="claudeWarn.label" data-i18n-title="claudeWarn.title"></button>
+        <button type="button" id="proxyChip" class="proxy-chip hidden"><span class="dot" aria-hidden="true"></span><span id="proxyChipText"></span></button>
         <div class="status" role="status" aria-live="polite" data-i18n-title="status.title">
           <span id="statusDot" class="dot" aria-hidden="true"></span>
           <span id="statusText"></span>
@@ -60,6 +61,7 @@
         </div>
         <nav id="providerList" class="provider-list" data-i18n-aria="sidebar.providers"></nav>
         <div class="sidebar-foot">
+          <button type="button" id="proxyBtn" class="ghost wide" data-i18n="sidebar.proxy"></button>
           <button type="button" id="settingsBtn" class="ghost wide" data-i18n="sidebar.settings"></button>
         </div>
       </aside>
@@ -190,6 +192,68 @@
             <span id="formNotice" class="notice" aria-live="polite"></span>
           </div>
         </form>
+
+        <div id="proxyPanel" class="card hidden">
+          <div class="card-head">
+            <div class="card-head-text">
+              <h2 data-i18n="proxy.title"></h2>
+              <p class="muted" data-i18n="proxy.subtitle"></p>
+            </div>
+            <button type="button" id="closeProxy" class="ghost" data-i18n="settings.close"></button>
+          </div>
+
+          <div class="card-body">
+          <section class="group">
+            <h3 class="group-title" data-i18n="proxy.groupMode"></h3>
+            <div id="proxyModes" class="mode-list" role="radiogroup" data-i18n-aria="proxy.groupMode">
+              <label class="mode"><input type="radio" name="proxyMode" value="off"><span><b data-i18n="proxy.modeOff"></b><small data-i18n="proxy.modeOffHint"></small></span></label>
+              <label class="mode"><input type="radio" name="proxyMode" value="app"><span><b data-i18n="proxy.modeApp"></b><small data-i18n="proxy.modeAppHint"></small></span></label>
+              <label class="mode"><input type="radio" name="proxyMode" value="system"><span><b data-i18n="proxy.modeSystem"></b><small data-i18n="proxy.modeSystemHint"></small></span></label>
+              <label class="mode"><input type="radio" name="proxyMode" value="tun"><span><b data-i18n="proxy.modeTun"></b><small data-i18n="proxy.modeTunHint"></small></span></label>
+            </div>
+            <p id="proxyError" class="error-line hidden" role="alert"></p>
+            <div class="core-row">
+              <span id="proxyCoreLine" class="muted small"></span>
+              <button type="button" id="proxyCoreBtn" class="ghost small"></button>
+            </div>
+            <small id="proxyCoreHint" class="muted small" aria-live="polite"></small>
+          </section>
+
+          <section class="group">
+            <div class="group-head">
+              <h3 class="group-title" data-i18n="proxy.groupNodes"></h3>
+              <button type="button" id="measureBtn" class="ghost small" data-i18n="proxy.measure"></button>
+            </div>
+            <div id="nodeGrid" class="node-grid"></div>
+            <p id="nodesEmpty" class="muted small no-margin"></p>
+          </section>
+
+          <section class="group">
+            <h3 class="group-title" data-i18n="proxy.groupSubs"></h3>
+            <ul id="subList" class="sub-list"></ul>
+            <form id="subForm" class="sub-form" autocomplete="off" novalidate>
+              <label class="field">
+                <span data-i18n="proxy.subName"></span>
+                <input id="subNameInput" spellcheck="false" data-i18n-placeholder="proxy.subNamePlaceholder">
+              </label>
+              <label class="field">
+                <span data-i18n="proxy.subUrl"></span>
+                <input id="subUrlInput" class="mono" spellcheck="false" inputmode="url" placeholder="https://">
+              </label>
+              <label class="field">
+                <span data-i18n="proxy.subInterval"></span>
+                <select id="subIntervalInput">
+                  <option value="6" data-i18n="proxy.every6"></option>
+                  <option value="12" selected data-i18n="proxy.every12"></option>
+                  <option value="24" data-i18n="proxy.every24"></option>
+                </select>
+              </label>
+              <button type="submit" id="subAddBtn" class="accent" data-i18n="proxy.subAdd"></button>
+            </form>
+            <small data-i18n="proxy.subHint"></small>
+          </section>
+          </div>
+        </div>
 
         <div id="settingsPanel" class="card hidden">
           <div class="card-head">

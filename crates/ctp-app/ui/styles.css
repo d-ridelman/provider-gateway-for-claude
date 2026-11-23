@@ -298,7 +298,64 @@ code {
 .badge.good { background: var(--green-soft); border-color: rgba(132,177,121,.25); color: var(--green); }
 .badge.warn { background: var(--accent-soft); border-color: rgba(201,100,66,.28); color: var(--accent-2); }
 
-.sidebar-foot { padding: 10px 12px 14px; border-top: 1px solid var(--line-soft); }
+.sidebar-foot { padding: 10px 12px 14px; border-top: 1px solid var(--line-soft); display: grid; gap: 6px; }
+
+/* Proxy: the chip in the title bar, the mode choice, subscriptions and node tiles. */
+.proxy-chip {
+  display: flex; align-items: center; gap: 8px;
+  height: 28px; padding: 0 11px; margin-right: 4px;
+  border-radius: 999px; font-size: var(--fs-xs); font-weight: 600;
+  background: var(--panel); border-color: var(--line-soft); color: var(--muted);
+  max-width: 280px;
+}
+.proxy-chip #proxyChipText { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.proxy-chip.bad { color: var(--red); border-color: rgba(224, 123, 109, .35); background: var(--red-soft); }
+.proxy-chip.bad .dot { background: var(--red); box-shadow: 0 0 0 3px var(--red-soft); }
+#proxyBtn[aria-current="page"] { background: var(--accent-soft); border-color: rgba(201, 100, 66, .3); color: var(--accent-2); }
+.mode-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 12px; }
+.mode {
+  display: flex; gap: 10px; align-items: flex-start;
+  padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--r-md);
+  cursor: pointer; background: transparent;
+}
+.mode:hover { background: var(--hover); }
+.mode:has(input:checked) { background: var(--accent-soft); border-color: rgba(201, 100, 66, .3); }
+.mode input { width: 16px; height: 16px; flex: 0 0 16px; margin: 2px 0 0; padding: 0; accent-color: var(--accent); }
+.mode span { display: grid; gap: 2px; min-width: 0; }
+.mode b { font-size: var(--fs-sm); font-weight: 600; }
+.mode small { color: var(--dim); font-size: var(--fs-xs); line-height: 16px; }
+.error-line { margin: 0 0 10px; color: var(--red); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.core-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+.sub-list { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 6px; }
+.sub-list:empty { display: none; }
+.sub-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 10px 12px; border: 1px solid var(--line-soft); border-radius: var(--r-md);
+}
+.sub-row > div:first-child { display: grid; gap: 2px; min-width: 0; }
+.sub-row b { font-size: var(--fs-md); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-row .url { color: var(--dim); font-size: var(--fs-xs); font-family: var(--mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-row .meta { color: var(--muted); font-size: var(--fs-xs); }
+.sub-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) 190px auto; gap: 10px; align-items: end; margin-bottom: 4px; }
+.sub-form .field { margin-bottom: 0; }
+.group-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.node-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px; }
+.node-grid:empty { display: none; }
+.node-group { grid-column: 1 / -1; margin: 6px 0 0; font-size: var(--fs-xs); font-weight: 650; color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+.node {
+  display: grid; gap: 3px; text-align: left; min-width: 0;
+  padding: 9px 11px; background: transparent; font-weight: 400;
+}
+.node[aria-pressed="true"] { background: var(--accent-soft); border-color: rgba(201, 100, 66, .32); }
+.node-name { font-size: var(--fs-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-meta { display: flex; justify-content: space-between; gap: 8px; font-size: var(--fs-xs); color: var(--dim); }
+.delay.good { color: var(--green); }
+.delay.mid { color: var(--accent-2); }
+.delay.bad { color: var(--red); }
+@media (max-width: 1100px) {
+  .mode-list { grid-template-columns: 1fr; }
+  .sub-form { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
 
 /* A card is a column: the head and the action bar stay put, only the middle scrolls. */
 .content {

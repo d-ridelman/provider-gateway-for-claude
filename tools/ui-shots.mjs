@@ -99,7 +99,32 @@ const STUB = String.raw`
     install_update: () => null, win_minimize: () => null, win_toggle_maximize: () => null, win_close: () => null, code_command: () => "$env:X=1\nclaude",
     // Downloads: progress events while the answer waits (the "downloading" shot catches the middle).
     download_code: () => downloadStub("code"), download_desktop: () => downloadStub("desktop"),
+    // Proxy: "vpn" — on with two subscriptions; "vpnerror" — the system proxy blocked by a policy;
+    // everything else — off, core not downloaded.
+    proxy_state: () => proxy, proxy_set_mode: (a) => { proxy = { ...proxy, mode: a.mode }; return proxy; },
+    proxy_download_core: () => downloadStub("core").then(() => ({ ...proxy, coreVersion: "v1.19.34" })),
+    proxy_add_sub: () => scenario === "error" ? fail("The subscription address must start with https:// or http://") : proxy,
+    proxy_remove_sub: () => proxy, proxy_update_sub: () => proxy, proxy_select: (a) => { proxy = { ...proxy, selected: a.name }; return proxy; },
+    proxy_measure: () => proxy,
   };
+  const vpn = scenario === "vpn" || scenario === "vpnerror" || scenario === "vpnlong";
+  const node = (sub, label, kind, delay) => ({ name: sub + "|" + label, label, sub, kind, delay });
+  const longName = "🇳🇱 Netherlands · Amsterdam · premium node with an unusually long name 01";
+  let proxy = vpn ? {
+    mode: scenario === "vpnerror" ? "system" : "app", running: scenario !== "vpnerror", tun: false, port: 7890,
+    coreVersion: "v1.19.34", pinnedVersion: "v1.19.34", selected: "s1|Finland C", autoNow: "s1|Germany B",
+    nodes: [
+      node("s1", scenario === "vpnlong" ? longName : "Netherlands A", "vless", 0), node("s1", "Germany B", "vless", 87),
+      node("s1", "Finland C", "trojan", 142), node("s1", "USA West", "ss", 612), node("s2", "Japan Tokyo", "hysteria2", null),
+      node("s2", "Singapore", "vmess", 1240),
+    ],
+    subs: [
+      { id: "s1", name: scenario === "vpnlong" ? "A very long subscription name from the provider's panel that goes on" : "Home VPN", host: "panel.example.com:8443", count: 4, updatedAt: "2026-11-23T14:05:32+04:00", upload: 1073741824, download: 2147483648, total: 10737418240, expire: 1893456000 },
+      { id: "s2", name: "Backup", host: "sub.example.org", count: 2, updatedAt: "2026-11-23T09:00:00+04:00", upload: null, download: null, total: null, expire: null },
+    ],
+    error: scenario === "vpnerror" ? "Windows proxy settings are locked by a group policy, so the system proxy cannot be set here; the Claude and providers only mode works" : null,
+    system: scenario === "vpnerror" ? { on: false, error: null } : null,
+  } : { mode: "off", running: false, tun: false, port: 0, coreVersion: null, pinnedVersion: "v1.19.34", selected: null, autoNow: null, nodes: [], subs: [], error: null, system: null };
   const listeners = {};
   const downloadStub = async (id) => {
     for (let done = 0; done <= 100; done += 25) {
@@ -177,6 +202,9 @@ const SCREENS = {
   testconn: "[...document.querySelectorAll('button')].find((b) => /Проверить связь|Test connection/.test(b.textContent))?.click()",
   // A portable download in the middle: busy button, the other one off, progress in the hint.
   downloading: "(async () => { document.getElementById('settingsBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.getElementById('desktopPortableBtn').click(); document.getElementById('codePortableBtn').click(); await new Promise((r) => setTimeout(r, 700)); })()",
+  proxy: "document.getElementById('proxyBtn').click()",
+  // The question before a whole-PC mode.
+  proxyask: "(async () => { document.getElementById('proxyBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.querySelector('input[name=proxyMode][value=tun]').click(); })()",
   // Installing over a regular Claude asks first.
   installask: "(async () => { document.getElementById('settingsBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.getElementById('desktopInstallBtn').click(); })()",
 };
@@ -220,6 +248,15 @@ add("portable", "settings", [0, 1], ["light", "dark"]);
 add("normal", "downloading", [1], ["light", "dark"], "ru", { settleMs: 900 });
 add("normal", "installask", [1], ["dark"]);
 add("empty", "settings", [1], ["dark"], "en");
+// Proxy and VPN: off with no core, on with nodes, a policy error, long names, the question, the chip.
+add("normal", "proxy", [1], ["light", "dark"]);
+add("vpn", "proxy", [0, 1, 2], ["light", "dark"]);
+add("vpn", "proxy", [1], ["dark"], "en");
+add("vpnerror", "proxy", [1], ["light", "dark"]);
+add("vpnlong", "proxy", [1, 2], ["dark"]);
+add("vpn", "proxyask", [1], ["dark"]);
+add("vpn", "main", [1], ["light", "dark"]);
+add("vpnerror", "main", [1], ["dark"]);
 // The README screenshots (docs/images): neutral demo providers; Settings on a taller window so the
 // whole page is in the frame. `node tools/ui-shots.mjs --only docs- --out state/docs-shots`.
 W.push([1280, 1140]);
@@ -275,7 +312,12 @@ const cdp = (method, params = {}) => new Promise((resolve, reject) => {
   pending.set(n, { resolve, reject });
   ws.send(JSON.stringify({ id: n, method, params }));
 });
-const evaluate = async (expression) => (await cdp("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true })).result?.value;
+const evaluate = async (expression) => {
+  const answer = await cdp("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
+  // A script error in the page would otherwise come back as a silent `undefined`.
+  if (answer.exceptionDetails) throw new Error(answer.exceptionDetails.exception?.description ?? answer.exceptionDetails.text);
+  return answer.result?.value;
+};
 
 const MEASURE = `(() => {
   const doc = document.documentElement;
@@ -297,7 +339,8 @@ const MEASURE = `(() => {
   let cardClipped = false;
   if (card) {
     const host = card.parentElement.getBoundingClientRect();
-    const r = card.getBoundingClientRect(), bar = card.querySelector('.form-actions').getBoundingClientRect();
+    // The proxy card has no action bar: its own bottom edge is checked instead.
+    const r = card.getBoundingClientRect(), bar = (card.querySelector('.form-actions') ?? card).getBoundingClientRect();
     cardClipped = r.top < host.top - 1 || r.bottom > host.bottom + 1 || bar.bottom > r.bottom + 1 || bar.bottom > innerHeight;
   }
   return { hscroll: doc.scrollWidth > innerWidth + 1, docH: doc.scrollHeight, winH: innerHeight, clipped: clipped.slice(0, 8), scrollers, cardClipped,
