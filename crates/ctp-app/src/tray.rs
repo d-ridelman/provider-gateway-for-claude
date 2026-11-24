@@ -28,12 +28,9 @@ fn menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 
 pub fn build(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .ok_or_else(|| tauri::Error::AssetNotFound("app icon".into()))?;
+    // The tray's own 32 px icon (tools/make_icon.py): the window icon would hand it the 256 px frame to shrink.
     TrayIconBuilder::with_id(TRAY)
-        .icon(icon)
+        .icon(tauri::include_image!("icons/tray.png"))
         .tooltip("Provider Gateway for Claude")
         .menu(&menu(app)?)
         .show_menu_on_left_click(false)
