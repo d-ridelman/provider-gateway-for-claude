@@ -205,6 +205,21 @@ pub fn code_env(
         // То же для консоли: проверку auto mode делает классификатор самого Claude Code, а не
         // сервер (code.claude.com/docs/en/auto-mode-config).
         ("CLAUDE_CODE_AUTO_MODE_SERVER".into(), "0".into()),
+        // Провайдер задаёт запуск: `env` из settings.json человека не уведёт Claude Code
+        // мимо шлюза (как `ollama launch claude`).
+        ("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST".into(), "1".into()),
+        // Псевдонимы шлюза Claude Code не узнаёт и для них выключает Task-инструменты
+        // (в 2.1.331 — только по этой переменной).
+        ("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into()),
+        // Инструменты — в списке `tools`, а не блоками внутри сообщений: такие блоки
+        // Anthropic-эндпоинт DeepSeek отвергает с 422, и сессия не восстанавливается
+        // (anthropics/claude-code#95087).
+        ("CLAUDE_CODE_INLINE_TOOLS".into(), "false".into()),
+        // Блок атрибуции Anthropic вырезает у себя, а модель провайдера видела бы его в
+        // начале системного промпта.
+        ("CLAUDE_CODE_ATTRIBUTION_HEADER".into(), "0".into()),
+        // Коннекторы claude.ai требуют входа в аккаунт Anthropic — через шлюз их нет.
+        ("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "false".into()),
     ]);
     Ok((remove, set))
 }
@@ -1284,7 +1299,14 @@ mod tests {
             false
         );
         let (_, env) = code_env(&status, &RoleAliases::default(), std::iter::empty()).unwrap();
-        assert!(env.contains(&("CLAUDE_CODE_AUTO_MODE_SERVER".into(), "0".into())));
+        for pair in [
+            ("CLAUDE_CODE_AUTO_MODE_SERVER", "0"),
+            ("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "1"),
+            ("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"),
+            ("CLAUDE_CODE_INLINE_TOOLS", "false"),
+        ] {
+            assert!(env.contains(&(pair.0.into(), pair.1.into())), "{pair:?}");
+        }
         assert_eq!(
             library_entry(&config, &status, &[]).get("builtinBrowserEnabled"),
             None,

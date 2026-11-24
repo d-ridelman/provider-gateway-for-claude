@@ -3,6 +3,9 @@ use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
 const IMAGE_OMITTED: &str = "[image omitted: this model does not accept images]";
+/// PDF (base64 или по ссылке) модель OpenAI-провайдера не прочтёт: говорим об этом прямо,
+/// иначе на голое `[document]` она пересказывает файл, которого не видела.
+const PDF_OMITTED: &str = "[PDF omitted: this model cannot read PDF documents]";
 
 /// Есть ли в сообщениях картинки (`image_url`).
 pub fn has_images(payload: &Value) -> bool {
@@ -381,7 +384,13 @@ fn flatten_content(value: &Value) -> String {
                     }
                     .to_string(),
                 ),
-                Some("document") => Some("[document]".to_string()),
+                Some("document") => Some(PDF_OMITTED.to_string()),
+                // Найденный ToolSearch инструмент (как у Ollama): сам он уже в списке `tools`,
+                // модели нужно имя, иначе результат поиска для неё пуст.
+                Some("tool_reference") => part
+                    .get("tool_name")
+                    .and_then(Value::as_str)
+                    .map(|name| format!("Tool loaded: {name}")),
                 _ => part.get("text").and_then(Value::as_str).map(str::to_string),
             })
             .collect::<Vec<_>>()
@@ -403,7 +412,7 @@ fn document_text(block: &Value) -> String {
     {
         return text.to_string();
     }
-    "[document]".to_string()
+    PDF_OMITTED.to_string()
 }
 
 fn image_part(block: &Value) -> Option<Value> {
@@ -959,6 +968,18 @@ mod tests {
             .extra_body
             .insert("reasoning_effort".into(), json!("low"));
         assert_eq!(build(&pinned, &body, false)["reasoning_effort"], "low");
+    }
+
+    #[test]
+    fn tool_search_results_and_pdfs_say_what_they_are() {
+        let result = json!([
+            {"type": "tool_reference", "tool_name": "mcp__github__create_issue"},
+            {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "JVBERi0="}}
+        ]);
+        assert_eq!(
+            flatten_content(&result),
+            format!("Tool loaded: mcp__github__create_issue\n\n{PDF_OMITTED}")
+        );
     }
 
     #[test]
