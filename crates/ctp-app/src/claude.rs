@@ -978,6 +978,10 @@ fn inference_models(
     models
         .iter()
         .map(|model| {
+            // Anthropic-провайдер отдаёт настоящую модель Claude, а Anthropic-совместимый
+            // endpoint может отдавать и не-Claude (DeepSeek, GLM).
+            let own = ctp_core::alias::strip_1m(&model.model).trim().to_string();
+            let real_claude = !model.openai && own.starts_with("claude-");
             let mut row = json!({
                 "name": model.alias,
                 "labelOverride": format!(
@@ -987,19 +991,24 @@ fn inference_models(
                 ),
                 "supports1m": model.supports_1m
             });
+            // Одна строка вместо двух («обычная» 200K и «1 млн»): у провайдера модель одна,
+            // вторая строка лишь сжимала бы разговор раньше. У настоящей Claude вариант 1M —
+            // заголовок `context-1m-…` и другая цена, обе строки нужны (ADR-011).
+            // Claude под чужим ID (`anthropic/claude-…`, `us.anthropic.claude-…`) — тоже Claude.
+            let claude_inside = !model.openai && own.to_ascii_lowercase().contains("claude-");
+            if model.supports_1m && !claude_inside {
+                row["prefer1m"] = json!(true);
+            }
             if roles.sonnet.as_deref() == Some(model.alias.as_str()) {
                 row["anthropicFamilyTier"] = json!("sonnet");
                 row["isFamilyDefault"] = json!(true);
             }
             if let Some(max) = &model.max_effort {
-                // Anthropic-провайдер отдаёт настоящую модель Claude — она и есть образец.
-                // Anthropic-совместимый endpoint может отдавать и не-Claude (DeepSeek, GLM):
-                // образцом служит сама модель, только если это модель Claude.
-                let own = ctp_core::alias::strip_1m(&model.model).trim().to_string();
+                // Настоящая модель Claude сама служит образцом.
                 // `behavesAs` даёт сессиям Code ещё и окно образца — у Opus 4.8 1M. Для модели
                 // с неизвестным окном это верно (см. `code_env`: заниженное окно с тяжёлыми
                 // MCP сжимает сессию по кругу, завышенное прикрывает «prompt is too long»).
-                let profile = if !model.openai && own.starts_with("claude-") {
+                let profile = if real_claude {
                     own
                 } else {
                     EFFORT_PROFILE.to_string()
@@ -1609,6 +1618,43 @@ mod tests {
             inference_models(&[named], &none)[0]["labelOverride"],
             "DeepSeek V4 Pro · P"
         );
+    }
+
+    #[test]
+    fn a_1m_model_gets_one_menu_row_unless_it_is_real_claude() {
+        let with_1m = |model: &str, openai: bool| ModelInfo {
+            supports_1m: true,
+            ..info(model, None, openai)
+        };
+        let rows = inference_models(
+            &[
+                with_1m("glm-5.3[1m]", true),
+                with_1m("claude-haiku-5-5[1m]", true),
+                with_1m("deepseek-v4[1m]", false),
+                with_1m("claude-opus-5-5[1m]", false),
+                info("qwen3", None, true),
+                with_1m("anthropic/Claude-Sonnet-5-5[1m]", false),
+            ],
+            &RoleAliases::default(),
+        );
+        // У провайдера модель одна: только вариант 1M, без строки «200K».
+        assert_eq!(rows[0]["prefer1m"], true);
+        assert_eq!(
+            rows[1]["prefer1m"], true,
+            "Claude через OpenAI-путь — окно провайдера"
+        );
+        assert_eq!(rows[2]["prefer1m"], true, "не-Claude за Anthropic API");
+        // Настоящая Claude у Anthropic: 1M — отдельный заголовок и цена, обе строки.
+        assert!(rows[3].get("prefer1m").is_none());
+        assert!(
+            rows[4].get("prefer1m").is_none(),
+            "без [1m] второй строки и так нет"
+        );
+        assert!(
+            rows[5].get("prefer1m").is_none(),
+            "Claude под чужим ID у агрегатора"
+        );
+        assert!(rows.iter().take(4).all(|r| r["supports1m"] == true));
     }
 
     fn status_with(models: Vec<ModelInfo>) -> UiStatus {
