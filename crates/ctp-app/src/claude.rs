@@ -199,11 +199,13 @@ pub fn code_env(
     // разговора началось бы слишком поздно. Окно из каталога; нет его — как в Claude
     // Desktop: без `[1m]` 200K. По основной модели: на ней сессия и наследующие её
     // субагенты (Explore, Plan).
-    let window = match limits.context {
-        Some(context) => context.clamp(MIN_WINDOW, MAX_WINDOW),
-        None if main.supports_1m => MAX_WINDOW,
-        None => 200_000,
-    };
+    // Окно неизвестно — 1M, как сам Claude Code считает у незнакомых моделей. Завышенное окно
+    // безопасно: переполнение провайдера шлюз отдаёт как «prompt is too long», и Claude Code
+    // сжимает разговор. Заниженное — нет: если его почти целиком занимают инструменты MCP,
+    // сжимать нечего, и сессия сжимается по кругу (видели вживую на 200K и 626 инструментах).
+    let window = limits
+        .context
+        .map_or(MAX_WINDOW, |context| context.clamp(MIN_WINDOW, MAX_WINDOW));
     let remove = inherited
         .filter(|name| {
             let upper = name.to_ascii_uppercase();
@@ -894,9 +896,6 @@ fn forget_portable(home: &Path, before: Option<&Before>) {
 /// (Каталог моделей с `effort_levels` от шлюза Desktop не примет: он требует
 /// подписи ключом Anthropic.)
 pub const EFFORT_PROFILE: &str = "claude-opus-4-8";
-/// То же для модели без окна 1M: у Opus 4.6 в каталоге Claude Code 2.1.331 окно 200K и
-/// уровни до max (без xhigh). С Opus 4.8 вкладка Code считала бы окно 1M.
-pub const EFFORT_PROFILE_200K: &str = "claude-opus-4-6";
 
 /// Папка русских копий Claude (`%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru`).
 pub fn copies_root() -> anyhow::Result<PathBuf> {
@@ -991,14 +990,13 @@ fn inference_models(
                 // Anthropic-совместимый endpoint может отдавать и не-Claude (DeepSeek, GLM):
                 // образцом служит сама модель, только если это модель Claude.
                 let own = ctp_core::alias::strip_1m(&model.model).trim().to_string();
-                // `behavesAs` даёт сессиям Code окно, предел вывода и effort модели-образца:
-                // модели без 1M — образец с окном 200K, иначе Code считал бы окно 1M.
+                // `behavesAs` даёт сессиям Code ещё и окно образца — у Opus 4.8 1M. Для модели
+                // с неизвестным окном это верно (см. `code_env`: заниженное окно с тяжёлыми
+                // MCP сжимает сессию по кругу, завышенное прикрывает «prompt is too long»).
                 let profile = if !model.openai && own.starts_with("claude-") {
                     own
-                } else if model.supports_1m {
-                    EFFORT_PROFILE.to_string()
                 } else {
-                    EFFORT_PROFILE_200K.to_string()
+                    EFFORT_PROFILE.to_string()
                 };
                 row["behavesAs"] = json!(profile);
                 row["maxEffort"] = json!(max);
@@ -1476,18 +1474,10 @@ mod tests {
             );
         }
         assert!(get("ANTHROPIC_API_KEY").is_none());
-        assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000"));
-        // Без 1M — и «Default» с `[1m]` в /model не даёт окна 1M (проверено вживую).
-        assert_eq!(get("CLAUDE_CODE_DISABLE_1M_CONTEXT"), Some("1"));
-        let mut big = status.clone();
-        big.models[0].supports_1m = true;
-        let (_, set_big) = code_env(&big, &none, std::iter::empty(), &Default::default()).unwrap();
-        assert!(set_big.contains(&("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), "1000000".into())));
-        assert!(
-            !set_big
-                .iter()
-                .any(|(n, _)| n == "CLAUDE_CODE_DISABLE_1M_CONTEXT")
-        );
+        // Окно неизвестно (ни `[1m]`, ни каталога) — 1M и без DISABLE_1M: заниженное окно с
+        // тяжёлыми MCP сжимало сессию по кругу (видели вживую на 200K и 626 инструментах).
+        assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("1000000"));
+        assert!(get("CLAUDE_CODE_DISABLE_1M_CONTEXT").is_none());
 
         let empty = UiStatus {
             models: Vec::new(),
@@ -1593,19 +1583,13 @@ mod tests {
             rows.iter().all(|r| r.get("anthropicFamilyTier").is_none()),
             "без выбора ролей конфиг как раньше"
         );
-        // Модели без 1M — образец с окном 200K: behavesAs даёт вкладке Code и окно.
+        // Окно неизвестно — образец с 1M (Opus 4.8): заниженное окно сжимало бы по кругу.
         assert_eq!(
-            rows[3]["behavesAs"], EFFORT_PROFILE_200K,
+            rows[3]["behavesAs"], EFFORT_PROFILE,
             "не-Claude за Anthropic API"
         );
-        assert_eq!(rows[0]["behavesAs"], EFFORT_PROFILE_200K);
+        assert_eq!(rows[0]["behavesAs"], EFFORT_PROFILE);
         assert_eq!(rows[0]["maxEffort"], "max");
-        let mut wide = info("deepseek-1m", Some("max"), true);
-        wide.supports_1m = true;
-        assert_eq!(
-            inference_models(&[wide], &none)[0]["behavesAs"],
-            EFFORT_PROFILE
-        );
         assert!(rows[1].get("behavesAs").is_none() && rows[1].get("maxEffort").is_none());
         assert_eq!(rows[2]["behavesAs"], "claude-sonnet-4-6");
         assert_eq!(rows[2]["maxEffort"], "high");
@@ -1657,8 +1641,11 @@ mod tests {
         let (_, set) = code_env(&shared, &roles, std::iter::empty(), &Default::default()).unwrap();
         assert!(set.contains(&("ANTHROPIC_MODEL".into(), main.alias.clone())));
         assert!(!set.iter().any(|(n, _)| n.contains("ADVISOR")));
-        // Окно — по основной модели (без 1M), даже если у первой 1M.
-        assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000".into()));
+        // Окно основной модели неизвестно — 1M; предела вывода нет — Claude Code берёт свой.
+        assert_eq!(
+            get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"),
+            Some("1000000".into())
+        );
         assert!(get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").is_none());
 
         // Пределы модели из каталога: окно в рамках 100K–1M, вывод не выше 128K.
@@ -1681,6 +1668,11 @@ mod tests {
             assert_eq!(
                 get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").as_deref(),
                 Some(output)
+            );
+            // `[1m]` у «Default» снимается только при известном окне меньше 1M.
+            assert_eq!(
+                get("CLAUDE_CODE_DISABLE_1M_CONTEXT").is_some(),
+                window != "1000000"
             );
         }
 
