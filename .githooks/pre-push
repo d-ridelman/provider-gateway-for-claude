@@ -1,0 +1,8 @@
+#!/bin/sh
+# Runs tools/ci.ps1 before every push; a red check stops the push.
+# Enable once per clone:  git config core.hooksPath .githooks
+# Skip once (on purpose):  git push --no-verify
+if command -v pwsh >/dev/null 2>&1; then
+    exec pwsh -NoProfile -ExecutionPolicy Bypass -File tools/ci.ps1 -Changed
+fi
+exec powershell -NoProfile -ExecutionPolicy Bypass -File tools/ci.ps1 -Changed
