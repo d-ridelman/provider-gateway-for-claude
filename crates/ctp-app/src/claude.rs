@@ -150,6 +150,26 @@ const MAX_WINDOW: u64 = 1_000_000;
 /// Потолок `CLAUDE_CODE_MAX_OUTPUT_TOKENS` для незнакомых Claude Code моделей.
 const MAX_OUTPUT: u64 = 128_000;
 
+/// Переменные Claude Code для любой его сессии через шлюз: в консоли кнопки «Claude Code» и
+/// во вкладке Code у Claude Desktop (Desktop передаёт сессиям своё окружение).
+pub const SESSION_ENV: [(&str, &str); 5] = [
+    // Проверку auto mode делает классификатор самого Claude Code, а не сервер
+    // (code.claude.com/docs/en/auto-mode-config).
+    ("CLAUDE_CODE_AUTO_MODE_SERVER", "0"),
+    // Псевдонимы шлюза Claude Code не узнаёт и для них выключает Task-инструменты
+    // (в 2.1.331 — только по этой переменной).
+    ("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"),
+    // Инструменты — в списке `tools`, а не блоками внутри сообщений: такие блоки
+    // Anthropic-эндпоинт DeepSeek отвергает с 422, и сессия не восстанавливается
+    // (anthropics/claude-code#95087).
+    ("CLAUDE_CODE_INLINE_TOOLS", "false"),
+    // Блок атрибуции Anthropic вырезает у себя, а модель провайдера видела бы его в начале
+    // системного промпта.
+    ("CLAUDE_CODE_ATTRIBUTION_HEADER", "0"),
+    // Коннекторы claude.ai требуют входа в аккаунт Anthropic — через шлюз их нет.
+    ("ENABLE_CLAUDEAI_MCP_SERVERS", "false"),
+];
+
 /// Основная модель шлюза: роль `sonnet` или первая. Роль, чьей модели нет среди запущенных
 /// (шлюз не перезапускали), — как не выбранная.
 pub fn main_model<'a>(status: &'a UiStatus, roles: &RoleAliases) -> Option<&'a ModelInfo> {
@@ -240,25 +260,15 @@ pub fn code_env(
         // Устаревшее имя роли haiku: его ещё читают старые версии Claude Code.
         ("ANTHROPIC_SMALL_FAST_MODEL".into(), id.clone()),
         ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window.to_string()),
-        // То же для консоли: проверку auto mode делает классификатор самого Claude Code, а не
-        // сервер (code.claude.com/docs/en/auto-mode-config).
-        ("CLAUDE_CODE_AUTO_MODE_SERVER".into(), "0".into()),
         // Провайдер задаёт запуск: `env` из settings.json человека не уведёт Claude Code
-        // мимо шлюза (как `ollama launch claude`).
+        // мимо шлюза (как `ollama launch claude`). Desktop своим сессиям задаёт его сам.
         ("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST".into(), "1".into()),
-        // Псевдонимы шлюза Claude Code не узнаёт и для них выключает Task-инструменты
-        // (в 2.1.331 — только по этой переменной).
-        ("CLAUDE_CODE_ENABLE_TODO_TOOLS".into(), "1".into()),
-        // Инструменты — в списке `tools`, а не блоками внутри сообщений: такие блоки
-        // Anthropic-эндпоинт DeepSeek отвергает с 422, и сессия не восстанавливается
-        // (anthropics/claude-code#95087).
-        ("CLAUDE_CODE_INLINE_TOOLS".into(), "false".into()),
-        // Блок атрибуции Anthropic вырезает у себя, а модель провайдера видела бы его в
-        // начале системного промпта.
-        ("CLAUDE_CODE_ATTRIBUTION_HEADER".into(), "0".into()),
-        // Коннекторы claude.ai требуют входа в аккаунт Anthropic — через шлюз их нет.
-        ("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "false".into()),
     ]);
+    set.extend(
+        SESSION_ENV
+            .iter()
+            .map(|(name, value)| (name.to_string(), value.to_string())),
+    );
     // Окна 1M у модели нет, а строка «Default» в `/model` даёт её ID с `[1m]`: Claude Code
     // тогда считает окно 1M и `CLAUDE_CODE_MAX_CONTEXT_TOKENS` не применяет (проверено
     // вживую на 2.1.331). Эта переменная снимает значение `[1m]`.
@@ -427,6 +437,11 @@ fn library_entry(
         // делает: без этого ключа каждый ход auto mode падает. Так Desktop отдаёт проверку
         // встроенному классификатору Claude Code (claude.com/docs/third-party/claude-desktop/gateway).
         "inferenceGatewayAutoModeServerChecks": false,
+        // Как у Ollama (cmd/launch/claude_desktop.go): без списка Cowork режет плагинам и
+        // MCP выход в сеть; телеметрию Anthropic профиль шлюза не шлёт.
+        "coworkEgressAllowedHosts": ["*"],
+        "disableEssentialTelemetry": true,
+        "disableNonessentialTelemetry": true,
     });
     // В 3p встроенный браузер выключен по умолчанию. Галочка в настройках только включает
     // его; без неё ключ не пишется, и действует то, что человек выбрал в окне настроек
@@ -691,6 +706,10 @@ pub fn launch(
     if let Some(real) = real_local_appdata() {
         command.env(crate::ruui::REAL_LOCALAPPDATA_VAR, real);
     }
+    // Сессиям вкладки Code — те же переменные Claude Code, что и консоли: Desktop отдаёт им
+    // своё окружение. Окно по модели здесь не задаётся: в Desktop модель переключают, его
+    // даёт `behavesAs` каждой записи (`inference_models`).
+    command.envs(SESSION_ENV);
     // Прокси приложения: сам Claude (Chromium, loopback он обходит сам) и сессии Code
     // (окружение). shortcut: смену прокси при открытом Claude окно не замечает как «изменились
     // настройки» — переоткрыть Claude подсказывает окно прокси; учесть в run_state, если
@@ -875,6 +894,9 @@ fn forget_portable(home: &Path, before: Option<&Before>) {
 /// (Каталог моделей с `effort_levels` от шлюза Desktop не примет: он требует
 /// подписи ключом Anthropic.)
 pub const EFFORT_PROFILE: &str = "claude-opus-4-8";
+/// То же для модели без окна 1M: у Opus 4.6 в каталоге Claude Code 2.1.331 окно 200K и
+/// уровни до max (без xhigh). С Opus 4.8 вкладка Code считала бы окно 1M.
+pub const EFFORT_PROFILE_200K: &str = "claude-opus-4-6";
 
 /// Папка русских копий Claude (`%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru`).
 pub fn copies_root() -> anyhow::Result<PathBuf> {
@@ -969,10 +991,14 @@ fn inference_models(
                 // Anthropic-совместимый endpoint может отдавать и не-Claude (DeepSeek, GLM):
                 // образцом служит сама модель, только если это модель Claude.
                 let own = ctp_core::alias::strip_1m(&model.model).trim().to_string();
+                // `behavesAs` даёт сессиям Code окно, предел вывода и effort модели-образца:
+                // модели без 1M — образец с окном 200K, иначе Code считал бы окно 1M.
                 let profile = if !model.openai && own.starts_with("claude-") {
                     own
-                } else {
+                } else if model.supports_1m {
                     EFFORT_PROFILE.to_string()
+                } else {
+                    EFFORT_PROFILE_200K.to_string()
                 };
                 row["behavesAs"] = json!(profile);
                 row["maxEffort"] = json!(max);
@@ -1361,10 +1387,12 @@ mod tests {
         };
         let mut config = crate::model::Config::default();
         // Без серверной проверки auto mode: её не делает ни один провайдер шлюза.
-        assert_eq!(
-            library_entry(&config, &status, &[])["inferenceGatewayAutoModeServerChecks"],
-            false
-        );
+        let entry = library_entry(&config, &status, &[]);
+        assert_eq!(entry["inferenceGatewayAutoModeServerChecks"], false);
+        // Как у Ollama: Cowork пускает плагины и MCP в сеть, телеметрии нет.
+        assert_eq!(entry["coworkEgressAllowedHosts"], json!(["*"]));
+        assert_eq!(entry["disableEssentialTelemetry"], true);
+        assert_eq!(entry["disableNonessentialTelemetry"], true);
         let (_, env) = code_env(
             &status,
             &RoleAliases::default(),
@@ -1565,12 +1593,19 @@ mod tests {
             rows.iter().all(|r| r.get("anthropicFamilyTier").is_none()),
             "без выбора ролей конфиг как раньше"
         );
+        // Модели без 1M — образец с окном 200K: behavesAs даёт вкладке Code и окно.
         assert_eq!(
-            rows[3]["behavesAs"], EFFORT_PROFILE,
+            rows[3]["behavesAs"], EFFORT_PROFILE_200K,
             "не-Claude за Anthropic API"
         );
-        assert_eq!(rows[0]["behavesAs"], EFFORT_PROFILE);
+        assert_eq!(rows[0]["behavesAs"], EFFORT_PROFILE_200K);
         assert_eq!(rows[0]["maxEffort"], "max");
+        let mut wide = info("deepseek-1m", Some("max"), true);
+        wide.supports_1m = true;
+        assert_eq!(
+            inference_models(&[wide], &none)[0]["behavesAs"],
+            EFFORT_PROFILE
+        );
         assert!(rows[1].get("behavesAs").is_none() && rows[1].get("maxEffort").is_none());
         assert_eq!(rows[2]["behavesAs"], "claude-sonnet-4-6");
         assert_eq!(rows[2]["maxEffort"], "high");

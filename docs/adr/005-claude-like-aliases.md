@@ -12,13 +12,15 @@ Claude Desktop (с ~1.6259) выкидывает из списка модели,
 (`ctp-core/src/alias.rs`). Desktop отбрасывает и имя с `claude-`, если в нём есть слово из
 его списка: тогда псевдоним запасной, `claude-p<6 цифр>-<8 цифр>`. Моделям не Claude с
 потолком effort (OpenAI и Anthropic-совместимые: DeepSeek, GLM…) Desktop получает
-`behavesAs: "claude-opus-4-8"` (`claude::EFFORT_PROFILE`), моделям Claude — их собственный ID.
+`behavesAs`: с окном 1M — `claude-opus-4-8` (`claude::EFFORT_PROFILE`), без него —
+`claude-opus-4-6` (`EFFORT_PROFILE_200K`: окно 200K, уровни до max без xhigh); моделям
+Claude — их собственный ID.
 Консоль Claude Code фильтра имён не имеет и подписывает заголовок самим ID, поэтому
 получает настоящий ID модели (шлюз его понимает), как `ollama launch claude`; псевдоним —
 только если тот же ID есть у двух моделей шлюза.
 
 ## Consequences
 - Модели видны и в Desktop, и в Claude Code; уровни effort работают.
-- `behavesAs` передаёт сессиям Code ещё и окно и предел вывода той модели: у моделей не Claude
-  без 1M вкладка Code считает окно 1M. Сейчас это прикрывает перевод переполнения в
-  «prompt is too long» (ADR-003). Открытый вопрос — `docs/knowledge/issues.md`.
+- `behavesAs` передаёт сессиям Code ещё и окно и предел вывода той модели, поэтому образец
+  выбирается по окну. Модель с окном меньше 200K всё равно сжимается позже нужного — это
+  прикрывает перевод переполнения в «prompt is too long» (ADR-003).
