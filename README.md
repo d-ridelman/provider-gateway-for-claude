@@ -32,13 +32,14 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 
 - **Anthropic Messages → OpenAI Chat Completions**, including streaming, tool calls, images (also the screenshots that tools return) and reasoning levels; or straight passthrough for Anthropic-compatible providers.
 - **Claude Desktop in a separate profile**, so your own Claude account and chats stay untouched. Your models appear in Claude's model menu under readable names. If that Claude is already open, **Open Claude** only shows it (and says when the gateway settings changed); the app never closes or restarts it.
-- **Claude Code in one click**: a console opens in your project folder with `claude` already connected to the gateway.
+- **Claude Code in one click**: a console opens in your project folder with `claude` already connected to the gateway and your model shown by its real name.
 
 ## Features
 
 - Any number of providers, each with its own key, models and reasoning-level ceiling. Templates for OpenAI, OpenRouter, OpenCode Go and Zen, DeepSeek, Gemini, Anthropic, Ollama, llama.cpp and LM Studio.
 - **Load models from the provider**, with hints from the open [OpenCode model catalog](https://models.dev): readable names, 1M-context models and supported reasoning levels are filled in for you.
 - **Test connection** sends one real request through the gateway and shows the answer.
+- **MCP tools on demand.** Claude Code finds MCP tools with its own tool search, as the regular Claude does, instead of sending hundreds of tool schemas on every turn: with a few connectors a turn takes tens of thousands of tokens instead of 150–200 thousand. Works in the console and in the Code tab of Claude Desktop.
 - **Free web search for Claude.** Claude's built-in `WebSearch` (Claude Code and Claude Desktop) works without any key or setup: the gateway answers it itself, see [Web search](#web-search).
 - **VPN subscriptions on the mihomo core.** Pick a node or Auto, test latency and choose what goes through the VPN: Claude and providers only, the system proxy (works on domain PCs) or all traffic (TUN). See [Proxy and VPN](#proxy-and-vpn).
 - **Claude without installing.** Claude Desktop and Claude Code download from Anthropic's own addresses, either portable with nothing installed or as a regular install. The signature and checksum are verified. See [Claude without installing](#claude-without-installing).
@@ -55,7 +56,7 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 
 - Windows 10 or 11, x64, with WebView2 (built into Windows 11).
 - [Claude Desktop](https://claude.ai/download) for the desktop chat. Tested with Claude Desktop 6.28899.6.
-- [Claude Code](https://docs.claude.com/en/docs/claude-code) for the terminal agent (optional).
+- [Claude Code](https://docs.claude.com/en/docs/claude-code) for the terminal agent (optional). Tested with Claude Code 2.1.331.
 - An account and API key with at least one provider, or a local model server.
 
 ## Install
@@ -169,10 +170,12 @@ claude.ai sometimes answers programs with a bot check. The app then loads the tr
 Requirements: Rust 1.90+ with the MSVC toolchain, Node.js (for the installer), Python 3 (optional, refreshes license notices).
 
 ```powershell
-cargo test --workspace
+.\tools\ci.ps1               # translations, fmt, clippy and tests, as GitHub CI runs them
 .\build-app.ps1              # portable exe in dist\
 .\build-app.ps1 -Installer   # plus the NSIS installer
 ```
+
+`git config core.hooksPath .githooks` runs the same checks before every push.
 
 The workspace has three crates:
 

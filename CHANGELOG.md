@@ -4,8 +4,12 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-24
+
 ### Added
 
+- **MCP tools on demand (tool search).** Through a gateway, Claude Code used to send the schema of every MCP tool on every turn: with a few connectors that was 500–600 tools and 150–180 thousand tokens before a word was said. Claude Desktop now gets `toolSearchEnabled` and the console `ENABLE_TOOL_SEARCH=true`, so Claude Code finds tools with its own `ToolSearch` as the regular Claude does; on the OpenAI path the gateway, like Ollama, keeps a tool marked `defer_loading` from the provider until `ToolSearch` loads it or the conversation has already called it. Seen live: 41.7 thousand input tokens on the first turn instead of about 220 thousand, in the Code tab and in the console; Anthropic-compatible providers (DeepSeek and GLM behind OpenCode Go, tried) take the deferred tools as they are.
+- **A new app icon** in the style of the window: an iron tile with the gateway's bridge mark, each size drawn on its own, and a separate tray icon. After an update the installer tells Explorer, so the taskbar, Start and the desktop show the new icon at once instead of the cached old one.
 - **Proxy and VPN on the mihomo core.** A Proxy and VPN page:
   - VPN subscriptions (Clash/mihomo or base64 v2ray links) as the core's proxy providers, each with a name prefix so equal node names of two subscriptions stay apart;
   - node tiles with latency, Auto (the fastest) first; traffic and expiry of a subscription;
@@ -51,12 +55,18 @@ All notable changes to this project are listed here. The format follows [Keep a 
   - Light and dark theme can be chosen in the app (title-bar button and Settings, "Same as Windows" is still the default), and so can the language (RU / EN button next to it). The choice is remembered and painted before the first frame.
   - The light theme is neutral grey instead of cream; placeholders and accent text pass WCAG AA; no coloured glow or gradient on buttons. The window passes the Impeccable detector in both themes (`node tools/ui-shots.mjs --detect`); `node tools/ui-shots.mjs` takes the snapshot set (light / dark, 1920 / 1280 / 1100 / 1000 / 900 px and Windows display scales x1.25 / x1.5, empty / error / loading / long text) into `state/shots/` with measurements.
 
+### Changed
+
+- **The Claude Code console shows the model's real name** (`deepseek-v4.1-flash` instead of the alias `claude-<provider>-<digits>` that Claude Desktop needs), in its header and in the Default row of `/model`, as `ollama launch claude` does. The alias stays only when two gateway models share one ID.
+- **Code-tab sessions of Claude Desktop get the same Claude Code settings as the console**: task tools, auto mode without the server check, no claude.ai connectors, tools without inline blocks, tool search. The 3p entry also allows every host for Cowork's network access and turns both telemetry switches off, as Ollama writes them.
+
 ### Removed
 
 - **Strong and fast models for Claude Code, the advisor switch and the copied command.** Settings keep one model for Claude Code, the main one. In the console every role goes to it (`opus`, `haiku`, `fable`), and each row of `/model` shows it by name (`ANTHROPIC_DEFAULT_*_MODEL_NAME`) instead of Anthropic's Opus and Fable with their prices, which are not reachable through the gateway. Gone with them: the "Strong is the advisor (/advisor)" box, which wrote `advisorModel` into Claude Code's shared `settings.json`, the advisor that the gateway ran on the strong model, and "Copy the Claude Code command". The app no longer touches Claude Code's settings file; an `advisorModel` written there earlier stays until `/advisor off`. Roles saved by 0.2.1 are read and dropped. The gateway now drops an advisor declaration and the advisor blocks of older sessions from every request, for both provider types, so a leftover `advisorModel` or a resumed session does not reach a provider that cannot run it (a request whose only tool was the advisor goes without `tools`).
 
 ### Fixed
 
+- **The context window of a model the catalog does not know is 1M again.** A smaller assumed window let 600 MCP tools fill it, and a Code-tab session compacted in a loop with nothing left to compact. A window that is too large is safe: an overflow comes back as Anthropic's "prompt is too long" and Claude Code compacts. When the catalog knows a window under 1M, the console gets it and `CLAUDE_CODE_DISABLE_1M_CONTEXT=1`, so the Default row of `/model` no longer claims 1M.
 - **Processes that Claude starts see the real `AppData\Local` in English too.** Claude runs in its own profile with `LOCALAPPDATA` pointing at the app's folder; only the copy of Claude (with its child-environment fix) gave Code sessions, their npm, uv, gh, git and MCP servers the real folder. Without Russian the original Claude was started, and those tools wrote their caches into `%LOCALAPPDATA%\ClaudeProviderGateway`. The copy is now built without Russian as well, with no translation (about 700 MB on disk); if this Claude version cannot take the fix, the original opens and the window says so.
 - **Stability after the review against Anthropic's gateway docs:**
   - errors in Anthropic's own types: `402` billing, `503` → `529` overloaded, `504` timeout, an exhausted quota → `402`; a context overflow worded by an Anthropic-type provider becomes `prompt is too long`, so Claude Code compacts;
@@ -141,6 +151,8 @@ The first public release.
 - Updates from GitHub Releases, verified with the signing key built into the app.
 - Provider keys in Windows Credential Manager; the gateway requires a local token.
 
+[Unreleased]: https://github.com/d-ridelman/provider-gateway-for-claude/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.2
 [0.2.1]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.1
 [0.2.0]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.0
 [0.1.0]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.1.0
