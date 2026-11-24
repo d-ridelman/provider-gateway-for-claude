@@ -260,7 +260,8 @@ pub fn catalog_ru(src: &Path, ru: &serde_json::Map<String, Value>, official: &[u
     let official = parse(official);
     let bundled = parse(CATALOG_RU.as_bytes());
     let mut out = Map::new();
-    let total = match read("i18n/dynamic/en-US.json") {
+    // Нечитаемый или пустой файл — как его отсутствие: иначе в копию ушёл бы `{}`.
+    let total = match read("i18n/dynamic/en-US.json").filter(|english| !english.is_empty()) {
         Some(english) => {
             // Английский текст основного файла → его ключ (первый из одинаковых).
             let mut by_text: std::collections::HashMap<String, String> = Default::default();
@@ -1391,6 +1392,13 @@ mod tests {
         assert_eq!(out["2EcGZn58SU"], "Автоматические размышления");
         assert_eq!(out["by-text"], "Средний");
         assert!(out.get("official").is_none());
+
+        // An unreadable dynamic/en-US.json counts as none: the bundled catalog goes in whole.
+        write_asar(
+            &src,
+            &[("i18n/dynamic/en-US.json".into(), b"not json".to_vec())],
+        );
+        assert_eq!(catalog_ru(&src, &ru, b"").translated, 51);
         fs::remove_dir_all(&dir).unwrap();
     }
 
