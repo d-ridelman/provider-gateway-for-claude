@@ -287,6 +287,11 @@ impl StreamTranslator {
         self.done
     }
 
+    /// Провайдер сказал, чем кончился ответ (`finish_reason`): поток закончен по-настоящему.
+    pub fn has_finish_reason(&self) -> bool {
+        self.finish_reason.is_some()
+    }
+
     /// Поток оборван ошибкой (сеть, битый JSON): после события `error` ответ Anthropic не
     /// продолжается, `finish` ничего не допишет, а оборванный ответ не выдастся за законченный.
     pub fn abort(&mut self) {

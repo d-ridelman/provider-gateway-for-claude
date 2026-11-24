@@ -202,6 +202,9 @@ pub fn code_env(
         // Устаревшее имя роли haiku: его ещё читают старые версии Claude Code.
         ("ANTHROPIC_SMALL_FAST_MODEL".into(), main.alias.clone()),
         ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window.into()),
+        // То же для консоли: проверку auto mode делает классификатор самого Claude Code, а не
+        // сервер (code.claude.com/docs/en/auto-mode-config).
+        ("CLAUDE_CODE_AUTO_MODE_SERVER".into(), "0".into()),
     ]);
     Ok((remove, set))
 }
@@ -348,6 +351,10 @@ fn library_entry(
         "inferenceCredentialKind": "static",
         "deploymentDisplayName": "Provider Gateway",
         "inferenceModels": models,
+        // Серверную проверку действий auto mode (`safeguards`) ни один провайдер шлюза не
+        // делает: без этого ключа каждый ход auto mode падает. Так Desktop отдаёт проверку
+        // встроенному классификатору Claude Code (claude.com/docs/third-party/claude-desktop/gateway).
+        "inferenceGatewayAutoModeServerChecks": false,
     });
     // В 3p встроенный браузер выключен по умолчанию. Галочка в настройках только включает
     // его; без неё ключ не пишется, и действует то, что человек выбрал в окне настроек
@@ -1260,6 +1267,13 @@ mod tests {
             update: None,
         };
         let mut config = crate::model::Config::default();
+        // Без серверной проверки auto mode: её не делает ни один провайдер шлюза.
+        assert_eq!(
+            library_entry(&config, &status, &[])["inferenceGatewayAutoModeServerChecks"],
+            false
+        );
+        let (_, env) = code_env(&status, &RoleAliases::default(), std::iter::empty()).unwrap();
+        assert!(env.contains(&("CLAUDE_CODE_AUTO_MODE_SERVER".into(), "0".into())));
         assert_eq!(
             library_entry(&config, &status, &[]).get("builtinBrowserEnabled"),
             None,

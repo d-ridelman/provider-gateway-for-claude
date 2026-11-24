@@ -99,21 +99,20 @@ pub fn run() {
             {
                 tracing::warn!(error = %format!("{exc:#}"), "Claude model rules");
             }
-            // Прокси шлюза — до его автозапуска из окна, ядро — в фоне (в TUN ждёт ответа UAC).
-            if config.proxy.is_on() {
-                if config.proxy.port != 0 {
-                    ctp_gateway::proxy::set(Some(format!(
-                        "http://127.0.0.1:{}",
-                        config.proxy.port
-                    )));
-                }
-                let handle = app.handle().clone();
-                std::thread::spawn(move || commands::start_proxy_in_background(&handle));
+            // Прокси шлюза — до его автозапуска из окна.
+            let proxy_on = config.proxy.is_on();
+            if proxy_on && config.proxy.port != 0 {
+                ctp_gateway::proxy::set(Some(format!("http://127.0.0.1:{}", config.proxy.port)));
             }
             let for_repair = config.clone();
             let check_dir = dir.clone();
-            // До потока: он обращается к состоянию, а state() до manage() паникует.
+            // До потоков: они обращаются к состоянию, а state() до manage() паникует.
             app.manage(AppShared::new(dir, config));
+            // Ядро — в фоне (в TUN ждёт ответа UAC).
+            if proxy_on {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || commands::start_proxy_in_background(&handle));
+            }
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 claude::repair_registry(&for_repair);

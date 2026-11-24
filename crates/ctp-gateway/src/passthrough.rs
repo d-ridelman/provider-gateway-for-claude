@@ -54,6 +54,12 @@ pub async fn messages(
         // журнал он не должен попасть (OpenAI-путь вырезает его так же).
         // В байтах, а не в тексте: тело не в UTF-8 (HTML прокси в cp1251) остаётся целым.
         if !status.is_success() {
+            // Anthropic-совместимые провайдеры не Anthropic пишут о переполнении окна своими
+            // словами, а Claude Code сжимает разговор только по «prompt is too long».
+            let text = String::from_utf8_lossy(&payload);
+            if crate::openai::adapt::is_overflow(&text) && !text.contains("prompt is too long") {
+                return error::upstream_error(status.as_u16(), &text, &provider.api_key);
+            }
             payload = error::without_secret_bytes(&payload, &provider.api_key).into();
         }
         info!(

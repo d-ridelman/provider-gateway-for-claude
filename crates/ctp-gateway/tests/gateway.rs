@@ -1284,6 +1284,33 @@ async fn context_overflow_becomes_anthropics_prompt_too_long_without_the_ladder(
 }
 
 #[tokio::test]
+async fn an_anthropic_type_provider_overflow_also_becomes_prompt_too_long() {
+    // DeepSeek, GLM, Kimi on their Anthropic endpoints word the overflow their own way.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(400).set_body_json(json!({"type": "error", "error": {
+            "type": "invalid_request_error",
+            "message": "This model's maximum context length is 131072 tokens. However, you requested 140000 tokens"
+        }})))
+        .mount(&upstream)
+        .await;
+    let response = app(state_with(&upstream.uri(), "anthropic", "deepseek-chat"))
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 32,
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = json_body(response).await;
+    assert_eq!(
+        body["error"]["message"], "prompt is too long: 140000 tokens > 131072 maximum",
+        "{body}"
+    );
+}
+
+#[tokio::test]
 async fn a_ladder_that_helps_nothing_cools_down_and_forgets_nothing() {
     let upstream = MockServer::start().await;
     Mock::given(method("POST"))
@@ -1307,13 +1334,17 @@ async fn a_ladder_that_helps_nothing_cools_down_and_forgets_nothing() {
 
 #[tokio::test]
 async fn provider_errors_keep_their_kind_for_claude_code() {
-    for (status, kind) in [
-        (401, "authentication_error"),
-        (403, "permission_error"),
-        (404, "not_found_error"),
-        (429, "rate_limit_error"),
-        (529, "overloaded_error"),
-        (503, "api_error"),
+    // (provider status, status Claude gets, kind): 503 is Anthropic's 529, money is 402.
+    for (status, sent, kind) in [
+        (401, 401, "authentication_error"),
+        (402, 402, "billing_error"),
+        (403, 403, "permission_error"),
+        (404, 404, "not_found_error"),
+        (429, 429, "rate_limit_error"),
+        (529, 529, "overloaded_error"),
+        (503, 529, "overloaded_error"),
+        (504, 504, "timeout_error"),
+        (500, 500, "api_error"),
     ] {
         let upstream = MockServer::start().await;
         Mock::given(method("POST"))
@@ -1327,7 +1358,7 @@ async fn provider_errors_keep_their_kind_for_claude_code() {
             .oneshot(plain_ask())
             .await
             .unwrap();
-        assert_eq!(response.status().as_u16(), status);
+        assert_eq!(response.status().as_u16(), sent, "{status}");
         assert_eq!(json_body(response).await["error"]["type"], kind, "{status}");
     }
 }
@@ -1498,6 +1529,43 @@ async fn a_broken_provider_stream_ends_with_the_error_not_with_a_normal_stop() {
     assert!(body.contains("\"text\":\"half\""), "{body}");
     assert!(!body.contains("message_stop"), "{body}");
     assert!(!body.contains("\"stop_reason\":\"end_turn\""), "{body}");
+}
+
+#[tokio::test]
+async fn a_stream_closed_without_an_end_is_an_error_not_a_finished_answer() {
+    // The provider closed the body cleanly: no finish_reason, no [DONE]. A subagent's report cut
+    // here must not reach Claude Code as a complete one. A stream with an end but no [DONE] is fine.
+    for (tail, finished) in [
+        ("", false),
+        (
+            "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+            true,
+        ),
+    ] {
+        let upstream = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(
+                format!("data: {{\"choices\":[{{\"index\":0,\"delta\":{{\"content\":\"half\"}}}}]}}\n\n{tail}"),
+                "text/event-stream",
+            ))
+            .mount(&upstream)
+            .await;
+        let response = app(state_with(&upstream.uri(), "openai", "gpt-5.2"))
+            .oneshot(post_messages(json!({
+                "model": "claude-p-00000000", "max_tokens": 32, "stream": true,
+                "messages": [{"role": "user", "content": "hi"}]
+            })))
+            .await
+            .unwrap();
+        let body = text_body(response).await;
+        assert_eq!(body.contains("message_stop"), finished, "{body}");
+        assert_eq!(
+            body.contains("ended before the answer was finished"),
+            !finished,
+            "{body}"
+        );
+    }
 }
 
 fn history_with_thinking() -> Value {

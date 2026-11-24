@@ -40,7 +40,26 @@ pub fn classify(status: u16, text: &str, secret: &str) -> (u16, &'static str, St
             .unwrap_or_else(|| format!("prompt is too long: {message}"));
         return (400, "invalid_request_error", said);
     }
+    let code = match code {
+        // Кончились деньги или квота — 402: Claude показывает карточку оплаты и не повторяет
+        // запрос, который не пройдёт. OpenAI говорит о квоте кодом 429.
+        429 if quota_exhausted(text) => 402,
+        // Провайдер перегружен — как Anthropic: у 529 в Claude Code свой путь отступа.
+        503 => 529,
+        code => code,
+    };
     (code, error_kind(code), message)
+}
+
+fn quota_exhausted(text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    [
+        "insufficient_quota",
+        "insufficient balance",
+        "exceeded your current quota",
+    ]
+    .iter()
+    .any(|phrase| text.contains(phrase))
 }
 
 /// Тип ошибки Anthropic по статусу: по нему Claude Code решает, повторять ли запрос
@@ -49,10 +68,12 @@ fn error_kind(status: u16) -> &'static str {
     match status {
         400 | 422 => "invalid_request_error",
         401 => "authentication_error",
+        402 => "billing_error",
         403 => "permission_error",
         404 => "not_found_error",
         413 => "request_too_large",
         429 => "rate_limit_error",
+        504 => "timeout_error",
         529 => "overloaded_error",
         _ => "api_error",
     }
@@ -169,6 +190,18 @@ mod tests {
         );
         assert_eq!(classify(529, "busy", "").1, "overloaded_error");
         assert_eq!(classify(99, "weird", "").0, 502);
+        // Деньги, перегрузка и таймаут — типами Anthropic, по ним Claude решает, повторять ли.
+        assert_eq!(classify(402, "Insufficient Balance", "").1, "billing_error");
+        let quota = r#"{"error":{"code":"insufficient_quota","message":"You exceeded your current quota"}}"#;
+        assert_eq!(
+            (classify(429, quota, "").0, classify(429, quota, "").1),
+            (402, "billing_error")
+        );
+        assert_eq!(
+            (classify(503, "busy", "").0, classify(503, "busy", "").1),
+            (529, "overloaded_error")
+        );
+        assert_eq!(classify(504, "slow", "").1, "timeout_error");
         let overflow = r#"{"error":{"message":"This model's maximum context length is 8192 tokens. However, your messages resulted in 9000 tokens."}}"#;
         let (status, kind, message) = classify(400, overflow, "");
         assert_eq!((status, kind), (400, "invalid_request_error"));

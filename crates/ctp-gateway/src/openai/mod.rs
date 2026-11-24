@@ -354,6 +354,7 @@ pub async fn messages(
             std::time::Duration::from_secs(15),
         );
         let mut source = upstream.bytes_stream().eventsource();
+        let mut saw_done = false;
         loop {
             let item = tokio::select! {
                 item = source.next() => item,
@@ -374,6 +375,7 @@ pub async fn messages(
                 }
             };
             if event.data.trim() == "[DONE]" {
+                saw_done = true;
                 break;
             }
             let chunk: Value = match serde_json::from_str(&event.data) {
@@ -394,6 +396,14 @@ pub async fn messages(
             }
         }
 
+        // Поток кончился без `[DONE]` и без `finish_reason` — провайдер оборвал ответ. Это
+        // ошибка, а не `end_turn`: иначе Claude Code примет обрезанный ответ за полный.
+        if !translator.is_done() && !saw_done && !translator.has_finish_reason() {
+            yield Ok::<Bytes, Infallible>(sse::frame(&stream::StreamTranslator::error_event(
+                "upstream stream ended before the answer was finished",
+            )));
+            translator.abort();
+        }
         if !translator.is_done() {
             for value in translator.finish() {
                 yield Ok::<Bytes, Infallible>(sse::frame(&value));
