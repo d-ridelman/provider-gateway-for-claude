@@ -38,3 +38,4 @@
 | [007](007-tool-search.md) | Поиск инструментов: отложенные инструменты не уходят провайдеру | Accepted |
 | [008](008-no-desktop-user-agent-upstream.md) | Провайдеру Claude Code представляется как `claude -p` | Accepted |
 | [009](009-catalog-translation-per-version.md) | Перевод меню усилий собирается под каждую версию Claude | Accepted |
+| [010](010-code-model-left-in-user-settings.md) | Модель шлюза не остаётся в настройках Claude Code | Accepted |

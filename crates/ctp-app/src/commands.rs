@@ -303,9 +303,13 @@ pub async fn launch_claude_code(shared: State<'_, AppShared>) -> Result<String, 
     let status = runtime::status(&shared);
     let limits = main_model_limits(&config, &status).await;
     // Обход PATH (сетевые диски) — не в главном потоке окна.
-    tauri::async_runtime::spawn_blocking(move || claude::launch_code(&config, &status, &limits))
-        .await
-        .map_err(|exc| exc.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        // `/model` в консоли пишет в общие настройки: что было до неё — вернуть при выходе.
+        crate::codemodel::remember(&config);
+        claude::launch_code(&config, &status, &limits)
+    })
+    .await
+    .map_err(|exc| exc.to_string())?
 }
 
 /// Окно и предел вывода основной модели из каталога OpenCode. Каталог не загрузился за
@@ -743,6 +747,7 @@ pub async fn proxy_measure(shared: State<'_, AppShared>) -> Result<ProxyState, S
 pub fn app_exit(app: tauri::AppHandle) {
     mihomo::shutdown();
     crate::claude::repair_registry_on_exit(&app);
+    crate::codemodel::restore_on_exit(&app);
     app.exit(0);
 }
 

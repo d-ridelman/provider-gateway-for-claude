@@ -1,5 +1,6 @@
 pub mod catalog;
 pub mod claude;
+pub mod codemodel;
 pub mod commands;
 pub mod download;
 pub mod fetch;
@@ -77,6 +78,8 @@ pub fn run() {
 
             let config = store::load_or_create(&dir)?;
             i18n::apply(config.language.as_deref());
+            // Прошлый выход мог не дойти до возврата модели в настройках Claude Code (ADR-010).
+            codemodel::restore(&config);
             webfetch::init(app.handle());
             // Адрес для шлюза: поисковики отвечают проверкой на бота, а проходит её
             // встроенный браузер. Окно показывает себя само, если проверка просит галочку.
@@ -177,6 +180,7 @@ pub fn run() {
                 // Ключи русской копии в реестре — назад к установленному Claude и при выходе
                 // не через трей (закрыли окно без значка в трее, конец сеанса Windows).
                 claude::repair_registry_on_exit(app);
+                codemodel::restore_on_exit(app);
             }
         });
 }

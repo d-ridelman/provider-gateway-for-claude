@@ -12,6 +12,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 - **Claude Code works with an Anthropic API key, in the Code tab of Claude Desktop and in the console.** Anthropic answers an API key "Your credit balance is too low" whatever the balance when the request is labelled as interactive Claude Code (`cli`, the Code tab's `claude-desktop-3p`) in the `user-agent` or in Claude Code's attribution block at the top of the system prompt, so every message failed with "Billing problem". The gateway now introduces Claude Code to Anthropic-compatible providers as `claude -p` does (`sdk-cli`) in both places.
 
+- **A gateway model no longer stays in Claude Code's own settings.** `/model` with Enter in a PGC console saves the choice to the user's `~/.claude/settings.json` as the default for new sessions, so a plain `claude` later opened on a model that exists only through the gateway ("Model … isn't recognized"). PGC now remembers the user's own model when it opens a console and, on exit and on the next start, puts it back if a gateway model took its place (or removes the key if there was none). Only `model` changes, and only when it is a PGC alias or a provider's model ID other than `claude-…`; an unreadable file is left alone (ADR-010).
+
 ## [0.2.2] - 2026-11-24
 
 ### Added
