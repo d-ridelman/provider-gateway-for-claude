@@ -579,7 +579,8 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
             Err(exc) => check.push(false, format!("{exc:#}")),
         }
         // Copy first: the Code tab line below reads the copy's app.asar, which a stale copy lacks.
-        let copy = build_copy.then(|| {
+        // Только из успокоившейся папки версии: установщик ещё может её распаковывать.
+        let copy = (build_copy && settled(&app, SETTLE)).then(|| {
             fs::read(config_dir.join(ruui::TRANSLATION_FILE))
                 .map_err(anyhow::Error::from)
                 .and_then(|ru| ruui::ensure_copy(&app, &crate::claude::copies_root()?, &ru))
@@ -657,7 +658,7 @@ pub fn check_into(app: &tauri::AppHandle, config: &Config, config_dir: &Path, bu
 const WATCH_EVERY: Duration = Duration::from_secs(10 * 60);
 /// Установщик Claude раскладывает новую версию не мгновенно: берём её папку, только если
 /// ни она, ни ключевые файлы не менялись столько времени (не собирать из недописанного).
-const SETTLE: Duration = Duration::from_secs(2 * 60);
+pub(crate) const SETTLE: Duration = Duration::from_secs(2 * 60);
 
 /// Claude обновился, пока программа в трее, — русская копия готовится заранее: сначала
 /// свежий перевод, потом одна сборка. К «Открыть Claude» всё готово, и копия не
@@ -773,7 +774,7 @@ fn translation_is_for(config_dir: &Path, version: &str) -> bool {
 }
 
 /// Папка версии и её главные файлы не менялись `quiet`: установщик Claude закончил.
-fn settled(app: &Path, quiet: Duration) -> bool {
+pub(crate) fn settled(app: &Path, quiet: Duration) -> bool {
     let resources = app.join("resources");
     [
         app.to_path_buf(),

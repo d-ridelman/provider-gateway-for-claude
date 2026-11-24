@@ -82,6 +82,17 @@ fn russian_copy(exe: &Path, copies: &Path, config_dir: &Path) -> anyhow::Result<
             "{dir} is not a Claude version folder (no resources\\ion-dist.asar)"
         )
     );
+    // Собирать копию из версии, которую установщик ещё распаковывает, нельзя: недостроенная
+    // копия по своей метке считалась бы готовой. Пока папка не успокоилась — оригинал.
+    anyhow::ensure!(
+        crate::ruui::copy_state(app_dir, copies, &ru)? == crate::ruui::CopyState::Current
+            || crate::upkeep::settled(app_dir, crate::upkeep::SETTLE),
+        "{}",
+        tr!(
+            "Claude {dir} ещё устанавливается — русская копия соберётся через пару минут",
+            "Claude {dir} is still being installed; the Russian copy will be built in a couple of minutes"
+        )
+    );
     crate::ruui::ensure_copy(app_dir, copies, &ru)
 }
 
