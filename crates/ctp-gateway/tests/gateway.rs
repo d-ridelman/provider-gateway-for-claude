@@ -1285,8 +1285,9 @@ async fn context_overflow_becomes_anthropics_prompt_too_long_without_the_ladder(
 
 #[tokio::test]
 async fn desktop_user_agent_does_not_reach_the_provider() {
-    // Anthropic answers an API key whose user-agent names Claude Desktop with "credit balance is
-    // too low" (ADR-008): the Code tab's label goes to the provider as the CLI's.
+    // Anthropic answers an API key whose user-agent is interactive Claude Code (the Code tab's
+    // claude-desktop-3p, cli, no label) with "credit balance is too low" (ADR-008): it goes as
+    // `claude -p` (sdk-cli); SDK labels and other clients stay as they are.
     let upstream = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path("/v1/messages"))
@@ -1312,16 +1313,21 @@ async fn desktop_user_agent_does_not_reach_the_provider() {
     for (sent, expected) in [
         (
             "claude-cli/2.1.330 (external, claude-desktop-3p)",
-            "claude-cli/2.1.330 (external, cli)",
-        ),
-        (
-            "claude-cli/2.1.330 (external, claude-desktop)",
-            "claude-cli/2.1.330 (external, cli)",
-        ),
-        (
-            "claude-cli/2.1.330 (external, sdk-cli)",
             "claude-cli/2.1.330 (external, sdk-cli)",
         ),
+        (
+            "claude-cli/2.1.331 (external, cli)",
+            "claude-cli/2.1.331 (external, sdk-cli)",
+        ),
+        (
+            "claude-cli/2.1.330",
+            "claude-cli/2.1.330 (external, sdk-cli)",
+        ),
+        (
+            "claude-cli/2.1.330 (external, sdk-ts)",
+            "claude-cli/2.1.330 (external, sdk-ts)",
+        ),
+        ("my-client/1.0", "my-client/1.0"),
     ] {
         let mut request = post_messages(json!({"model": "claude-p-00000000", "max_tokens": 8,
                                                "messages": [{"role": "user", "content": "hi"}]}));
