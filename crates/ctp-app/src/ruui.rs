@@ -493,7 +493,20 @@ pub fn ensure_copy(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<
             );
         }
     }
-    fs::rename(&building, &target)?;
+    // Свежие 700 МБ ещё проверяет антивирус, и переименование на миг отказывает (os error 5):
+    // повторяем, иначе копии не будет до следующей сборки через часы.
+    let mut attempt = 0;
+    while let Err(exc) = fs::rename(&building, &target) {
+        attempt += 1;
+        if attempt >= 10 {
+            return Err(anyhow::Error::new(exc).context(format!(
+                "{} -> {}",
+                building.display(),
+                target.display()
+            )));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+    }
     remove_leftovers(cache_root, &version);
     Ok(ready)
 }

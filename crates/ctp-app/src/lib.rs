@@ -166,9 +166,12 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to start Provider Gateway for Claude")
         // Любой выход (трей, окно, конец сеанса Windows): ядро и системный прокси убрать.
-        .run(|_, event| {
+        .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
                 mihomo::shutdown();
+                // Ключи русской копии в реестре — назад к установленному Claude и при выходе
+                // не через трей (закрыли окно без значка в трее, конец сеанса Windows).
+                claude::repair_registry_on_exit(app);
             }
         });
 }

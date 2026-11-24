@@ -141,7 +141,14 @@ async fn bind(
                 attempt += 1;
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
-            Err(exc) if exc.kind() == std::io::ErrorKind::AddrInUse => {
+            // PermissionDenied (WSAEACCES 10013): порт в диапазоне, который Windows отдала
+            // Hyper-V, WSL или Docker. Ждать бесполезно — сразу свободный.
+            Err(exc)
+                if matches!(
+                    exc.kind(),
+                    std::io::ErrorKind::AddrInUse | std::io::ErrorKind::PermissionDenied
+                ) =>
+            {
                 // Порт держит другой шлюз (dev или изолированный запуск рядом с релизом):
                 // не падаем, а берём свободный. Адрес в записи Claude и в `status` берётся
                 // из `local_addr`, так что всё идёт по новому порту.

@@ -211,7 +211,8 @@ pub fn build_config(
         "bind-address": "127.0.0.1",
         "allow-lan": false,
         "mode": "rule",
-        "log-level": "info",
+        // `info` пишет строку на каждое соединение: в TUN журнал растёт на сотни МБ за дни.
+        "log-level": "warning",
         "ipv6": false,
         "find-process-mode": "off",
         "geo-auto-update": false,
