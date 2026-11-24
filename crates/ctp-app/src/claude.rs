@@ -180,9 +180,9 @@ pub fn code_env(
     // Desktop: без `[1m]` 200K. По основной модели: на ней сессия и наследующие её
     // субагенты (Explore, Plan).
     let window = match limits.context {
-        Some(context) => context.clamp(MIN_WINDOW, MAX_WINDOW).to_string(),
-        None if main.supports_1m => MAX_WINDOW.to_string(),
-        None => "200000".to_string(),
+        Some(context) => context.clamp(MIN_WINDOW, MAX_WINDOW),
+        None if main.supports_1m => MAX_WINDOW,
+        None => 200_000,
     };
     let remove = inherited
         .filter(|name| {
@@ -228,7 +228,7 @@ pub fn code_env(
     set.extend([
         // Устаревшее имя роли haiku: его ещё читают старые версии Claude Code.
         ("ANTHROPIC_SMALL_FAST_MODEL".into(), main.alias.clone()),
-        ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window),
+        ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window.to_string()),
         // То же для консоли: проверку auto mode делает классификатор самого Claude Code, а не
         // сервер (code.claude.com/docs/en/auto-mode-config).
         ("CLAUDE_CODE_AUTO_MODE_SERVER".into(), "0".into()),
@@ -248,6 +248,12 @@ pub fn code_env(
         // Коннекторы claude.ai требуют входа в аккаунт Anthropic — через шлюз их нет.
         ("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "false".into()),
     ]);
+    // Окна 1M у модели нет, а строка «Default» в `/model` даёт её ID с `[1m]`: Claude Code
+    // тогда считает окно 1M и `CLAUDE_CODE_MAX_CONTEXT_TOKENS` не применяет (проверено
+    // вживую на 2.1.331). Эта переменная снимает значение `[1m]`.
+    if window < MAX_WINDOW {
+        set.push(("CLAUDE_CODE_DISABLE_1M_CONTEXT".into(), "1".into()));
+    }
     // Без него Claude Code просит у незнакомой модели 32000 токенов вывода: у одних это выше
     // их предела, у других обрезает длинные ответы.
     if let Some(output) = limits.output {
@@ -1431,10 +1437,17 @@ mod tests {
         }
         assert!(get("ANTHROPIC_API_KEY").is_none());
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000"));
+        // Без 1M — и «Default» с `[1m]` в /model не даёт окна 1M (проверено вживую).
+        assert_eq!(get("CLAUDE_CODE_DISABLE_1M_CONTEXT"), Some("1"));
         let mut big = status.clone();
         big.models[0].supports_1m = true;
         let (_, set_big) = code_env(&big, &none, std::iter::empty(), &Default::default()).unwrap();
         assert!(set_big.contains(&("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), "1000000".into())));
+        assert!(
+            !set_big
+                .iter()
+                .any(|(n, _)| n == "CLAUDE_CODE_DISABLE_1M_CONTEXT")
+        );
 
         let empty = UiStatus {
             models: Vec::new(),
