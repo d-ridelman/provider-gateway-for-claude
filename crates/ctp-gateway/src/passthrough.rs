@@ -21,6 +21,7 @@ pub async fn messages(
     started: Instant,
 ) -> Response {
     body["stream"] = json!(stream);
+    entrypoint_as_sdk_cli(&mut body);
     let url = provider.anthropic_url("/messages", uri.query());
     let request =
         upstream_headers(state.clients.stream.post(&url), provider, incoming, &body).json(&body);
@@ -181,6 +182,37 @@ fn upstream_headers(
         }
     }
     request.headers(headers)
+}
+
+/// Блок атрибуции Claude Code в начале `system` (`x-anthropic-billing-header: …;
+/// cc_entrypoint=claude-desktop-3p;`) Anthropic читает так же, как `user-agent`: интерактивная
+/// метка с ключом API даёт «credit balance is too low». Уходит меткой `claude -p` (ADR-008).
+fn entrypoint_as_sdk_cli(body: &mut Value) {
+    const HEADER: &str = "x-anthropic-billing-header:";
+    let fix = |text: &str| -> Option<String> {
+        let start = text.find("cc_entrypoint=")? + "cc_entrypoint=".len();
+        let end = text[start..].find(';').map_or(text.len(), |i| start + i);
+        (!text[start..end].starts_with("sdk-"))
+            .then(|| format!("{}sdk-cli{}", &text[..start], &text[end..]))
+    };
+    match body.get_mut("system") {
+        Some(Value::String(text)) if text.starts_with(HEADER) => {
+            if let Some(new) = fix(text) {
+                *text = new;
+            }
+        }
+        Some(Value::Array(blocks)) => {
+            for block in blocks {
+                if let Some(Value::String(text)) = block.get_mut("text")
+                    && text.starts_with(HEADER)
+                    && let Some(new) = fix(text)
+                {
+                    *text = new;
+                }
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Заголовки ответа провайдера, которые Claude Code и Desktop читают сами: когда повторять,

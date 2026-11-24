@@ -14,9 +14,14 @@ credit balance is too low to access the Anthropic API» при положите�
 вживую 2026-11-24 на Opus 5.5 через шлюз; вкладка Code и консоль PGC с ключом Anthropic не
 работали вовсе.
 
+Ту же метку Anthropic читает в блоке атрибуции в начале `system`
+(`x-anthropic-billing-header: cc_version=…; cc_entrypoint=claude-desktop-3p;`): Desktop включает
+этот блок сам, `CLAUDE_CODE_ATTRIBUTION_HEADER=0` из PGC он перезаписывает.
+
 ## Decision
 На сквозном пути `user-agent` вида `claude-cli/<версия> …` без метки `sdk-*` уходит провайдеру
-как `claude-cli/<версия> (external, sdk-cli)`. Метки `sdk-*` и чужие клиенты не трогаются. Свой
+как `claude-cli/<версия> (external, sdk-cli)`, а `cc_entrypoint` в блоке атрибуции — как
+`sdk-cli`; другие блоки `system` не трогаются. Метки `sdk-*` и чужие клиенты не трогаются. Свой
 `user-agent` в заголовках провайдера по-прежнему заменяет присланный.
 
 ## Consequences

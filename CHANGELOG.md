@@ -6,7 +6,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Fixed
 
-- **Claude Code works with an Anthropic API key, in the Code tab of Claude Desktop and in the console.** Anthropic answers an API key "Your credit balance is too low" whatever the balance when the `user-agent` is interactive Claude Code (`claude-cli/… (external, cli)`, the Code tab's `claude-desktop-3p`), so every message failed with "Billing problem". The gateway now introduces Claude Code to Anthropic-compatible providers as `claude -p` does (`sdk-cli`).
+- **Claude Code works with an Anthropic API key, in the Code tab of Claude Desktop and in the console.** Anthropic answers an API key "Your credit balance is too low" whatever the balance when the request is labelled as interactive Claude Code (`cli`, the Code tab's `claude-desktop-3p`) in the `user-agent` or in Claude Code's attribution block at the top of the system prompt, so every message failed with "Billing problem". The gateway now introduces Claude Code to Anthropic-compatible providers as `claude -p` does (`sdk-cli`) in both places.
 
 ## [0.2.2] - 2026-11-24
 

@@ -1343,6 +1343,28 @@ async fn desktop_user_agent_does_not_reach_the_provider() {
             "{sent}"
         );
     }
+    // The same label sits in Claude Code's attribution block at the top of `system`.
+    let billing = |entrypoint: &str| {
+        format!("x-anthropic-billing-header: cc_version=2.1.330.d7d; cc_entrypoint={entrypoint};")
+    };
+    for (sent, expected) in [
+        ("claude-desktop-3p", "sdk-cli"),
+        ("cli", "sdk-cli"),
+        ("sdk-ts", "sdk-ts"),
+    ] {
+        let request = post_messages(json!({
+            "model": "claude-p-00000000", "max_tokens": 8,
+            "system": [{"type": "text", "text": billing(sent)}, {"type": "text", "text": "cc_entrypoint=cli"}],
+            "messages": [{"role": "user", "content": "hi"}]
+        }));
+        let response = app(state.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let got = upstream.received_requests().await.unwrap();
+        let body: Value = serde_json::from_slice(&got.last().unwrap().body).unwrap();
+        assert_eq!(body["system"][0]["text"], billing(expected), "{sent}");
+        // Only the attribution block is touched.
+        assert_eq!(body["system"][1]["text"], "cc_entrypoint=cli");
+    }
 }
 
 #[tokio::test]
