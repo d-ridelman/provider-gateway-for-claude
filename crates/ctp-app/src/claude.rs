@@ -688,8 +688,19 @@ pub fn launch(
             // Не `child.wait()`: Claude перезапускает сам себя (после «Save & Restart» в своём
             // окне настроек), запущенный нами процесс выходит, а копия живёт дальше и снова
             // пишет в реестр свой путь. Закрытие — это свободный `lockfile` профиля.
+            // Самоперезапуск — профиль был свободен и снова занят: ключи чистятся заново,
+            // иначе до закрытия копии ссылки `claude://` открывали бы её.
+            let mut was_free = false;
             wait_until_closed(
-                || profile_in_use(&locked),
+                || {
+                    let open = profile_in_use(&locked);
+                    if open && was_free {
+                        std::thread::sleep(std::time::Duration::from_secs(20));
+                        clean();
+                    }
+                    was_free = !open;
+                    open
+                },
                 std::time::Duration::from_secs(5),
                 2,
             );
