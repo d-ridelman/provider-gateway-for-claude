@@ -35,3 +35,4 @@
 | [004](004-one-main-model.md) | Одна основная модель для Claude Code; роли и советник убраны | Accepted |
 | [005](005-claude-like-aliases.md) | Псевдонимы моделей `claude-…` и `behavesAs` для effort | Accepted |
 | [006](006-mihomo-external-core.md) | VPN — внешнее ядро mihomo, качается по запросу | Accepted |
+| [007](007-tool-search.md) | Поиск инструментов: отложенные инструменты не уходят провайдеру | Accepted |

@@ -265,6 +265,8 @@ pub fn code_env(
         // Провайдер задаёт запуск: `env` из settings.json человека не уведёт Claude Code
         // мимо шлюза (как `ollama launch claude`). Desktop своим сессиям задаёт его сам.
         ("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST".into(), "1".into()),
+        // Инструменты MCP — по требованию (ADR-007). В Desktop это ключ `toolSearchEnabled`.
+        ("ENABLE_TOOL_SEARCH".into(), "true".into()),
     ]);
     set.extend(
         SESSION_ENV
@@ -442,6 +444,10 @@ fn library_entry(
         // Как у Ollama (cmd/launch/claude_desktop.go): без списка Cowork режет плагинам и
         // MCP выход в сеть; телеметрию Anthropic профиль шлюза не шлёт.
         "coworkEgressAllowedHosts": ["*"],
+        // Инструменты MCP — по требованию через ToolSearch, как в обычном Claude; шлюз не
+        // отдаёт провайдеру отложенные, пока их не нашли (ADR-007). Без этого сотни схем
+        // уходили в каждом запросе (~150–180K токенов).
+        "toolSearchEnabled": true,
         "disableEssentialTelemetry": true,
         "disableNonessentialTelemetry": true,
     });
@@ -1391,6 +1397,8 @@ mod tests {
         assert_eq!(entry["coworkEgressAllowedHosts"], json!(["*"]));
         assert_eq!(entry["disableEssentialTelemetry"], true);
         assert_eq!(entry["disableNonessentialTelemetry"], true);
+        // Инструменты MCP — по требованию (ADR-007).
+        assert_eq!(entry["toolSearchEnabled"], true);
         let (_, env) = code_env(
             &status,
             &RoleAliases::default(),
@@ -1403,6 +1411,7 @@ mod tests {
             ("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "1"),
             ("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"),
             ("CLAUDE_CODE_INLINE_TOOLS", "false"),
+            ("ENABLE_TOOL_SEARCH", "true"),
         ] {
             assert!(env.contains(&(pair.0.into(), pair.1.into())), "{pair:?}");
         }

@@ -1,0 +1,29 @@
+# ADR-007. Поиск инструментов: отложенные инструменты не уходят провайдеру
+
+- Status: Accepted
+- Date: 2026-11-24
+
+## Context
+В режиме шлюза поиск инструментов выключен, и схемы всех инструментов MCP уходят провайдеру в
+каждом запросе. Вживую во вкладке Code: 529–626 инструментов коннекторов, ~150–180K токенов
+на ход (`docs/knowledge/issues.md`). В обычном Claude они подгружаются по требованию.
+
+Через шлюз Claude Code ищет инструменты **сам**: шлёт клиентский инструмент `ToolSearch`,
+служебный `DeferredToolPlaceholder` и остальные инструменты с `defer_loading: true`; найденный
+возвращает в `tool_result` блоком `tool_reference` (фикстуры Ollama
+`state/refs/ollama/anthropic/deferred_tools_test.go`, `docs/kb/ollama-reference.md` §7).
+Включается ключом Desktop `toolSearchEnabled` и переменной консоли `ENABLE_TOOL_SEARCH`.
+
+## Decision
+Desktop получает `toolSearchEnabled: true`, консоль — `ENABLE_TOOL_SEARCH=true`. На
+OpenAI-пути шлюз, как Ollama, не объявляет провайдеру инструмент с `defer_loading`, пока он не
+загружен: не назван в `tool_reference` и не вызывался в истории (`tool_use`). Если в запросе
+серверный `tool_search_tool_*`, скрытие выключено. `tool_reference` модель видит текстом
+«Tool loaded: <имя>», сам инструмент уже в списке `tools`. Сквозной путь тело не меняет.
+
+## Consequences
+- Запрос несёт только системные инструменты и загруженные — десятки тысяч токенов вместо
+  сотен; модель находит нужное через `ToolSearch`.
+- Модель должна уметь пользоваться `ToolSearch`: слабая модель может не догадаться искать.
+- Anthropic-совместимые провайдеры не Anthropic получают `defer_loading` и `tool_reference`
+  как есть; если какой-то их отвергнет — флаг причуд провайдера (`issues.md`).

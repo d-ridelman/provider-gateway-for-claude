@@ -437,11 +437,48 @@ fn image_part(block: &Value) -> Option<Value> {
     }
 }
 
+/// Инструменты, которые уже загружены в разговор: названы в `tool_reference` (результат
+/// `ToolSearch`) или вызывались (`tool_use`). Отложенный инструмент объявляется провайдеру
+/// только после этого (ADR-007, как `anthropic.go` у Ollama).
+fn loaded_tools(body: &Value) -> std::collections::HashSet<String> {
+    fn walk(value: &Value, out: &mut std::collections::HashSet<String>) {
+        match value {
+            Value::Array(items) => items.iter().for_each(|item| walk(item, out)),
+            Value::Object(map) => {
+                let name = match map.get("type").and_then(Value::as_str) {
+                    Some("tool_use") => map.get("name"),
+                    Some("tool_reference") => map.get("tool_name"),
+                    _ => None,
+                };
+                if let Some(name) = name.and_then(Value::as_str) {
+                    out.insert(name.to_string());
+                }
+                if let Some(content) = map.get("content") {
+                    walk(content, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut out = std::collections::HashSet::new();
+    if let Some(messages) = body.get("messages") {
+        walk(messages, &mut out);
+    }
+    out
+}
+
 fn convert_tools(body: &Value) -> Vec<Value> {
     // Повтор имени провайдеры отвергают (400 «the request is invalid»): остаётся первый.
     let mut seen = std::collections::HashSet::new();
-    body.get("tools")
-        .and_then(Value::as_array)
+    let tools = body.get("tools").and_then(Value::as_array);
+    // Серверный поиск инструментов шлюз не исполняет: с ним отложенные не прячем (как Ollama).
+    let honor_defer = !tools.into_iter().flatten().any(|tool| {
+        tool.get("type")
+            .and_then(Value::as_str)
+            .is_some_and(|kind| kind.starts_with("tool_search_tool"))
+    });
+    let loaded = loaded_tools(body);
+    tools
         .map(|tools| {
             tools
                 .iter()
@@ -449,6 +486,12 @@ fn convert_tools(body: &Value) -> Vec<Value> {
                     let name = tool.get("name").and_then(Value::as_str)?;
                     // Серверный инструмент без схемы (советник) имени не занимает.
                     let schema = portable_schema(tool.get("input_schema")?);
+                    // Отложенный и ещё не загруженный (`ToolSearch` его не нашёл) — модель о
+                    // нём не знает; `DeferredToolPlaceholder` так и не загружается никогда.
+                    let deferred = tool.get("defer_loading").and_then(Value::as_bool) == Some(true);
+                    if deferred && honor_defer && !loaded.contains(name) {
+                        return None;
+                    }
                     if !seen.insert(name.to_string()) {
                         return None;
                     }
@@ -980,6 +1023,68 @@ mod tests {
             flatten_content(&result),
             format!("Tool loaded: mcp__github__create_issue\n\n{PDF_OMITTED}")
         );
+    }
+
+    /// Claude Code через шлюз с поиском инструментов — как в фикстурах Ollama
+    /// (`state/refs/ollama/anthropic/deferred_tools_test.go`).
+    fn tool_search_request(messages: Value) -> Value {
+        json!({
+            "model": "m",
+            "tools": [
+                {"name": "Bash", "input_schema": {"type": "object", "properties": {"command": {"type": "string"}}}},
+                {"name": "Monitor", "input_schema": {"type": "object"}, "defer_loading": true},
+                {"name": "ToolSearch", "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}}},
+                {"name": "DeferredToolPlaceholder", "input_schema": {"type": "object"}, "defer_loading": true}
+            ],
+            "messages": messages
+        })
+    }
+
+    fn declared(payload: &Value) -> Vec<String> {
+        payload["tools"]
+            .as_array()
+            .map(|tools| {
+                tools
+                    .iter()
+                    .filter_map(|t| t["function"]["name"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn deferred_tools_reach_the_provider_only_once_loaded() {
+        // Before ToolSearch: deferred tools and the placeholder stay out.
+        let before = tool_search_request(json!([{"role": "user", "content": "watch the build"}]));
+        assert_eq!(
+            declared(&build(&provider(), &before, false)),
+            ["Bash", "ToolSearch"]
+        );
+        // ToolSearch returned a tool_reference: Monitor is declared now.
+        let after = tool_search_request(json!([
+            {"role": "user", "content": "watch the build"},
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "c1", "name": "ToolSearch", "input": {"query": "select:Monitor"}}]},
+            {"role": "user", "content": [
+                {"type": "tool_result", "tool_use_id": "c1", "content": [{"type": "tool_reference", "tool_name": "Monitor"}]},
+                {"type": "text", "text": "Tool loaded."}
+            ]}
+        ]));
+        assert_eq!(
+            declared(&build(&provider(), &after, false)),
+            ["Bash", "Monitor", "ToolSearch"]
+        );
+        // Called earlier in the history (session resumed): stays declared.
+        let called = tool_search_request(json!([
+            {"role": "assistant", "content": [{"type": "tool_use", "id": "c2", "name": "Monitor", "input": {}}]},
+            {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "c2", "content": "done"}]}
+        ]));
+        assert!(declared(&build(&provider(), &called, false)).contains(&"Monitor".to_string()));
+        // A server tool search the gateway does not run: nothing is hidden.
+        let mut server = before.clone();
+        server["tools"].as_array_mut().unwrap().push(
+            json!({"type": "tool_search_tool_regex_20251119", "name": "tool_search_tool_regex"}),
+        );
+        assert_eq!(declared(&build(&provider(), &server, false)).len(), 4);
     }
 
     #[test]
