@@ -58,6 +58,14 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Fixed
 
+- **Processes that Claude starts see the real `AppData\Local` in English too.** Claude runs in its own profile with `LOCALAPPDATA` pointing at the app's folder; only the copy of Claude (with its child-environment fix) gave Code sessions, their npm, uv, gh, git and MCP servers the real folder. Without Russian the original Claude was started, and those tools wrote their caches into `%LOCALAPPDATA%\ClaudeProviderGateway`. The copy is now built without Russian as well, with no translation (about 700 MB on disk); if this Claude version cannot take the fix, the original opens and the window says so.
+- **Stability after the review against Anthropic's gateway docs:**
+  - errors in Anthropic's own types: `402` billing, `503` → `529` overloaded, `504` timeout, an exhausted quota → `402`; a context overflow worded by an Anthropic-type provider becomes `prompt is too long`, so Claude Code compacts;
+  - an OpenAI stream that ends without `finish_reason` or `[DONE]` is an error, not a finished answer;
+  - passthrough relays `x-should-retry`, `request-id` and `anthropic-ratelimit-*`; a provider's own headers replace Claude's (an empty value drops one);
+  - auto mode works without the server check (`inferenceGatewayAutoModeServerChecks: false`, `CLAUDE_CODE_AUTO_MODE_SERVER=0`);
+  - the Claude Code console gets `CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST`, `CLAUDE_CODE_ENABLE_TODO_TOOLS`, `CLAUDE_CODE_INLINE_TOOLS=false`, the main model's window and output limit from the catalog;
+  - the app: a startup race of the VPN core, a reserved port (`WSAEACCES`), the core restarted after a crash, its log at `warning`, registry repair on any exit and after Claude restarts itself, the copy not built from a half-installed Claude, old copies removed, window commands off the main thread.
 - **"Open in Claude Code" in the folder menu no longer disappears after Open Claude.**
   - Claude started with the PGC profile deletes the installed Claude's `Directory\shell\ClaudeCode` keys as a whole, because the feature is off in that profile (seen live with 6.28899.6), and they stayed gone until the regular Claude restarted.
   - Every launch now takes the values of those keys and of `claude://`, and puts back whatever disappeared, after the start and after Claude closes.

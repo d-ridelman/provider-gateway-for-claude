@@ -578,13 +578,15 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
             Ok(line) => check.push(true, line),
             Err(exc) => check.push(false, format!("{exc:#}")),
         }
-        // Copy first: the Code tab line below reads the copy's app.asar, which a stale copy lacks.
-        // Только из успокоившейся папки версии: установщик ещё может её распаковывать.
-        let copy = (build_copy && settled(&app, SETTLE)).then(|| {
-            fs::read(config_dir.join(ruui::TRANSLATION_FILE))
-                .map_err(anyhow::Error::from)
-                .and_then(|ru| ruui::ensure_copy(&app, &crate::claude::copies_root()?, &ru))
-        });
+    }
+    // Copy first: the Code tab line below reads the copy's app.asar, which a stale copy lacks.
+    // Только из успокоившейся папки версии: установщик ещё может её распаковывать. Без
+    // русского — копия без перевода: ради настоящей AppData\Local у процессов Claude.
+    let copy = (build_copy && settled(&app, SETTLE)).then(|| {
+        copy_translation(config, config_dir)
+            .and_then(|ru| ruui::ensure_copy(&app, &crate::claude::copies_root()?, &ru))
+    });
+    if config.russian_ui {
         match ruui::locale_changes(&app.join("resources").join("ion-dist.asar")) {
             Ok(patches) => {
                 check.push(
@@ -606,25 +608,32 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
                 tr!("Русский интерфейс: {exc:#}", "Russian interface: {exc:#}"),
             ),
         }
-        if let Some(copy) = copy {
-            match copy {
-                Ok(_) => {
-                    check.push(true, tr!("Русская копия готова", "Russian copy is ready"));
-                    // Копия лежит вне папки установщика, и её Claude пишет «App is not
-                    // installed, not enabling auto-updates»: новые версии ставит только обычный.
-                    check.push_optional(
-                        true,
+    }
+    if let Some(copy) = copy {
+        match copy {
+            Ok(_) => {
+                check.push(
+                    true,
+                    if config.russian_ui {
+                        tr!("Русская копия готова", "Russian copy is ready")
+                    } else {
                         tr!(
-                            "Копия Claude сама не обновляется: новые версии ставит обычный Claude — открывайте его иногда",
-                            "The copy does not update Claude: new versions come from the regular Claude, open it now and then"
-                        ),
-                    );
-                }
-                Err(exc) => check.push(
-                    false,
-                    tr!("Русская копия: {exc:#}", "Russian copy: {exc:#}"),
-                ),
+                            "Копия Claude готова: его процессы видят настоящую AppData\\Local",
+                            "Claude copy is ready: its processes see the real AppData\\Local"
+                        )
+                    },
+                );
+                // Копия лежит вне папки установщика, и её Claude пишет «App is not
+                // installed, not enabling auto-updates»: новые версии ставит только обычный.
+                check.push_optional(
+                    true,
+                    tr!(
+                        "Копия Claude сама не обновляется: новые версии ставит обычный Claude — открывайте его иногда",
+                        "The copy does not update Claude: new versions come from the regular Claude, open it now and then"
+                    ),
+                );
             }
+            Err(exc) => check.push(false, tr!("Копия Claude: {exc:#}", "Claude copy: {exc:#}")),
         }
     }
     check
@@ -710,8 +719,8 @@ pub fn spawn_copy_watch(app: tauri::AppHandle) {
 const BUILD_RETRY_AFTER: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// Один шаг фоновой подготовки. `Ok(Some(версия))` — копия этой версии собрана ровно с
-/// нынешним переводом; `Ok(None)` — делать нечего или рано: русский выключен, Claude
-/// ещё ставится, перевода под версию нет, копия открыта или сборка недавно не удалась.
+/// нынешним переводом (без русского — без перевода); `Ok(None)` — делать нечего или рано:
+/// Claude ещё ставится, перевода под версию нет, копия открыта или сборка недавно не удалась.
 /// Проверка дешёвая (метка и хеш файла перевода), поэтому идёт на каждом круге: если
 /// перевод потом обновится, копия пересоберётся тоже в фоне, а не на клике.
 fn prepare_copy(
@@ -720,9 +729,6 @@ fn prepare_copy(
     copies: &Path,
     build_failed: &mut Option<(String, std::time::Instant)>,
 ) -> Result<Option<String>> {
-    if !config.russian_ui {
-        return Ok(None);
-    }
     let Some(app) = crate::claude::detect(config).as_deref().and_then(app_dir) else {
         return Ok(None);
     };
@@ -734,12 +740,14 @@ fn prepare_copy(
     if !settled(&app, SETTLE) {
         return Ok(None);
     }
-    if let Err(exc) = refresh_translation(config_dir, &app, Fetch::Watch) {
-        tracing::info!(error = %format!("{exc:#}"), "background translation download");
-    }
-    // Только со свежим под эту версию переводом: со старым копия пересобралась бы ещё раз.
-    if !translation_is_for(config_dir, &version) {
-        return Ok(None);
+    if config.russian_ui {
+        if let Err(exc) = refresh_translation(config_dir, &app, Fetch::Watch) {
+            tracing::info!(error = %format!("{exc:#}"), "background translation download");
+        }
+        // Только со свежим под эту версию переводом: со старым копия пересобралась бы ещё раз.
+        if !translation_is_for(config_dir, &version) {
+            return Ok(None);
+        }
     }
     // Пауза после неудачной сборки — раньше пробы «открыта ли копия» (переименование
     // папки): незачем дёргать её каждые 10 минут, если собирать всё равно не будем.
@@ -749,7 +757,7 @@ fn prepare_copy(
     {
         return Ok(None);
     }
-    let ru = fs::read(config_dir.join(ruui::TRANSLATION_FILE))?;
+    let ru = copy_translation(config, config_dir)?;
     match ruui::copy_state(&app, copies, &ru)? {
         ruui::CopyState::Current => {
             // Копия, открытая во время прошлой сборки, осталась рядом (до 700 МБ): убираем,
@@ -771,6 +779,19 @@ fn prepare_copy(
 }
 
 /// Перевод скачан (или сверен) под эту версию Claude.
+/// Перевод для копии: с русским — файл перевода, без него — пусто (копия без перевода,
+/// ради настоящей AppData\Local у процессов Claude).
+pub(crate) fn copy_translation(config: &Config, config_dir: &Path) -> Result<Vec<u8>> {
+    if !config.russian_ui {
+        return Ok(Vec::new());
+    }
+    let file = config_dir.join(ruui::TRANSLATION_FILE);
+    fs::read(&file).with_context(|| {
+        let file = file.display();
+        tr!("нет файла перевода {file}", "no translation file {file}")
+    })
+}
+
 fn translation_is_for(config_dir: &Path, version: &str) -> bool {
     fs::read(config_dir.join(TRANSLATION_META))
         .ok()
@@ -1008,17 +1029,20 @@ mod tests {
     }
 
     #[test]
-    fn background_does_nothing_without_russian_ui() {
-        let config = Config {
+    fn the_copy_has_a_translation_only_with_russian_on() {
+        // Without Russian the copy is built with no translation (only the real AppData\Local
+        // for Claude's processes); with it the translation file is required.
+        let dir = temp_dir("copy-translation");
+        let mut config = Config {
             russian_ui: false,
             ..Default::default()
         };
-        let mut failed = None;
-        let unused = Path::new("unused");
-        assert_eq!(
-            prepare_copy(&config, unused, unused, &mut failed).unwrap(),
-            None
-        );
+        assert!(copy_translation(&config, &dir).unwrap().is_empty());
+        config.russian_ui = true;
+        assert!(copy_translation(&config, &dir).is_err());
+        fs::write(dir.join(ruui::TRANSLATION_FILE), b"{}").unwrap();
+        assert_eq!(copy_translation(&config, &dir).unwrap(), b"{}");
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

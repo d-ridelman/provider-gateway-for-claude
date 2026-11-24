@@ -62,14 +62,16 @@ fn version_key(name: &str) -> Vec<u64> {
         .collect()
 }
 
-/// Русская копия установленной версии; любая ошибка — повод запустить оригинал.
-fn russian_copy(exe: &Path, copies: &Path, config_dir: &Path) -> anyhow::Result<PathBuf> {
+/// Копия установленной версии: с русским переводом или без него (тогда в ней только
+/// настоящая AppData\Local для процессов Claude); любая ошибка — повод запустить оригинал.
+fn claude_copy(
+    exe: &Path,
+    copies: &Path,
+    config: &Config,
+    config_dir: &Path,
+) -> anyhow::Result<PathBuf> {
     use anyhow::Context;
-    let file = config_dir.join(crate::ruui::TRANSLATION_FILE);
-    let ru = fs::read(&file).with_context(|| {
-        let file = file.display();
-        tr!("нет файла перевода {file}", "no translation file {file}")
-    })?;
+    let ru = crate::upkeep::copy_translation(config, config_dir)?;
     let app_dir = exe
         .parent()
         .with_context(|| tr!("у claude.exe нет папки", "claude.exe has no folder"))?;
@@ -617,16 +619,19 @@ pub fn launch(
     let running = profile_in_use(&profile);
     let copies = base.join("claude-ru");
     let original = exe.clone();
-    let (exe, russian, note) = if running {
+    // Копия и без русского: только в ней процессы Claude (сессии Code, их npm, uv, git,
+    // MCP) получают настоящую AppData\Local, а не папку PGC.
+    let (exe, from_copy, note) = if running {
         (exe, false, String::new())
-    } else if config.russian_ui {
-        match russian_copy(&exe, &copies, config_dir) {
-            Ok(copy) => (
+    } else {
+        match claude_copy(&exe, &copies, config, config_dir) {
+            Ok(copy) if config.russian_ui => (
                 copy,
                 true,
                 tr!(" Русский интерфейс включён.", " Russian interface is on."),
             ),
-            Err(exc) => {
+            Ok(copy) => (copy, true, String::new()),
+            Err(exc) if config.russian_ui => {
                 tracing::warn!(error = %format!("{exc:#}"), "Russian interface not applied");
                 let note = tr!(
                     " Русский интерфейс не применён ({exc:#}) — запущен обычный Claude.",
@@ -634,9 +639,15 @@ pub fn launch(
                 );
                 (exe, false, note)
             }
+            Err(exc) => {
+                tracing::warn!(error = %format!("{exc:#}"), "Claude copy not built");
+                let note = tr!(
+                    " Копия Claude не собрана ({exc:#}) — запущен обычный Claude, его процессы видят папку PGC вместо AppData\\Local.",
+                    " Claude copy not built ({exc:#}); started the regular Claude, its processes see PGC's folder instead of AppData\\Local."
+                );
+                (exe, false, note)
+            }
         }
-    } else {
-        (exe, false, String::new())
     };
     let library = profile.join("configLibrary");
     fs::create_dir_all(&library)
@@ -701,7 +712,7 @@ pub fn launch(
     let portable =
         crate::installs::desktop_home().filter(|_| crate::installs::is_portable_desktop(&original));
     #[cfg(windows)]
-    let before = russian.then(|| crate::ruui::registry::snapshot(&copies));
+    let before = from_copy.then(|| crate::ruui::registry::snapshot(&copies));
     #[cfg(windows)]
     let before_portable = portable
         .as_ref()
@@ -726,7 +737,7 @@ pub fn launch(
     {
         let locked = profile.clone();
         let clean = move || {
-            if russian {
+            if from_copy {
                 repair_for(&copies, &original, before.as_ref());
             }
             if let Some(home) = &portable {
@@ -766,8 +777,9 @@ pub fn launch(
             "Claude запущен (PID {pid}). Профиль: {profile}.{note}",
             "Claude started (PID {pid}). Profile: {profile}.{note}"
         ),
-        // Русский просили, а открылся обычный Claude — окно покажет это как ошибку.
-        warning: config.russian_ui && !russian,
+        // Открылся обычный Claude, а не копия (без перевода или без настоящей
+        // AppData\Local у процессов) — окно покажет это как ошибку.
+        warning: !from_copy,
     })
 }
 

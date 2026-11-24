@@ -648,7 +648,8 @@ fn trash_name(version: &str) -> String {
 }
 
 /// Сначала патч (если версия не подходит — отказ до копирования 700 МБ),
-/// потом копия остальных файлов, метка последней.
+/// потом копия остальных файлов, метка последней. Пустой `ru_json` — копия без перевода
+/// (английский интерфейс): в ней только настоящая AppData\Local для процессов Claude.
 fn build(app_dir: &Path, building: &Path, ru_json: &[u8], marker: &str) -> Result<()> {
     if building.exists() {
         fs::remove_dir_all(building)?;
@@ -656,16 +657,21 @@ fn build(app_dir: &Path, building: &Path, ru_json: &[u8], marker: &str) -> Resul
     let src_exe = app_dir.join("claude.exe");
     let src_asar = app_dir.join("resources").join("ion-dist.asar");
     fs::create_dir_all(building.join("resources"))?;
-    let (old_hash, new_hash) = patch_ion_dist(
-        &src_asar,
-        &building.join("resources").join("ion-dist.asar"),
-        ru_json,
-    )?;
-    let mut exe = patch_exe(&fs::read(&src_exe)?, &old_hash, &new_hash)?;
+    let mut exe = fs::read(&src_exe)?;
+    let mut skip = vec![src_exe];
+    if !ru_json.is_empty() {
+        let (old_hash, new_hash) = patch_ion_dist(
+            &src_asar,
+            &building.join("resources").join("ion-dist.asar"),
+            ru_json,
+        )?;
+        exe = patch_exe(&exe, &old_hash, &new_hash)?;
+        skip.push(src_asar);
+    }
     // Настоящая AppData\Local для процессов копии. Не вышло (Claude устроен иначе) —
-    // копия всё равно собирается, без этой правки; самопроверка это покажет.
+    // русская копия всё равно собирается, без этой правки; самопроверка это покажет.
+    // Копия без перевода без неё не нужна: тогда отказ, и запускается оригинал.
     let src_app = app_dir.join("resources").join("app.asar");
-    let mut skip = vec![src_exe, src_asar];
     let dst_app = building.join("resources").join("app.asar");
     let applied = env_prelude_change(&src_app)
         .and_then(|change| rebuild(&src_app, &dst_app, &[change]))
@@ -675,6 +681,7 @@ fn build(app_dir: &Path, building: &Path, ru_json: &[u8], marker: &str) -> Resul
             exe = patched;
             skip.push(src_app);
         }
+        Err(exc) if ru_json.is_empty() => return Err(exc),
         Err(exc) => {
             // Исходный app.asar скопирует copy_tree ниже: копия без правки, но целая.
             let _ = fs::remove_file(&dst_app);
@@ -1351,6 +1358,42 @@ mod tests {
         assert!(copy.join("app.asar.unpacked").join("native.node").is_file());
         // Self-check reads the built copy: the prelude is there.
         assert!(env_prelude_ok(&app, &cache));
+
+        // Without Russian: the same prelude, the interface bundle left as it is.
+        let plain = dir.join("plain");
+        let exe = ensure_copy(&app, &plain, &[]).unwrap();
+        let copy = plain.join("app-9.9.9").join("resources");
+        let (patched, _) = read_file(&copy.join("app.asar"), ".vite/build/index.pre.js");
+        assert!(patched.starts_with(br#""use strict";;(()=>{try{"#));
+        assert_eq!(
+            fs::read(copy.join("ion-dist.asar")).unwrap(),
+            fs::read(resources.join("ion-dist.asar")).unwrap()
+        );
+        let exe_text = String::from_utf8(fs::read(&exe).unwrap()).unwrap();
+        assert!(exe_text.contains(&ion));
+        assert!(exe_text.contains(&header_hash(&copy.join("app.asar"))));
+        assert_eq!(copy_state(&app, &plain, &[]).unwrap(), CopyState::Current);
+        // Turning Russian on later rebuilds it: the translation is part of the marker.
+        assert_eq!(
+            copy_state(&app, &plain, &big_translation()).unwrap(),
+            CopyState::Stale
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_copy_without_translation_needs_the_prelude() {
+        // A Claude whose app.asar this version cannot patch: a plain copy would change nothing,
+        // so it is refused and the original opens.
+        let dir = temp_dir("plain-refused");
+        let app = dir.join("install").join("app-9.9.9");
+        fs::create_dir_all(app.join("resources")).unwrap();
+        sample_asar(&app.join("resources").join("ion-dist.asar"));
+        fs::write(app.join("resources").join("app.asar"), b"app").unwrap();
+        fs::write(app.join("claude.exe"), b"MZ").unwrap();
+        let cache = dir.join("cache");
+        assert!(ensure_copy(&app, &cache, &[]).is_err());
+        assert!(!cache.join("app-9.9.9").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
 
