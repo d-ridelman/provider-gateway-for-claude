@@ -13,4 +13,4 @@ paths:
 - Любая строка — в `i18n.js` на ru и en; `node tools/check_i18n.js` проверяет пару.
 - Проверять результат, а не CSS: `node tools/ui-shots.mjs` (светлая и тёмная тема, 1920/1280,
   пусто/ошибка/загрузка/длинный текст), выравнивание — замером `getBoundingClientRect`,
-  `--detect` без P0–P1. Картинки README — `--only docs- --out state/docs-shots`.
+  `--detect` без находок (нужен плагин impeccable). Картинки README — `--only docs- --out state/docs-shots`.

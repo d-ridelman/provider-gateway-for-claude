@@ -9,7 +9,8 @@
 обычный Claude с аккаунтом Anthropic, его трогать нельзя.
 
 ## Decision
-PGC запускает Claude с `LOCALAPPDATA=%LOCALAPPDATA%\ClaudeProviderGateway` и
+PGC запускает Claude с `LOCALAPPDATA=%LOCALAPPDATA%\ClaudeProviderGateway` (dev-сборка —
+`ClaudeProviderGateway-dev`, при `CLAUDE_GATEWAY_HOME` — `<home>\claude`, `claude::base_dir`) и
 `--user-data-dir` своего профиля. Запись `configLibrary` и `deploymentMode: "3p"` пишутся
 только туда; в `%APPDATA%\Claude` PGC не пишет.
 

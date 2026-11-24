@@ -6,5 +6,8 @@
 .vscode/
 .idea/
 /state/
+# Claude Code: worktrees of parallel sessions and local settings.
+/.claude/worktrees/
+/.claude/settings.local.json
 # Local handoff notes and the backup of the updater signing key: never published.
 /handoff/
