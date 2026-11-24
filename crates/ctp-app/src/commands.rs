@@ -6,13 +6,13 @@ use crate::{claude, runtime, store, tr};
 use std::process::Command;
 use tauri::State;
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_config(shared: State<'_, AppShared>) -> Result<UiConfig, String> {
     let config = shared.config.lock().unwrap().clone();
     Ok(store::ui_config(&config, &shared.config_dir))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_provider(
     shared: State<'_, AppShared>,
     input: SaveProviderInput,
@@ -138,7 +138,7 @@ pub async fn test_provider(input: ProbeInput) -> Result<String, String> {
     ))
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn delete_provider(shared: State<'_, AppShared>, id: String) -> Result<UiConfig, String> {
     delete_provider_in(&shared, &id)
 }
@@ -157,7 +157,7 @@ fn delete_provider_in(shared: &AppShared, id: &str) -> Result<UiConfig, String> 
     Ok(ui)
 }
 
-#[tauri::command]
+#[tauri::command(async)]
 pub fn save_settings(
     app: tauri::AppHandle,
     shared: State<'_, AppShared>,
@@ -221,7 +221,7 @@ fn pick(value: Option<String>, allowed: &[&str]) -> Option<String> {
 
 /// Быстрые переключатели в заголовке окна: тема и язык, без остальных настроек.
 /// `theme`: `light` / `dark` / `auto`; `language`: `ru` / `en` / `auto`; `None` — не менять.
-#[tauri::command]
+#[tauri::command(async)]
 pub fn set_ui(
     app: tauri::AppHandle,
     shared: State<'_, AppShared>,
