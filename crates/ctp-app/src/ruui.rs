@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 /// Файл перевода в папке настроек приложения.
 pub const TRANSLATION_FILE: &str = "claude-ru.json";
 /// Меняется, когда меняется сам патч: старые копии пересобираются.
-const PATCH_REV: u32 = 9;
+const PATCH_REV: u32 = 10;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
 
@@ -198,8 +198,15 @@ fn replace_all(data: &[u8], old: &[u8], new: &[u8]) -> Option<Vec<u8>> {
     })
 }
 
-/// `ion-dist.asar` с русским: `i18n/ru.json` и `"ru"` в списке языков бандлов.
-pub fn patch_ion_dist(src: &Path, dst: &Path, ru_json: &[u8]) -> Result<(String, String)> {
+/// `ion-dist.asar` с русским: `i18n/ru.json`, `i18n/dynamic/ru.json` (см. `catalog_ru`) и
+/// `"ru"` в списке языков бандлов. `catalog` — скачанный с claude.ai `dynamic/ru.json`,
+/// пусто — его нет.
+pub fn patch_ion_dist(
+    src: &Path,
+    dst: &Path,
+    ru_json: &[u8],
+    catalog: &[u8],
+) -> Result<(String, String)> {
     let map: serde_json::Map<String, Value> =
         serde_json::from_slice(ru_json).with_context(|| {
             tr!(
@@ -218,18 +225,77 @@ pub fn patch_ion_dist(src: &Path, dst: &Path, ru_json: &[u8]) -> Result<(String,
     );
 
     let mut changes = locale_changes(src)?.files;
+    let menu = catalog_ru(src, &map, catalog);
+    tracing::info!(
+        translated = menu.translated,
+        total = menu.total,
+        "effort menu strings"
+    );
     changes.push(("i18n/ru.json".to_string(), ru_json.to_vec()));
-    changes.push((
-        "i18n/dynamic/ru.json".to_string(),
-        CATALOG_RU.as_bytes().to_vec(),
-    ));
+    changes.push(("i18n/dynamic/ru.json".to_string(), menu.json));
     rebuild(src, dst, &changes)
 }
 
-/// Подписи из каталога моделей (уровни усилий, их описание, режимы размышлений) Claude
-/// переводит вторым файлом языка, `i18n/dynamic/<язык>.json`; для русского его нет, и меню
-/// усилий оставалось английским. Ключи — как в `dynamic/en-US.json` Claude 6.28899.
+/// Запасной перевод подписей каталога моделей (уровни усилий, их описание, режимы
+/// размышлений): ключи — как в `dynamic/en-US.json` Claude 6.28899.
 const CATALOG_RU: &str = include_str!("ru-catalog.json");
+
+/// Русский `i18n/dynamic/ru.json` для версии Claude и сколько строк в нём из скольких.
+pub struct Catalog {
+    pub json: Vec<u8>,
+    pub translated: usize,
+    pub total: usize,
+}
+
+/// Подписи каталога моделей Claude переводит вторым файлом языка, `i18n/dynamic/<язык>.json`
+/// (ADR-009). Он собирается под ключи `dynamic/en-US.json` этой версии: для каждого — первый
+/// найденный из скачанного с claude.ai (`official`), вшитого `CATALOG_RU` и основного перевода
+/// строки `en-US.json` с тем же английским текстом. Сначала источники по ключу: короткие
+/// строки («High») по тексту могут совпасть с чужими. Не нашлось — ключа нет, Claude покажет
+/// его по-английски. Нет `dynamic/en-US.json` (версия устроена иначе) — скачанный поверх вшитого.
+pub fn catalog_ru(src: &Path, ru: &serde_json::Map<String, Value>, official: &[u8]) -> Catalog {
+    type Map = serde_json::Map<String, Value>;
+    let parse = |raw: &[u8]| serde_json::from_slice::<Map>(raw).unwrap_or_default();
+    let read = |path: &str| read_asar_file(src, path).ok().map(|raw| parse(&raw));
+    let official = parse(official);
+    let bundled = parse(CATALOG_RU.as_bytes());
+    let mut out = Map::new();
+    let total = match read("i18n/dynamic/en-US.json") {
+        Some(english) => {
+            // Английский текст основного файла → его ключ (первый из одинаковых).
+            let mut by_text: std::collections::HashMap<String, String> = Default::default();
+            for (key, text) in read("i18n/en-US.json").unwrap_or_default() {
+                if let Value::String(text) = text {
+                    by_text.entry(text).or_insert(key);
+                }
+            }
+            for (key, text) in &english {
+                let by_english = text
+                    .as_str()
+                    .and_then(|text| by_text.get(text))
+                    .and_then(|id| ru.get(id));
+                let found = [official.get(key), bundled.get(key), by_english]
+                    .into_iter()
+                    .flatten()
+                    .find(|value| value.as_str().is_some_and(|s| !s.is_empty()));
+                if let Some(value) = found {
+                    out.insert(key.clone(), value.clone());
+                }
+            }
+            english.len()
+        }
+        None => {
+            out = bundled;
+            out.extend(official.into_iter().filter(|(_, v)| v.is_string()));
+            out.len()
+        }
+    };
+    Catalog {
+        translated: out.len(),
+        total,
+        json: serde_json::to_vec(&out).unwrap_or_else(|_| b"{}".to_vec()),
+    }
+}
 
 /// Изменённые бандлы интерфейса для копии.
 pub struct BundlePatches {
@@ -453,8 +519,13 @@ fn copy_tree(src: &Path, dst: &Path, skip: &[PathBuf]) -> Result<()> {
 
 /// Готовая русская копия версии `app_dir` в `cache_root`; собирается, если её нет
 /// или изменились исходники, перевод или патч. Возвращает путь к её `claude.exe`.
-pub fn ensure_copy(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<PathBuf> {
-    let (version, marker) = copy_marker(app_dir, ru_json)?;
+pub fn ensure_copy(
+    app_dir: &Path,
+    cache_root: &Path,
+    ru_json: &[u8],
+    catalog: &[u8],
+) -> Result<PathBuf> {
+    let (version, marker) = copy_marker(app_dir, ru_json, catalog)?;
     let target = cache_root.join(&version);
     let ready = target.join("claude.exe");
     // Две сборки разом удаляли бы файлы друг у друга. Вторая ждёт первую (фоновую
@@ -479,7 +550,7 @@ pub fn ensure_copy(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<
     remove_leftovers(cache_root, &version);
 
     let building = cache_root.join(format!("{version}.building"));
-    if let Err(exc) = build(app_dir, &building, ru_json, &marker) {
+    if let Err(exc) = build(app_dir, &building, ru_json, catalog, &marker) {
         let _ = fs::remove_dir_all(&building);
         return Err(exc);
     }
@@ -523,7 +594,7 @@ pub fn ensure_copy(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<
 static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Версия (`app-…`) и метка копии: исходники, патч и перевод. Совпала метка — копия годна.
-fn copy_marker(app_dir: &Path, ru_json: &[u8]) -> Result<(String, String)> {
+fn copy_marker(app_dir: &Path, ru_json: &[u8], catalog: &[u8]) -> Result<(String, String)> {
     let version = app_dir
         .file_name()
         .and_then(|n| n.to_str())
@@ -539,7 +610,13 @@ fn copy_marker(app_dir: &Path, ru_json: &[u8]) -> Result<(String, String)> {
         "rev": PATCH_REV,
         "exe": stamp(&app_dir.join("claude.exe"))?,
         "asar": stamp(&app_dir.join("resources").join("ion-dist.asar"))?,
-        "ru": sha256_hex(ru_json),
+        // Скачанный перевод меню — в той же метке перевода: открытая копия при его смене
+        // ждёт закрытия, как при смене основного (`only_translation_differs`).
+        "ru": if catalog.is_empty() {
+            sha256_hex(ru_json)
+        } else {
+            format!("{}+{}", sha256_hex(ru_json), sha256_hex(catalog))
+        },
     })
     .to_string();
     Ok((version, marker))
@@ -557,8 +634,13 @@ pub enum CopyState {
 }
 
 /// Состояние копии; под `BUILD`, чтобы не смотреть на копию посреди чужой сборки.
-pub fn copy_state(app_dir: &Path, cache_root: &Path, ru_json: &[u8]) -> Result<CopyState> {
-    let (version, marker) = copy_marker(app_dir, ru_json)?;
+pub fn copy_state(
+    app_dir: &Path,
+    cache_root: &Path,
+    ru_json: &[u8],
+    catalog: &[u8],
+) -> Result<CopyState> {
+    let (version, marker) = copy_marker(app_dir, ru_json, catalog)?;
     let target = cache_root.join(&version);
     let ready = target.join("claude.exe");
     let _build = BUILD
@@ -659,7 +741,13 @@ fn trash_name(version: &str) -> String {
 /// Сначала патч (если версия не подходит — отказ до копирования 700 МБ),
 /// потом копия остальных файлов, метка последней. Пустой `ru_json` — копия без перевода
 /// (английский интерфейс): в ней только настоящая AppData\Local для процессов Claude.
-fn build(app_dir: &Path, building: &Path, ru_json: &[u8], marker: &str) -> Result<()> {
+fn build(
+    app_dir: &Path,
+    building: &Path,
+    ru_json: &[u8],
+    catalog: &[u8],
+    marker: &str,
+) -> Result<()> {
     if building.exists() {
         fs::remove_dir_all(building)?;
     }
@@ -673,6 +761,7 @@ fn build(app_dir: &Path, building: &Path, ru_json: &[u8], marker: &str) -> Resul
             &src_asar,
             &building.join("resources").join("ion-dist.asar"),
             ru_json,
+            catalog,
         )?;
         exe = patch_exe(&exe, &old_hash, &new_hash)?;
         skip.push(src_asar);
@@ -1185,7 +1274,7 @@ mod tests {
         let gate = br#"function Ub(){return Ve("claudeai_cc_epitaxy_folderless_start_main")}"#;
         sample_asar_full(&src, LOCALES, gate);
         assert!(locale_changes(&src).unwrap().folderless);
-        patch_ion_dist(&src, &dst, &big_translation()).unwrap();
+        patch_ion_dist(&src, &dst, &big_translation(), &[]).unwrap();
         let (js, integ) = read_file(&dst, "assets/v1/b.js");
         assert_eq!(js, br#"function Ub(){return !0}"#.to_vec());
         assert_eq!(integ, integrity(&js));
@@ -1225,7 +1314,7 @@ mod tests {
         let ru = big_translation();
         assert!(ru.len() > BLOCK);
 
-        let (old_hash, new_hash) = patch_ion_dist(&src, &dst, &ru).unwrap();
+        let (old_hash, new_hash) = patch_ion_dist(&src, &dst, &ru, &[]).unwrap();
         assert_ne!(old_hash, new_hash);
 
         let (data, integ) = read_file(&dst, "i18n/ru.json");
@@ -1235,10 +1324,12 @@ mod tests {
         assert_eq!(integ["blocks"][1], sha256_hex(&ru[BLOCK..]));
 
         // The effort menu's catalog strings: Claude reads them from the dynamic language file.
-        let (dynamic, integ) = read_file(&dst, "i18n/dynamic/ru.json");
-        let dynamic: serde_json::Map<String, Value> = serde_json::from_slice(&dynamic).unwrap();
+        // This sample has no dynamic/en-US.json, so the bundled catalog goes in whole.
+        let (raw, integ) = read_file(&dst, "i18n/dynamic/ru.json");
+        let dynamic: serde_json::Map<String, Value> = serde_json::from_slice(&raw).unwrap();
         assert_eq!(dynamic["HoZQmASaw3"], "Очень высокий");
-        assert_eq!(integ["hash"], sha256_hex(CATALOG_RU.as_bytes()));
+        assert_eq!(dynamic.len(), 51);
+        assert_eq!(integ["hash"], sha256_hex(&raw));
 
         let (js, integ) = read_file(&dst, "assets/v1/a.js");
         assert_eq!(js, [b"var zm=".as_slice(), LOCALES_RU, b";"].concat());
@@ -1252,20 +1343,89 @@ mod tests {
         fs::remove_dir_all(&dir).unwrap();
     }
 
+    /// ADR-009: per key of this Claude's dynamic/en-US.json — the downloaded file, then the
+    /// bundled catalog, then the main translation of the same English text; else no key.
+    #[test]
+    fn menu_translation_takes_sources_in_order() {
+        let dir = temp_dir("catalog");
+        let src = dir.join("src.asar");
+        let english = json!({
+            "official": "Official only",
+            "2EcGZn58SU": "Auto thinking",  // bundled too: the downloaded one wins
+            "HoZQmASaw3": "Medium",         // bundled; its text also matches m1
+            "by-text": "Medium",
+            "nowhere": "Nothing",
+        });
+        write_asar(
+            &src,
+            &[
+                (
+                    "i18n/en-US.json".into(),
+                    br#"{"m0":"Other","m1":"Medium","m2":"Medium"}"#.to_vec(),
+                ),
+                (
+                    "i18n/dynamic/en-US.json".into(),
+                    serde_json::to_vec(&english).unwrap(),
+                ),
+            ],
+        );
+        let ru: serde_json::Map<String, Value> =
+            serde_json::from_value(json!({"m1": "Средний", "m2": "Другой"})).unwrap();
+        let official = r#"{"official":"Официальный","2EcGZn58SU":"Скачанный","stale":"Старый"}"#;
+
+        let menu = catalog_ru(&src, &ru, official.as_bytes());
+        let out: Value = serde_json::from_slice(&menu.json).unwrap();
+        assert_eq!(
+            out,
+            json!({
+                "official": "Официальный",
+                "2EcGZn58SU": "Скачанный",
+                "HoZQmASaw3": "Очень высокий",
+                "by-text": "Средний",
+            })
+        );
+        assert_eq!((menu.translated, menu.total), (4, 5));
+
+        // Nothing downloaded: the bundled catalog and the text match still cover their keys.
+        let out: Value = serde_json::from_slice(&catalog_ru(&src, &ru, b"").json).unwrap();
+        assert_eq!(out["2EcGZn58SU"], "Автоматические размышления");
+        assert_eq!(out["by-text"], "Средний");
+        assert!(out.get("official").is_none());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_new_menu_translation_changes_only_the_translation_part_of_the_marker() {
+        let dir = temp_dir("marker");
+        let app = dir.join("app-1.0.0");
+        fs::create_dir_all(app.join("resources")).unwrap();
+        fs::write(app.join("claude.exe"), b"exe").unwrap();
+        fs::write(app.join("resources").join("ion-dist.asar"), b"asar").unwrap();
+        let (_, plain) = copy_marker(&app, b"ru", b"").unwrap();
+        let (_, with) = copy_marker(&app, b"ru", b"{}").unwrap();
+        let (_, other) = copy_marker(&app, b"ru", br#"{"a":"b"}"#).unwrap();
+        assert_ne!(plain, with);
+        assert_ne!(with, other);
+        // An open copy keeps running until closed, as with a new main translation.
+        fs::write(dir.join("marker"), &plain).unwrap();
+        assert!(only_translation_differs(&dir.join("marker"), &other));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn refuses_unknown_bundle_and_bad_translation() {
         let dir = temp_dir("refuse");
         let (src, dst) = (dir.join("src.asar"), dir.join("dst.asar"));
         sample_asar(&src);
-        assert!(patch_ion_dist(&src, &dst, b"not json").is_err());
-        assert!(patch_ion_dist(&src, &dst, b"{\"a\":\"b\"}").is_err());
+        assert!(patch_ion_dist(&src, &dst, b"not json", &[]).is_err());
+        assert!(patch_ion_dist(&src, &dst, b"{\"a\":\"b\"}", &[]).is_err());
 
         // Бандл, где список не совпадает с файлами языков (другая версия), — отказ, а не
         // «тихо без русского».
         let bytes = fs::read(&src).unwrap();
         let altered = replace_all(&bytes, b"\"id-ID\"]", b"\"xx-XX\"]").unwrap();
         fs::write(&src, altered).unwrap();
-        let error = patch_ion_dist(&src, &dst, &big_translation()).unwrap_err();
+        let error = patch_ion_dist(&src, &dst, &big_translation(), &[]).unwrap_err();
         assert!(error.to_string().contains("список языков"), "{error}");
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1276,7 +1436,7 @@ mod tests {
         let (src, dst) = (dir.join("src.asar"), dir.join("dst.asar"));
         let list = br#"["en-US","pl-PL","de-DE","ja-JP"]"#;
         sample_asar_with(&src, list);
-        patch_ion_dist(&src, &dst, &big_translation()).unwrap();
+        patch_ion_dist(&src, &dst, &big_translation(), &[]).unwrap();
         let (js, _) = read_file(&dst, "assets/v1/a.js");
         assert_eq!(js, br#"var zm=["en-US","pl-PL","de-DE","ja-JP","ru"];"#);
         fs::remove_dir_all(&dir).unwrap();
@@ -1310,7 +1470,7 @@ mod tests {
     fn real_install() {
         let var = |name: &str| PathBuf::from(std::env::var_os(name).expect(name));
         let ru = fs::read(var("CTP_RU_JSON")).unwrap();
-        let exe = ensure_copy(&var("CTP_RU_APP"), &var("CTP_RU_OUT"), &ru).unwrap();
+        let exe = ensure_copy(&var("CTP_RU_APP"), &var("CTP_RU_OUT"), &ru, &[]).unwrap();
         println!("copy: {}", exe.display());
     }
 
@@ -1357,7 +1517,7 @@ mod tests {
         fs::write(app.join("claude.exe"), format!("MZ{ion}MZ{app_hash}MZ")).unwrap();
 
         let cache = dir.join("cache");
-        let exe = ensure_copy(&app, &cache, &big_translation()).unwrap();
+        let exe = ensure_copy(&app, &cache, &big_translation(), &[]).unwrap();
         let copy = cache.join("app-9.9.9").join("resources");
         let (patched, integ) = read_file(&copy.join("app.asar"), ".vite/build/index.pre.js");
         assert!(patched.starts_with(
@@ -1376,7 +1536,7 @@ mod tests {
 
         // Without Russian: the same prelude, the interface bundle left as it is.
         let plain = dir.join("plain");
-        let exe = ensure_copy(&app, &plain, &[]).unwrap();
+        let exe = ensure_copy(&app, &plain, &[], &[]).unwrap();
         let copy = plain.join("app-9.9.9").join("resources");
         let (patched, _) = read_file(&copy.join("app.asar"), ".vite/build/index.pre.js");
         assert!(patched.starts_with(br#""use strict";;(()=>{try{"#));
@@ -1387,10 +1547,13 @@ mod tests {
         let exe_text = String::from_utf8(fs::read(&exe).unwrap()).unwrap();
         assert!(exe_text.contains(&ion));
         assert!(exe_text.contains(&header_hash(&copy.join("app.asar"))));
-        assert_eq!(copy_state(&app, &plain, &[]).unwrap(), CopyState::Current);
+        assert_eq!(
+            copy_state(&app, &plain, &[], &[]).unwrap(),
+            CopyState::Current
+        );
         // Turning Russian on later rebuilds it: the translation is part of the marker.
         assert_eq!(
-            copy_state(&app, &plain, &big_translation()).unwrap(),
+            copy_state(&app, &plain, &big_translation(), &[]).unwrap(),
             CopyState::Stale
         );
         fs::remove_dir_all(&dir).unwrap();
@@ -1407,7 +1570,7 @@ mod tests {
         fs::write(app.join("resources").join("app.asar"), b"app").unwrap();
         fs::write(app.join("claude.exe"), b"MZ").unwrap();
         let cache = dir.join("cache");
-        assert!(ensure_copy(&app, &cache, &[]).is_err());
+        assert!(ensure_copy(&app, &cache, &[], &[]).is_err());
         assert!(!cache.join("app-9.9.9").exists());
         fs::remove_dir_all(&dir).unwrap();
     }
@@ -1482,9 +1645,15 @@ util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.
 
         let cache = dir.join("cache");
         let ru = big_translation();
-        assert_eq!(copy_state(&app, &cache, &ru).unwrap(), CopyState::Stale);
-        let exe = ensure_copy(&app, &cache, &ru).unwrap();
-        assert_eq!(copy_state(&app, &cache, &ru).unwrap(), CopyState::Current);
+        assert_eq!(
+            copy_state(&app, &cache, &ru, &[]).unwrap(),
+            CopyState::Stale
+        );
+        let exe = ensure_copy(&app, &cache, &ru, &[]).unwrap();
+        assert_eq!(
+            copy_state(&app, &cache, &ru, &[]).unwrap(),
+            CopyState::Current
+        );
         assert_eq!(exe, cache.join("app-9.9.9").join("claude.exe"));
         assert!(
             cache
@@ -1515,7 +1684,7 @@ util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.
         // Повторный вызов ничего не пересобирает.
         let marker = cache.join("app-9.9.9").join(MARKER);
         let stamp_before = fs::metadata(&marker).unwrap().modified().unwrap();
-        ensure_copy(&app, &cache, &ru).unwrap();
+        ensure_copy(&app, &cache, &ru, &[]).unwrap();
         assert_eq!(
             fs::metadata(&marker).unwrap().modified().unwrap(),
             stamp_before
@@ -1526,11 +1695,14 @@ util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.
         let mut other = ru.clone();
         other.splice(1..1, b"\"extra\":\"x\",".iter().copied());
         // Закрытая устаревшая копия — Stale (не Open), пробой не повреждена.
-        assert_eq!(copy_state(&app, &cache, &other).unwrap(), CopyState::Stale);
-        assert!(exe.is_file());
-        ensure_copy(&app, &cache, &other).unwrap();
         assert_eq!(
-            copy_state(&app, &cache, &other).unwrap(),
+            copy_state(&app, &cache, &other, &[]).unwrap(),
+            CopyState::Stale
+        );
+        assert!(exe.is_file());
+        ensure_copy(&app, &cache, &other, &[]).unwrap();
+        assert_eq!(
+            copy_state(&app, &cache, &other, &[]).unwrap(),
             CopyState::Current
         );
         assert!(!cache.join("app-1.0.0").exists());
@@ -1552,7 +1724,7 @@ util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.
             let waiter = {
                 let (app, cache) = (app.clone(), cache.clone());
                 let other = other.clone();
-                std::thread::spawn(move || ensure_copy(&app, &cache, &other))
+                std::thread::spawn(move || ensure_copy(&app, &cache, &other, &[]))
             };
             std::thread::sleep(std::time::Duration::from_millis(200));
             assert!(!waiter.is_finished(), "ждёт идущую сборку");
@@ -1573,12 +1745,12 @@ util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.
                 .unwrap();
             // Для фона: копия открыта и устарела (собрана с `other`) — Open, а при её
             // же переводе — Current без всякой пробы.
-            assert_eq!(copy_state(&app, &cache, &ru).unwrap(), CopyState::Open);
+            assert_eq!(copy_state(&app, &cache, &ru, &[]).unwrap(), CopyState::Open);
             assert_eq!(
-                copy_state(&app, &cache, &other).unwrap(),
+                copy_state(&app, &cache, &other, &[]).unwrap(),
                 CopyState::Current
             );
-            assert_eq!(ensure_copy(&app, &cache, &ru).unwrap(), exe);
+            assert_eq!(ensure_copy(&app, &cache, &ru, &[]).unwrap(), exe);
             // «Обновлённый» Claude: тот же файл с другой отметкой времени.
             let original = fs::OpenOptions::new()
                 .write(true)
@@ -1587,7 +1759,7 @@ util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.
             let later = std::time::SystemTime::now() + std::time::Duration::from_secs(120);
             original.set_modified(later).unwrap();
             drop(original);
-            let error = ensure_copy(&app, &cache, &ru).unwrap_err();
+            let error = ensure_copy(&app, &cache, &ru, &[]).unwrap_err();
             assert!(error.to_string().contains("открыта"), "{error}");
             drop(running);
             assert!(
@@ -1602,7 +1774,7 @@ util.promisify(cp.execFile)(process.execPath,show).then((r)=>{out.push(typeof r.
         let asar = app.join("resources").join("ion-dist.asar");
         let altered = replace_all(&fs::read(&asar).unwrap(), b"\"id-ID\"]", b"\"xx-XX\"]").unwrap();
         fs::write(&asar, &altered).unwrap();
-        assert!(ensure_copy(&app, &cache, &ru).is_err());
+        assert!(ensure_copy(&app, &cache, &ru, &[]).is_err());
         assert_eq!(names(&cache), vec!["app-9.9.9"]);
         fs::write(&asar, &asar_before).unwrap();
 

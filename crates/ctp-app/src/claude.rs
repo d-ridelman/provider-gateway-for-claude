@@ -71,7 +71,7 @@ fn claude_copy(
     config_dir: &Path,
 ) -> anyhow::Result<PathBuf> {
     use anyhow::Context;
-    let ru = crate::upkeep::copy_translation(config, config_dir)?;
+    let (ru, catalog) = crate::upkeep::copy_translation(config, config_dir)?;
     let app_dir = exe
         .parent()
         .with_context(|| tr!("у claude.exe нет папки", "claude.exe has no folder"))?;
@@ -87,7 +87,7 @@ fn claude_copy(
     // Собирать копию из версии, которую установщик ещё распаковывает, нельзя: недостроенная
     // копия по своей метке считалась бы готовой. Пока папка не успокоилась — оригинал.
     anyhow::ensure!(
-        crate::ruui::copy_state(app_dir, copies, &ru)? == crate::ruui::CopyState::Current
+        crate::ruui::copy_state(app_dir, copies, &ru, &catalog)? == crate::ruui::CopyState::Current
             || crate::upkeep::settled(app_dir, crate::upkeep::SETTLE),
         "{}",
         tr!(
@@ -95,7 +95,7 @@ fn claude_copy(
             "Claude {dir} is still being installed; the Russian copy will be built in a couple of minutes"
         )
     );
-    crate::ruui::ensure_copy(app_dir, copies, &ru)
+    crate::ruui::ensure_copy(app_dir, copies, &ru, &catalog)
 }
 
 /// Переменные, которые оставляет Claude Code / Desktop, если приложение запущено из

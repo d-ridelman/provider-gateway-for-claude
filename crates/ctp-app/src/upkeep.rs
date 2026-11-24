@@ -19,6 +19,10 @@ use std::time::Duration;
 const RULES_CACHE: &str = "claude-rules.json";
 const TRANSLATION_META: &str = "claude-ru.meta.json";
 const TRANSLATION_URL: &str = "https://claude.ai/i18n/ru.json";
+/// Перевод подписей каталога моделей (меню усилий) с claude.ai, ADR-009.
+const CATALOG_URL: &str = "https://claude.ai/i18n/dynamic/ru.json";
+/// Скачанный `dynamic/ru.json`; нет файла — сборка обходится вшитым словарём.
+const CATALOG_FILE: &str = "claude-ru-dynamic.json";
 const MAX_TRANSLATION: u64 = 64 * 1024 * 1024;
 /// Поля 3p-конфига, которые пишет приложение (`claude.rs`), и модель-образец уровней.
 const CONFIG_FIELDS: [&str; 8] = [
@@ -185,6 +189,9 @@ pub fn apply_rules(config_dir: &Path, exe: &Path) -> Result<bool> {
 #[serde(rename_all = "camelCase")]
 struct TranslationMeta {
     claude_version: String,
+    /// Версия Claude, под которую скачан `CATALOG_FILE`.
+    #[serde(default)]
+    catalog_version: String,
 }
 
 /// Доля английских строк интерфейса, у которых есть русский перевод.
@@ -218,13 +225,13 @@ fn parse_translation(raw: &[u8]) -> Result<serde_json::Map<String, Value>> {
 /// Cloudflare ответил проверкой на бота (403) — встроенный браузер (`webfetch`),
 /// который её проходит сам. Без сети, при 404/5xx браузер не открывается: окно с
 /// ошибкой страницы висело бы зря. 19.11.2026 утром curl пропускали, к обеду нет.
-fn download_translation(show_window: bool) -> Result<Vec<u8>> {
-    download_with_curl().or_else(|curl| {
+fn download_translation(url: &str, show_window: bool) -> Result<Vec<u8>> {
+    download_with_curl(url).or_else(|curl| {
         if !is_bot_check(&format!("{curl:#}")) {
             return Err(curl);
         }
         tracing::info!(error = %format!("{curl:#}"), "curl refused, trying the built-in browser");
-        crate::webfetch::fetch_json(TRANSLATION_URL, show_window)
+        crate::webfetch::fetch_json(url, show_window)
             .map(String::into_bytes)
             .map_err(|browser| {
                 // stderr curl уже начинается с «curl:».
@@ -244,7 +251,7 @@ fn is_bot_check(curl_error: &str) -> bool {
     curl_error.contains("returned error: 403")
 }
 
-fn download_with_curl() -> Result<Vec<u8>> {
+fn download_with_curl(url: &str) -> Result<Vec<u8>> {
     let curl = std::env::var_os("SystemRoot")
         .map(|root| PathBuf::from(root).join("System32").join("curl.exe"))
         .filter(|path| path.is_file())
@@ -259,7 +266,7 @@ fn download_with_curl() -> Result<Vec<u8>> {
         "67108864",
         "-A",
         ctp_gateway::state::USER_AGENT,
-        TRANSLATION_URL,
+        url,
     ]);
     // claude.ai из части стран закрыт: через прокси приложения, если он включён.
     if let Some(proxy) = ctp_gateway::proxy::current() {
@@ -375,7 +382,7 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result
             anyhow::bail!("{}", not_downloaded(&file));
         }
     } else if due {
-        let downloaded = download_translation(mode != Fetch::Watch)
+        let downloaded = download_translation(TRANSLATION_URL, mode != Fetch::Watch)
             .and_then(|raw| parse_translation(&raw).map(|map| (raw, map)))
             .and_then(|(raw, fresh)| {
                 // Сохранение — часть попытки: не записалось (файл занят, диск полон) —
@@ -406,6 +413,7 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result
                 };
                 let meta = TranslationMeta {
                     claude_version: version.clone(),
+                    catalog_version: meta.catalog_version.clone(),
                 };
                 fs::write(&meta_path, serde_json::to_vec(&meta)?)?;
                 Ok(saved)
@@ -423,6 +431,10 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result
             Err(exc) => return Err(exc.context(not_downloaded(&file))),
         }
     }
+    // Перевод меню усилий — попытка без гарантий: его неудача основному не мешает.
+    if mode != Fetch::Launch {
+        refresh_catalog(config_dir, &version, mode);
+    }
     // Фону строка самопроверки не нужна — не читаем ради неё 50 МБ.
     if mode == Fetch::Watch {
         return Ok(String::new());
@@ -430,19 +442,95 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result
     let en = en.unwrap_or_else(english);
     let map = parse_translation(&fs::read(&file)?)?;
     let share = coverage(&en, &map);
+    let catalog = fs::read(config_dir.join(CATALOG_FILE)).unwrap_or_default();
+    let menu = ruui::catalog_ru(&app.join("resources").join("ion-dist.asar"), &map, &catalog);
+    let (done, total) = (menu.translated, menu.total);
     Ok(if en.is_empty() {
         let count = map.len();
         tr!(
-            "Перевод: {count} строк{note}",
-            "Translation: {count} strings{note}"
+            "Перевод: {count} строк, меню усилий {done} из {total}{note}",
+            "Translation: {count} strings, effort menu {done} of {total}{note}"
         )
     } else {
         let percent = share * 100.0;
         tr!(
-            "Перевод: {percent:.0}% строк этой версии Claude{note}",
-            "Translation: {percent:.0}% of this Claude version's strings{note}"
+            "Перевод: {percent:.0}% строк этой версии Claude, меню усилий {done} из {total}{note}",
+            "Translation: {percent:.0}% of this Claude version's strings, effort menu {done} of {total}{note}"
         )
     })
+}
+
+/// Неудачи скачивания перевода меню — отдельно от основного: его пауза основной не задерживает.
+static CATALOG_DOWNLOAD: std::sync::Mutex<Option<Failure>> = std::sync::Mutex::new(None);
+
+/// Перевод меню усилий под версию Claude (ADR-009): раз на версию, после неудачи — с той
+/// же паузой, что у основного. Прежний файл остаётся, пока не скачан новый.
+fn refresh_catalog(config_dir: &Path, version: &str, mode: Fetch) {
+    let meta_path = config_dir.join(TRANSLATION_META);
+    let read_meta = || -> TranslationMeta {
+        fs::read(&meta_path)
+            .ok()
+            .and_then(|raw| serde_json::from_slice(&raw).ok())
+            .unwrap_or_default()
+    };
+    if read_meta().catalog_version == version {
+        return;
+    }
+    let mut last_failure = CATALOG_DOWNLOAD.lock().unwrap_or_else(|p| p.into_inner());
+    if skip_after_failure(last_failure.as_ref(), version, mode) {
+        return;
+    }
+    let file = config_dir.join(CATALOG_FILE);
+    let result = download_translation(CATALOG_URL, mode != Fetch::Watch).and_then(|raw| {
+        parse_catalog(&raw)?;
+        let tmp = file.with_extension("json.download");
+        fs::write(&tmp, &raw).and_then(|()| fs::rename(&tmp, &file))?;
+        let meta = TranslationMeta {
+            catalog_version: version.to_string(),
+            ..read_meta()
+        };
+        fs::write(&meta_path, serde_json::to_vec(&meta)?)?;
+        Ok(())
+    });
+    if let Err(exc) = &result {
+        tracing::info!(error = %format!("{exc:#}"), "effort menu translation not downloaded");
+    }
+    *last_failure = result.is_err().then(|| Failure {
+        version: version.to_string(),
+        at: std::time::Instant::now(),
+        hidden: mode == Fetch::Watch,
+    });
+}
+
+/// Перевод меню с claude.ai: JSON-объект из непустых строк, не больше 1 МБ и 10 000 ключей.
+fn parse_catalog(raw: &[u8]) -> Result<()> {
+    ensure!(
+        raw.len() <= 1024 * 1024,
+        "{}",
+        tr!(
+            "перевод меню больше 1 МБ",
+            "menu translation is larger than 1 MB"
+        )
+    );
+    let map: serde_json::Map<String, Value> = serde_json::from_slice(raw).with_context(|| {
+        tr!(
+            "перевод меню — не JSON-объект",
+            "menu translation is not a JSON object"
+        )
+    })?;
+    ensure!(
+        !map.is_empty()
+            && map.len() <= 10_000
+            && map
+                .values()
+                .all(|v| v.as_str().is_some_and(|s| !s.is_empty())),
+        "{}",
+        tr!(
+            "перевод меню не похож на файл языка",
+            "menu translation does not look like a language file"
+        )
+    );
+    Ok(())
 }
 
 /// Перед «Открыть Claude»: правила моделей и перевод для текущей версии. `true` —
@@ -583,8 +671,9 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
     // Только из успокоившейся папки версии: установщик ещё может её распаковывать. Без
     // русского — копия без перевода: ради настоящей AppData\Local у процессов Claude.
     let copy = (build_copy && settled(&app, SETTLE)).then(|| {
-        copy_translation(config, config_dir)
-            .and_then(|ru| ruui::ensure_copy(&app, &crate::claude::copies_root()?, &ru))
+        copy_translation(config, config_dir).and_then(|(ru, catalog)| {
+            ruui::ensure_copy(&app, &crate::claude::copies_root()?, &ru, &catalog)
+        })
     });
     if config.russian_ui {
         match ruui::locale_changes(&app.join("resources").join("ion-dist.asar")) {
@@ -757,8 +846,8 @@ fn prepare_copy(
     {
         return Ok(None);
     }
-    let ru = copy_translation(config, config_dir)?;
-    match ruui::copy_state(&app, copies, &ru)? {
+    let (ru, catalog) = copy_translation(config, config_dir)?;
+    match ruui::copy_state(&app, copies, &ru, &catalog)? {
         ruui::CopyState::Current => {
             // Копия, открытая во время прошлой сборки, осталась рядом (до 700 МБ): убираем,
             // а не ждём следующей версии Claude. Занятую Windows не отдаст — попробуем позже.
@@ -769,27 +858,32 @@ fn prepare_copy(
         ruui::CopyState::Open => return Ok(None),
         ruui::CopyState::Stale => {}
     }
-    if let Err(exc) = ruui::ensure_copy(&app, copies, &ru) {
+    if let Err(exc) = ruui::ensure_copy(&app, copies, &ru, &catalog) {
         *build_failed = Some((version, std::time::Instant::now()));
         return Err(exc);
     }
     *build_failed = None;
     // ensure_copy возвращает Ok и для открытой копии со старым переводом — сверяемся.
-    Ok((ruui::copy_state(&app, copies, &ru)? == ruui::CopyState::Current).then_some(version))
+    Ok(
+        (ruui::copy_state(&app, copies, &ru, &catalog)? == ruui::CopyState::Current)
+            .then_some(version),
+    )
 }
 
 /// Перевод скачан (или сверен) под эту версию Claude.
-/// Перевод для копии: с русским — файл перевода, без него — пусто (копия без перевода,
-/// ради настоящей AppData\Local у процессов Claude).
-pub(crate) fn copy_translation(config: &Config, config_dir: &Path) -> Result<Vec<u8>> {
+/// Перевод для копии: с русским — файл перевода и скачанный перевод меню (нет — пусто),
+/// без него — пусто (копия без перевода, ради настоящей AppData\Local у процессов Claude).
+pub(crate) fn copy_translation(config: &Config, config_dir: &Path) -> Result<(Vec<u8>, Vec<u8>)> {
     if !config.russian_ui {
-        return Ok(Vec::new());
+        return Ok(Default::default());
     }
     let file = config_dir.join(ruui::TRANSLATION_FILE);
-    fs::read(&file).with_context(|| {
+    let main = fs::read(&file).with_context(|| {
         let file = file.display();
         tr!("нет файла перевода {file}", "no translation file {file}")
-    })
+    })?;
+    let catalog = fs::read(config_dir.join(CATALOG_FILE)).unwrap_or_default();
+    Ok((main, catalog))
 }
 
 fn translation_is_for(config_dir: &Path, version: &str) -> bool {
@@ -1029,6 +1123,16 @@ mod tests {
     }
 
     #[test]
+    fn menu_translation_must_look_like_a_language_file() {
+        assert!(parse_catalog(r#"{"HoZQmASaw3":"Очень высокий"}"#.as_bytes()).is_ok());
+        assert!(parse_catalog(b"<html>Just a moment...</html>").is_err());
+        assert!(parse_catalog(b"{}").is_err());
+        assert!(parse_catalog(br#"{"a":1}"#).is_err());
+        assert!(parse_catalog(br#"{"a":""}"#).is_err());
+        assert!(parse_catalog(&vec![b' '; 1024 * 1024 + 1]).is_err());
+    }
+
+    #[test]
     fn the_copy_has_a_translation_only_with_russian_on() {
         // Without Russian the copy is built with no translation (only the real AppData\Local
         // for Claude's processes); with it the translation file is required.
@@ -1037,11 +1141,17 @@ mod tests {
             russian_ui: false,
             ..Default::default()
         };
-        assert!(copy_translation(&config, &dir).unwrap().is_empty());
+        assert_eq!(copy_translation(&config, &dir).unwrap(), Default::default());
         config.russian_ui = true;
         assert!(copy_translation(&config, &dir).is_err());
         fs::write(dir.join(ruui::TRANSLATION_FILE), b"{}").unwrap();
-        assert_eq!(copy_translation(&config, &dir).unwrap(), b"{}");
+        assert_eq!(
+            copy_translation(&config, &dir).unwrap(),
+            (b"{}".to_vec(), Vec::new())
+        );
+        // The downloaded menu translation goes along, so a new one rebuilds the copy.
+        fs::write(dir.join(CATALOG_FILE), br#"{"a":"b"}"#).unwrap();
+        assert_eq!(copy_translation(&config, &dir).unwrap().1, br#"{"a":"b"}"#);
         fs::remove_dir_all(&dir).unwrap();
     }
 

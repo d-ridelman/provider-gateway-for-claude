@@ -37,3 +37,4 @@
 | [006](006-mihomo-external-core.md) | VPN — внешнее ядро mihomo, качается по запросу | Accepted |
 | [007](007-tool-search.md) | Поиск инструментов: отложенные инструменты не уходят провайдеру | Accepted |
 | [008](008-no-desktop-user-agent-upstream.md) | Провайдеру Claude Code представляется как `claude -p` | Accepted |
+| [009](009-catalog-translation-per-version.md) | Перевод меню усилий собирается под каждую версию Claude | Accepted |
