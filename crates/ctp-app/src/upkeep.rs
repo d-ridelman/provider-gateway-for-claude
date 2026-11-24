@@ -607,7 +607,18 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
         }
         if let Some(copy) = copy {
             match copy {
-                Ok(_) => check.push(true, tr!("Русская копия готова", "Russian copy is ready")),
+                Ok(_) => {
+                    check.push(true, tr!("Русская копия готова", "Russian copy is ready"));
+                    // Копия лежит вне папки установщика, и её Claude пишет «App is not
+                    // installed, not enabling auto-updates»: новые версии ставит только обычный.
+                    check.push_optional(
+                        true,
+                        tr!(
+                            "Копия Claude сама не обновляется: новые версии ставит обычный Claude — открывайте его иногда",
+                            "The copy does not update Claude: new versions come from the regular Claude, open it now and then"
+                        ),
+                    );
+                }
                 Err(exc) => check.push(
                     false,
                     tr!("Русская копия: {exc:#}", "Russian copy: {exc:#}"),

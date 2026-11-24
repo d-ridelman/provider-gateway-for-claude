@@ -1,4 +1,4 @@
-use crate::model::{Config, UiStatus};
+use crate::model::{Config, ModelInfo, UiStatus};
 use crate::tr;
 use serde_json::json;
 use std::fs;
@@ -129,33 +129,47 @@ pub fn role_aliases(config: &Config) -> RoleAliases {
     }
 }
 
+/// Окно, которое Claude Code считает у основной модели: из каталога, но в тех же рамках, что
+/// у `ollama launch claude` (меньше 100K сессия Claude Code не помещается, больше 1M он не
+/// знает).
+const MIN_WINDOW: u64 = 100_000;
+const MAX_WINDOW: u64 = 1_000_000;
+/// Потолок `CLAUDE_CODE_MAX_OUTPUT_TOKENS` для незнакомых Claude Code моделей.
+const MAX_OUTPUT: u64 = 128_000;
+
+/// Основная модель шлюза: роль `sonnet` или первая. Роль, чьей модели нет среди запущенных
+/// (шлюз не перезапускали), — как не выбранная.
+pub fn main_model<'a>(status: &'a UiStatus, roles: &RoleAliases) -> Option<&'a ModelInfo> {
+    roles
+        .sonnet
+        .as_ref()
+        .and_then(|alias| status.models.iter().find(|m| &m.alias == alias))
+        .or_else(|| status.models.first())
+}
+
 /// Окружение Claude Code через шлюз: что убрать и что задать. Основная модель — роль
 /// `sonnet` или первая модель шлюза; на неё же все роли Claude Code (opus, haiku, fable).
+/// `limits` — окно и предел вывода основной модели из каталога, если они известны.
 pub fn code_env(
     status: &UiStatus,
     roles: &RoleAliases,
     inherited: impl Iterator<Item = String>,
+    limits: &crate::catalog::Hint,
 ) -> Result<CodeEnv, String> {
-    let first = status.models.first().ok_or_else(|| {
+    let main = main_model(status, roles).ok_or_else(|| {
         tr!(
             "В шлюзе нет моделей: добавьте провайдера и модель",
             "The gateway has no models: add a provider and a model"
         )
     })?;
-    // Роль, чьей модели нет среди запущенных (шлюз не перезапускали), — как не выбранная.
-    let pick = |alias: &Option<String>| {
-        alias
-            .as_ref()
-            .and_then(|alias| status.models.iter().find(|m| &m.alias == alias))
-    };
-    let main = pick(&roles.sonnet).unwrap_or(first);
-    // Имя шлюза Claude Code не знает и считает окно 1M — у модели без `[1m]` сжатие
-    // разговора началось бы слишком поздно. Как в Claude Desktop: без `[1m]` — 200K.
-    // По основной модели: на ней сессия и наследующие её субагенты (Explore, Plan).
-    let window = if main.supports_1m {
-        "1000000"
-    } else {
-        "200000"
+    // Имя шлюза Claude Code не знает и считает окно 1M — у модели с окном меньше сжатие
+    // разговора началось бы слишком поздно. Окно из каталога; нет его — как в Claude
+    // Desktop: без `[1m]` 200K. По основной модели: на ней сессия и наследующие её
+    // субагенты (Explore, Plan).
+    let window = match limits.context {
+        Some(context) => context.clamp(MIN_WINDOW, MAX_WINDOW).to_string(),
+        None if main.supports_1m => MAX_WINDOW.to_string(),
+        None => "200000".to_string(),
     };
     let remove = inherited
         .filter(|name| {
@@ -201,7 +215,7 @@ pub fn code_env(
     set.extend([
         // Устаревшее имя роли haiku: его ещё читают старые версии Claude Code.
         ("ANTHROPIC_SMALL_FAST_MODEL".into(), main.alias.clone()),
-        ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window.into()),
+        ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window),
         // То же для консоли: проверку auto mode делает классификатор самого Claude Code, а не
         // сервер (code.claude.com/docs/en/auto-mode-config).
         ("CLAUDE_CODE_AUTO_MODE_SERVER".into(), "0".into()),
@@ -221,6 +235,14 @@ pub fn code_env(
         // Коннекторы claude.ai требуют входа в аккаунт Anthropic — через шлюз их нет.
         ("ENABLE_CLAUDEAI_MCP_SERVERS".into(), "false".into()),
     ]);
+    // Без него Claude Code просит у незнакомой модели 32000 токенов вывода: у одних это выше
+    // их предела, у других обрезает длинные ответы.
+    if let Some(output) = limits.output {
+        set.push((
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS".into(),
+            output.min(MAX_OUTPUT).to_string(),
+        ));
+    }
     Ok((remove, set))
 }
 
@@ -285,7 +307,11 @@ pub fn installed_code_cli() -> Option<PathBuf> {
 
 /// Claude Code CLI в новом окне консоли через шлюз. Консоль создаётся сразу с нужным
 /// окружением, поэтому его получает и Windows Terminal, если он терминал по умолчанию.
-pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String> {
+pub fn launch_code(
+    config: &Config,
+    status: &UiStatus,
+    limits: &crate::catalog::Hint,
+) -> Result<String, String> {
     if !status.running {
         return Err(tr!("Сначала запустите шлюз", "Start the gateway first"));
     }
@@ -294,6 +320,7 @@ pub fn launch_code(config: &Config, status: &UiStatus) -> Result<String, String>
         status,
         &role_aliases(config),
         std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned()),
+        limits,
     )?;
     let (cli, extra) = code_cli(config)?;
     let dir = config
@@ -1298,7 +1325,13 @@ mod tests {
             library_entry(&config, &status, &[])["inferenceGatewayAutoModeServerChecks"],
             false
         );
-        let (_, env) = code_env(&status, &RoleAliases::default(), std::iter::empty()).unwrap();
+        let (_, env) = code_env(
+            &status,
+            &RoleAliases::default(),
+            std::iter::empty(),
+            &Default::default(),
+        )
+        .unwrap();
         for pair in [
             ("CLAUDE_CODE_AUTO_MODE_SERVER", "0"),
             ("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "1"),
@@ -1347,8 +1380,13 @@ mod tests {
             "MCP_TIMEOUT",
         ];
         let none = RoleAliases::default();
-        let (remove, set) =
-            code_env(&status, &none, inherited.iter().map(|s| s.to_string())).unwrap();
+        let (remove, set) = code_env(
+            &status,
+            &none,
+            inherited.iter().map(|s| s.to_string()),
+            &Default::default(),
+        )
+        .unwrap();
         assert_eq!(remove.len(), 9, "{remove:?}");
         assert!(
             !remove.contains(&"MCP_TIMEOUT".to_string()),
@@ -1372,14 +1410,14 @@ mod tests {
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000"));
         let mut big = status.clone();
         big.models[0].supports_1m = true;
-        let (_, set_big) = code_env(&big, &none, std::iter::empty()).unwrap();
+        let (_, set_big) = code_env(&big, &none, std::iter::empty(), &Default::default()).unwrap();
         assert!(set_big.contains(&("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), "1000000".into())));
 
         let empty = UiStatus {
             models: Vec::new(),
             ..status
         };
-        assert!(code_env(&empty, &none, std::iter::empty()).is_err());
+        assert!(code_env(&empty, &none, std::iter::empty(), &Default::default()).is_err());
 
         // Путь к claude в командную строку не попадает — только переменная.
         let line = code_command_line();
@@ -1411,7 +1449,10 @@ mod tests {
             code_dir: Some(var("CTP_CODE_DIR")),
             ..Config::default()
         };
-        println!("{}", launch_code(&config, &status).unwrap());
+        println!(
+            "{}",
+            launch_code(&config, &status, &Default::default()).unwrap()
+        );
     }
 
     #[test]
@@ -1515,7 +1556,7 @@ mod tests {
         let roles = RoleAliases {
             sonnet: Some(main.alias.clone()),
         };
-        let (_, set) = code_env(&status, &roles, std::iter::empty()).unwrap();
+        let (_, set) = code_env(&status, &roles, std::iter::empty(), &Default::default()).unwrap();
         let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
         assert_eq!(get("ANTHROPIC_MODEL"), Some(main.alias.clone()));
         // Все роли `/model` — основная под её именем, а не встроенные модели Anthropic.
@@ -1529,12 +1570,36 @@ mod tests {
         assert!(!set.iter().any(|(n, _)| n.contains("ADVISOR")));
         // Окно — по основной модели (без 1M), даже если у первой 1M.
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000".into()));
+        assert!(get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").is_none());
+
+        // Пределы модели из каталога: окно в рамках 100K–1M, вывод не выше 128K.
+        let limits = |context, output| crate::catalog::Hint {
+            context: Some(context),
+            output: Some(output),
+            ..Default::default()
+        };
+        for (hint, window, output) in [
+            (limits(131_072, 8_192), "131072", "8192"),
+            (limits(32_768, 4_096), "100000", "4096"),
+            (limits(2_000_000, 384_000), "1000000", "128000"),
+        ] {
+            let (_, set) = code_env(&status, &roles, std::iter::empty(), &hint).unwrap();
+            let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
+            assert_eq!(
+                get("CLAUDE_CODE_MAX_CONTEXT_TOKENS").as_deref(),
+                Some(window)
+            );
+            assert_eq!(
+                get("CLAUDE_CODE_MAX_OUTPUT_TOKENS").as_deref(),
+                Some(output)
+            );
+        }
 
         // Модель роли не запущена (шлюз со старым набором) — роль как не выбранная.
         let stale = RoleAliases {
             sonnet: Some("claude-gone".into()),
         };
-        let (_, set) = code_env(&status, &stale, std::iter::empty()).unwrap();
+        let (_, set) = code_env(&status, &stale, std::iter::empty(), &Default::default()).unwrap();
         assert!(set.contains(&("ANTHROPIC_MODEL".into(), first.alias.clone())));
         assert!(set.contains(&("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), first.alias.clone())));
 

@@ -1,5 +1,5 @@
 use crate::model::{
-    FetchedModels, ProbeInput, SaveProviderInput, SettingsInput, UiConfig, UiStatus,
+    Config, FetchedModels, ProbeInput, SaveProviderInput, SettingsInput, UiConfig, UiStatus,
 };
 use crate::state::AppShared;
 use crate::{claude, runtime, store, tr};
@@ -301,10 +301,31 @@ pub async fn launch_claude(
 pub async fn launch_claude_code(shared: State<'_, AppShared>) -> Result<String, String> {
     let config = shared.config.lock().unwrap().clone();
     let status = runtime::status(&shared);
+    let limits = main_model_limits(&config, &status).await;
     // Обход PATH (сетевые диски) — не в главном потоке окна.
-    tauri::async_runtime::spawn_blocking(move || claude::launch_code(&config, &status))
+    tauri::async_runtime::spawn_blocking(move || claude::launch_code(&config, &status, &limits))
         .await
         .map_err(|exc| exc.to_string())?
+}
+
+/// Окно и предел вывода основной модели из каталога OpenCode. Каталог не загрузился за
+/// CATALOG_GRACE или модели в нём нет — пусто, Claude Code обойдётся прежними значениями.
+async fn main_model_limits(config: &Config, status: &UiStatus) -> crate::catalog::Hint {
+    let Some(main) = claude::main_model(status, &claude::role_aliases(config)) else {
+        return Default::default();
+    };
+    let Some(provider) = config.providers.iter().find(|p| p.name == main.provider) else {
+        return Default::default();
+    };
+    let Ok(Some(catalog)) = tokio::time::timeout(CATALOG_GRACE, crate::catalog::load()).await
+    else {
+        return Default::default();
+    };
+    let id = ctp_core::alias::strip_1m(&main.model).trim().to_string();
+    crate::catalog::hints(&catalog, &provider.base_url, std::slice::from_ref(&id))
+        .models
+        .remove(&id)
+        .unwrap_or_default()
 }
 
 #[tauri::command]

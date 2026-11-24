@@ -25,6 +25,8 @@ const CLAUDE_LEVELS: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
 pub struct Hint {
     pub name: Option<String>,
     pub context: Option<u64>,
+    /// Предел вывода модели в токенах.
+    pub output: Option<u64>,
     /// Уровни рассуждения модели из числа уровней Claude, по возрастанию.
     pub efforts: Vec<&'static str>,
     pub default_effort: Option<&'static str>,
@@ -88,6 +90,8 @@ struct CatModel {
 struct Limit {
     #[serde(default, deserialize_with = "lenient")]
     context: Option<u64>,
+    #[serde(default, deserialize_with = "lenient")]
+    output: Option<u64>,
 }
 
 #[derive(Default, Deserialize)]
@@ -309,6 +313,7 @@ fn hint(model: &CatModel) -> Hint {
     Hint {
         name: model.name.clone().filter(|name| !name.trim().is_empty()),
         context: model.limit.as_ref().and_then(|limit| limit.context),
+        output: model.limit.as_ref().and_then(|limit| limit.output),
         efforts,
         default_effort,
     }
@@ -322,7 +327,7 @@ mod tests {
         serde_json::from_value(serde_json::json!({
             "opencode-go": {"name": "OpenCode Go", "models": {
                 "deepseek-v4-pro": {
-                    "name": "DeepSeek V4 Pro", "limit": {"context": 1000000},
+                    "name": "DeepSeek V4 Pro", "limit": {"context": 1000000, "output": 384000},
                     "capabilities": {"reasoning": {"supported": true, "effort": ["max", "high"]}},
                     "api": {"chat-completions": {"base_url": "https://opencode.ai/inference/go/openai/v1"}}
                 },
@@ -382,6 +387,7 @@ mod tests {
         let pro = &go.models["deepseek-v4-pro"];
         assert_eq!(pro.name.as_deref(), Some("DeepSeek V4 Pro"));
         assert_eq!(pro.context, Some(1_000_000));
+        assert_eq!(pro.output, Some(384_000));
         assert_eq!(pro.efforts, vec!["high", "max"]);
         // Подсказки — только к полученным ID.
         assert_eq!(go.models.len(), 2);
