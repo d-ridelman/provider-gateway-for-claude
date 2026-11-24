@@ -7,7 +7,7 @@
 Для Claude Code шлюз за `ANTHROPIC_BASE_URL` — это сам Anthropic API. Клиент шлёт полный
 набор возможностей первой стороны и сам деградирует (снимает беты, меняет thinking, сжимает
 разговор), но только когда отказ сказан словами Anthropic или помечен `capability_rejected:`
-(`docs/kb/reports/claude-1p-3p.md`, официальный llm-gateway-protocol).
+(официальный llm-gateway-protocol).
 
 ## Decision
 Всё, что видит клиент, — в форме Anthropic: тело ошибки и её тип по статусу (402 billing,

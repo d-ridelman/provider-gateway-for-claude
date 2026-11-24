@@ -1026,7 +1026,7 @@ mod tests {
     }
 
     /// Claude Code через шлюз с поиском инструментов — как в фикстурах Ollama
-    /// (`state/refs/ollama/anthropic/deferred_tools_test.go`).
+    /// (`anthropic/deferred_tools_test.go` в исходниках Ollama).
     fn tool_search_request(messages: Value) -> Value {
         json!({
             "model": "m",

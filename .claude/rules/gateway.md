@@ -17,5 +17,5 @@ paths:
   `anthropic-ratelimit-*` — клиенту.
 - Ключ провайдера не попадает ни в ответ, ни в журнал (`error::without_secret*`).
 - Новое поведение — интеграционный тест в `tests/gateway.rs` на заглушке `wiremock`.
-- Справка: `docs/kb/reports/claude-1p-3p.md` (разделы «Контракт Messages API» и
-  «Самолечение Claude Code»), `docs/kb/ollama-reference.md`.
+- Справка (локально, если есть): `notes/kb/reports/claude-1p-3p.md` (разделы «Контракт
+  Messages API» и «Самолечение Claude Code»), `notes/kb/ollama-reference.md`.

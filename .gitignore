@@ -11,3 +11,5 @@
 /.claude/settings.local.json
 # Local handoff notes and the backup of the updater signing key: never published.
 /handoff/
+# The owner's local notes and research: never published.
+/notes/

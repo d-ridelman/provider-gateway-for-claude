@@ -6,12 +6,12 @@
 ## Context
 В режиме шлюза поиск инструментов выключен, и схемы всех инструментов MCP уходят провайдеру в
 каждом запросе. Вживую во вкладке Code: 529–626 инструментов коннекторов, ~150–180K токенов
-на ход (`docs/knowledge/issues.md`). В обычном Claude они подгружаются по требованию.
+на ход. В обычном Claude они подгружаются по требованию.
 
 Через шлюз Claude Code ищет инструменты **сам**: шлёт клиентский инструмент `ToolSearch`,
 служебный `DeferredToolPlaceholder` и остальные инструменты с `defer_loading: true`; найденный
 возвращает в `tool_result` блоком `tool_reference` (фикстуры Ollama
-`state/refs/ollama/anthropic/deferred_tools_test.go`, `docs/kb/ollama-reference.md` §7).
+`anthropic/deferred_tools_test.go`).
 Включается ключом Desktop `toolSearchEnabled` и переменной консоли `ENABLE_TOOL_SEARCH`.
 
 ## Decision
