@@ -942,7 +942,7 @@ dependencies = [
 
 [[package]]
 name = "ctp-app"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "arboard",
@@ -978,7 +978,7 @@ dependencies = [
 
 [[package]]
 name = "ctp-core"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "regex",
  "serde",
@@ -989,7 +989,7 @@ dependencies = [
 
 [[package]]
 name = "ctp-gateway"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "async-stream",
