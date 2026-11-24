@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 /// Файл перевода в папке настроек приложения.
 pub const TRANSLATION_FILE: &str = "claude-ru.json";
 /// Меняется, когда меняется сам патч: старые копии пересобираются.
-const PATCH_REV: u32 = 8;
+const PATCH_REV: u32 = 9;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
 
@@ -218,32 +218,18 @@ pub fn patch_ion_dist(src: &Path, dst: &Path, ru_json: &[u8]) -> Result<(String,
     );
 
     let mut changes = locale_changes(src)?.files;
+    changes.push(("i18n/ru.json".to_string(), ru_json.to_vec()));
     changes.push((
-        "i18n/ru.json".to_string(),
-        with_catalog_strings(map, ru_json)?,
+        "i18n/dynamic/ru.json".to_string(),
+        CATALOG_RU.as_bytes().to_vec(),
     ));
     rebuild(src, dst, &changes)
 }
 
 /// Подписи из каталога моделей (уровни усилий, их описание, режимы размышлений) Claude
-/// переводит по своим ключам, которых нет ни в его `en-US.json`, ни в `ru.json` claude.ai, —
-/// меню усилий оставалось английским. Дописываются только недостающие ключи.
+/// переводит вторым файлом языка, `i18n/dynamic/<язык>.json`; для русского его нет, и меню
+/// усилий оставалось английским. Ключи — как в `dynamic/en-US.json` Claude 6.28899.
 const CATALOG_RU: &str = include_str!("ru-catalog.json");
-
-fn with_catalog_strings(
-    mut map: serde_json::Map<String, Value>,
-    original: &[u8],
-) -> Result<Vec<u8>> {
-    let extra: serde_json::Map<String, Value> = serde_json::from_str(CATALOG_RU)?;
-    let before = map.len();
-    for (key, value) in extra {
-        map.entry(key).or_insert(value);
-    }
-    if map.len() == before {
-        return Ok(original.to_vec());
-    }
-    Ok(serde_json::to_vec(&map)?)
-}
 
 /// Изменённые бандлы интерфейса для копии.
 pub struct BundlePatches {
@@ -1213,22 +1199,6 @@ mod tests {
     }
 
     #[test]
-    fn catalog_strings_fill_gaps_and_keep_claude_ai_translations() {
-        let mut map = serde_json::Map::new();
-        map.insert("Xft0R8xbIB".into(), json!("Свой перевод"));
-        let out = with_catalog_strings(map.clone(), b"{}").unwrap();
-        let out: serde_json::Map<String, Value> = serde_json::from_slice(&out).unwrap();
-        assert_eq!(out["Xft0R8xbIB"], "Свой перевод");
-        assert_eq!(
-            out["dapWFrcWv4"],
-            "Чем выше усилие, тем тщательнее ответы, но на них уходит больше времени и быстрее расходуются лимиты."
-        );
-        // Nothing to add: the original bytes as they were.
-        let full: serde_json::Map<String, Value> = serde_json::from_str(CATALOG_RU).unwrap();
-        assert_eq!(with_catalog_strings(full, b"orig").unwrap(), b"orig");
-    }
-
-    #[test]
     fn folderless_gate_call_becomes_true() {
         let src = br#"function Ub(){return Ve("claudeai_cc_epitaxy_folderless_start_main")&&!!Pe?.createScratchWorkspace}"#;
         let out = enable_folderless(src).unwrap();
@@ -1259,14 +1229,16 @@ mod tests {
         assert_ne!(old_hash, new_hash);
 
         let (data, integ) = read_file(&dst, "i18n/ru.json");
-        let written: serde_json::Map<String, Value> = serde_json::from_slice(&data).unwrap();
-        let original: serde_json::Map<String, Value> = serde_json::from_slice(&ru).unwrap();
-        assert!(original.iter().all(|(k, v)| written.get(k) == Some(v)));
-        // The effort menu's catalog strings are added (claude.ai's ru.json lacks them).
-        assert_eq!(written["HoZQmASaw3"], "Очень высокий");
+        assert_eq!(data, ru);
         assert_eq!(integ["blocks"].as_array().unwrap().len(), 2);
-        assert_eq!(integ["hash"], sha256_hex(&data));
-        assert_eq!(integ["blocks"][1], sha256_hex(&data[BLOCK..]));
+        assert_eq!(integ["hash"], sha256_hex(&ru));
+        assert_eq!(integ["blocks"][1], sha256_hex(&ru[BLOCK..]));
+
+        // The effort menu's catalog strings: Claude reads them from the dynamic language file.
+        let (dynamic, integ) = read_file(&dst, "i18n/dynamic/ru.json");
+        let dynamic: serde_json::Map<String, Value> = serde_json::from_slice(&dynamic).unwrap();
+        assert_eq!(dynamic["HoZQmASaw3"], "Очень высокий");
+        assert_eq!(integ["hash"], sha256_hex(CATALOG_RU.as_bytes()));
 
         let (js, integ) = read_file(&dst, "assets/v1/a.js");
         assert_eq!(js, [b"var zm=".as_slice(), LOCALES_RU, b";"].concat());

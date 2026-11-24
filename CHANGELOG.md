@@ -8,7 +8,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Fixed
 
-- **The effort menu of the Russian Claude is in Russian.** Effort levels, their description and the thinking modes come from the model catalog, and Claude translates them by keys that neither its own English file nor claude.ai's `ru.json` has, so the menu stayed in English. The copy now adds those 52 strings to its `ru.json` (only where claude.ai has none), in claude.ai's own wording; the copy is rebuilt once.
+- **The effort menu of the Russian Claude is in Russian.** Effort levels, their description and the thinking modes come from the model catalog, and Claude translates them from a second language file (`i18n/dynamic/<language>.json`) that has no Russian version, so the menu stayed in English. The copy now carries `i18n/dynamic/ru.json` with those 51 strings, in claude.ai's own wording; the copy is rebuilt once.
 
 - **Claude Code works with an Anthropic API key, in the Code tab of Claude Desktop and in the console.** Anthropic answers an API key "Your credit balance is too low" whatever the balance when the request is labelled as interactive Claude Code (`cli`, the Code tab's `claude-desktop-3p`) in the `user-agent` or in Claude Code's attribution block at the top of the system prompt, so every message failed with "Billing problem". The gateway now introduces Claude Code to Anthropic-compatible providers as `claude -p` does (`sdk-cli`) in both places.
 
