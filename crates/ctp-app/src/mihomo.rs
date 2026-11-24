@@ -22,7 +22,7 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const VERSION: &str = "v1.19.34";
 /// Ассет и его sha256 из релиза v1.19.34 (GitHub API `digest`, сверено скачиванием).
@@ -359,7 +359,7 @@ fn watch(generation: u64) {
             std::thread::sleep(Duration::from_secs(2));
             // Под той же блокировкой, что смена режима (и в том же порядке: APPLYING, затем
             // CORE): новое ядро и его системный прокси старый сторож не тронет.
-            let _one = APPLYING.lock().unwrap_or_else(|e| e.into_inner());
+            let applying = APPLYING.lock().unwrap_or_else(|e| e.into_inner());
             let guard = CORE.lock().unwrap_or_else(|e| e.into_inner());
             let Some(core) = guard.as_ref().filter(|c| c.generation == generation) else {
                 return; // остановлено нами или запущено заново
@@ -367,6 +367,8 @@ fn watch(generation: u64) {
             if core.process.alive() {
                 continue;
             }
+            // TUN поднимается через UAC — без человека его не перезапустить.
+            let restart = !core.tun;
             drop(guard);
             tracing::warn!("mihomo core exited on its own");
             let system = crate::sysproxy::status().is_some_and(|s| s.on);
@@ -384,9 +386,43 @@ fn watch(generation: u64) {
             if let Err(exc) = crate::sysproxy::disable() {
                 tracing::warn!(error = %format!("{exc:#}"), "system proxy not restored");
             }
+            drop(applying);
+            // Упало после сна или смены сети — поднимаем снова тем же путём, что при старте
+            // (порт, системный прокси); не больше двух раз за 10 минут, иначе ошибка остаётся.
+            if restart && restart_allowed(Instant::now()) {
+                std::thread::sleep(Duration::from_secs(3));
+                if let Some(hook) = ON_CRASH.get() {
+                    tracing::info!("restarting the mihomo core");
+                    hook();
+                }
+            }
             return;
         }
     });
+}
+
+type CrashHook = Box<dyn Fn() + Send + Sync>;
+static ON_CRASH: std::sync::OnceLock<CrashHook> = std::sync::OnceLock::new();
+/// Перезапуски ядра сторожем: начало окна и их число в нём.
+static RESTARTS: Mutex<Option<(Instant, u32)>> = Mutex::new(None);
+
+/// Что делать, когда ядро упало само (не TUN): приложение поднимает его своим путём.
+pub fn on_crash(hook: CrashHook) {
+    let _ = ON_CRASH.set(hook);
+}
+
+fn restart_allowed(now: Instant) -> bool {
+    let mut window = RESTARTS.lock().unwrap_or_else(|e| e.into_inner());
+    match window.as_mut() {
+        Some((start, count)) if now.duration_since(*start) < Duration::from_secs(600) => {
+            *count += 1;
+            *count <= 2
+        }
+        _ => {
+            *window = Some((now, 1));
+            true
+        }
+    }
 }
 /// Почему ядро не работает, хотя должно (упало, не скачано, отказ UAC).
 static LAST_ERROR: Mutex<Option<String>> = Mutex::new(None);
@@ -1431,5 +1467,16 @@ mod tests {
         assert_eq!(win::quote(r"C:\a b\x.exe"), r#""C:\a b\x.exe""#);
         assert_eq!(win::quote(r"C:\dir\"), r#""C:\dir\\""#);
         assert_eq!(win::quote(r#"a"b"#), r#""a\"b""#);
+    }
+
+    #[test]
+    fn the_watchdog_restarts_a_crashed_core_twice_per_ten_minutes() {
+        let start = Instant::now();
+        assert!(restart_allowed(start));
+        assert!(restart_allowed(start + Duration::from_secs(60)));
+        // The third crash inside the window stays an error for the person to see.
+        assert!(!restart_allowed(start + Duration::from_secs(120)));
+        // A new window after ten minutes.
+        assert!(restart_allowed(start + Duration::from_secs(700)));
     }
 }

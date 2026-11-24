@@ -108,6 +108,11 @@ pub fn run() {
             let check_dir = dir.clone();
             // До потоков: они обращаются к состоянию, а state() до manage() паникует.
             app.manage(AppShared::new(dir, config));
+            // Упавшее само ядро (не TUN) сторож поднимает тем же путём, что при старте.
+            let handle = app.handle().clone();
+            mihomo::on_crash(Box::new(move || {
+                commands::start_proxy_in_background(&handle)
+            }));
             // Ядро — в фоне (в TUN ждёт ответа UAC).
             if proxy_on {
                 let handle = app.handle().clone();
