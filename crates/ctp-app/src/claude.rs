@@ -190,13 +190,24 @@ pub fn code_env(
             HOST_ENV_PREFIXES.iter().any(|p| upper.starts_with(p))
         })
         .collect();
+    // Заголовок и строку «Default» Claude Code подписывает самим ID модели. Псевдоним
+    // `claude-…` нужен только фильтру имён Desktop (ADR-005), а шлюз понимает и настоящий
+    // ID — консоль получает его, как у `ollama launch claude`. Тот же ID у двух моделей
+    // шлюз развёл бы неоднозначно — тогда псевдоним.
+    let unique = status
+        .models
+        .iter()
+        .filter(|m| m.model == main.model)
+        .count()
+        == 1;
+    let id = if unique { &main.model } else { &main.alias };
     let mut set: Vec<(String, String)> = vec![
         (
             "ANTHROPIC_BASE_URL".into(),
             format!("http://127.0.0.1:{}", status.port),
         ),
         ("ANTHROPIC_AUTH_TOKEN".into(), status.token.clone()),
-        ("ANTHROPIC_MODEL".into(), main.alias.clone()),
+        ("ANTHROPIC_MODEL".into(), id.clone()),
     ];
     // Каждая роль — на основную, с её именем в `/model`. Роль без переменной Claude Code
     // показал бы встроенной моделью Anthropic с ценой (Opus 5.5, Fable 5.2), которой
@@ -222,12 +233,12 @@ pub fn code_env(
                     "PGC main model (in place of {title})"
                 ),
             ),
-            (var, main.alias.clone()),
+            (var, id.clone()),
         ]);
     }
     set.extend([
         // Устаревшее имя роли haiku: его ещё читают старые версии Claude Code.
-        ("ANTHROPIC_SMALL_FAST_MODEL".into(), main.alias.clone()),
+        ("ANTHROPIC_SMALL_FAST_MODEL".into(), id.clone()),
         ("CLAUDE_CODE_MAX_CONTEXT_TOKENS".into(), window.to_string()),
         // То же для консоли: проверку auto mode делает классификатор самого Claude Code, а не
         // сервер (code.claude.com/docs/en/auto-mode-config).
@@ -1427,12 +1438,13 @@ mod tests {
         let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.as_str());
         assert_eq!(get("ANTHROPIC_BASE_URL"), Some("http://127.0.0.1:17899"));
         assert_eq!(get("ANTHROPIC_AUTH_TOKEN"), Some("tok"));
-        assert_eq!(get("ANTHROPIC_MODEL"), Some("claude-p-claude-p-1"));
+        // Консоль — с настоящим ID модели, не с псевдонимом Desktop.
+        assert_eq!(get("ANTHROPIC_MODEL"), Some("claude-p-1"));
         // Основная не выбрана — все роли на первой модели.
         for role in ["SONNET", "OPUS", "HAIKU", "FABLE"] {
             assert_eq!(
                 get(&format!("ANTHROPIC_DEFAULT_{role}_MODEL")),
-                Some("claude-p-claude-p-1")
+                Some("claude-p-1")
             );
         }
         assert!(get("ANTHROPIC_API_KEY").is_none());
@@ -1594,15 +1606,21 @@ mod tests {
         };
         let (_, set) = code_env(&status, &roles, std::iter::empty(), &Default::default()).unwrap();
         let get = |k: &str| set.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone());
-        assert_eq!(get("ANTHROPIC_MODEL"), Some(main.alias.clone()));
+        assert_eq!(get("ANTHROPIC_MODEL"), Some(main.model.clone()));
         // Все роли `/model` — основная под её именем, а не встроенные модели Anthropic.
         for role in ["SONNET", "OPUS", "HAIKU", "FABLE"] {
             let var = format!("ANTHROPIC_DEFAULT_{role}_MODEL");
-            assert_eq!(get(&var), Some(main.alias.clone()));
+            assert_eq!(get(&var), Some(main.model.clone()));
             assert_eq!(get(&format!("{var}_NAME")), Some("main · P".into()));
             assert!(get(&format!("{var}_DESCRIPTION")).is_some());
         }
-        assert_eq!(get("ANTHROPIC_SMALL_FAST_MODEL"), Some(main.alias.clone()));
+        assert_eq!(get("ANTHROPIC_SMALL_FAST_MODEL"), Some(main.model.clone()));
+        // Тот же ID у моделей двух провайдеров шлюз развёл бы неоднозначно: псевдоним.
+        let mut twin = info("main", None, true);
+        twin.alias = "claude-q-main".into();
+        let shared = status_with(vec![main.clone(), twin]);
+        let (_, set) = code_env(&shared, &roles, std::iter::empty(), &Default::default()).unwrap();
+        assert!(set.contains(&("ANTHROPIC_MODEL".into(), main.alias.clone())));
         assert!(!set.iter().any(|(n, _)| n.contains("ADVISOR")));
         // Окно — по основной модели (без 1M), даже если у первой 1M.
         assert_eq!(get("CLAUDE_CODE_MAX_CONTEXT_TOKENS"), Some("200000".into()));
@@ -1636,8 +1654,8 @@ mod tests {
             sonnet: Some("claude-gone".into()),
         };
         let (_, set) = code_env(&status, &stale, std::iter::empty(), &Default::default()).unwrap();
-        assert!(set.contains(&("ANTHROPIC_MODEL".into(), first.alias.clone())));
-        assert!(set.contains(&("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), first.alias.clone())));
+        assert!(set.contains(&("ANTHROPIC_MODEL".into(), first.model.clone())));
+        assert!(set.contains(&("ANTHROPIC_DEFAULT_OPUS_MODEL".into(), first.model.clone())));
 
         // Desktop: основная помечена в своей записи, остальные — без роли.
         let rows = inference_models(&status.models, &roles);

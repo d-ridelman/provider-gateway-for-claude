@@ -13,6 +13,9 @@ Claude Desktop (с ~1.6259) выкидывает из списка модели,
 его списка: тогда псевдоним запасной, `claude-p<6 цифр>-<8 цифр>`. Моделям не Claude с
 потолком effort (OpenAI и Anthropic-совместимые: DeepSeek, GLM…) Desktop получает
 `behavesAs: "claude-opus-4-8"` (`claude::EFFORT_PROFILE`), моделям Claude — их собственный ID.
+Консоль Claude Code фильтра имён не имеет и подписывает заголовок самим ID, поэтому
+получает настоящий ID модели (шлюз его понимает), как `ollama launch claude`; псевдоним —
+только если тот же ID есть у двух моделей шлюза.
 
 ## Consequences
 - Модели видны и в Desktop, и в Claude Code; уровни effort работают.
