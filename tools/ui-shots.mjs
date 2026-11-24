@@ -367,6 +367,13 @@ const MEASURE = `(() => {
       for (const group of Object.values(byRow)) if (Math.max(...group) - Math.min(...group) > 1) misaligned.push('sub-form bottoms ' + group.join('/'));
     }
   }
+  // Two fields side by side in the models row (the textarea and the first select) start on one line.
+  for (const row of document.querySelectorAll('.grid.row-models')) {
+    const a = row.querySelector('textarea'), b = row.querySelector('select');
+    if (row.closest('.hidden') || !a || !b) continue;
+    const ra = a.getBoundingClientRect(), rb = b.getBoundingClientRect();
+    if (rb.left > ra.right && Math.abs(ra.top - rb.top) > 1) misaligned.push('row-models tops ' + Math.round(ra.top) + '/' + Math.round(rb.top));
+  }
   return { hscroll: doc.scrollWidth > innerWidth + 1, docH: doc.scrollHeight, winH: innerHeight, clipped: clipped.slice(0, 8), scrollers, cardClipped, misaligned,
            settingsVisible: !!panel && !panel.classList.contains('hidden') };
 })()`;

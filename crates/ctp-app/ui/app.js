@@ -434,7 +434,7 @@ function nodeLabel(name) {
 
 function delayText(delay) {
   if (delay === null || delay === undefined) return { text: t("proxy.untested"), kind: "" };
-  if (delay === 0) return { text: t("proxy.timeout"), kind: "bad" };
+  if (delay === 0) return { text: t("proxy.timeout"), kind: "fail" };
   return { text: t("proxy.ms", { ms: delay }), kind: delay < 300 ? "good" : delay < 800 ? "mid" : "bad" };
 }
 

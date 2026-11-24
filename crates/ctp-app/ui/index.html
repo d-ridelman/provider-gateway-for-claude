@@ -186,10 +186,10 @@
           </div>
 
           <div class="form-actions">
-            <button type="submit" id="saveBtn" class="primary" data-i18n="form.save"></button>
-            <button type="button" id="testBtn" class="ghost" data-i18n="form.test" data-i18n-title="form.testTitle"></button>
             <button type="button" id="deleteBtn" class="ghost danger" data-i18n="form.delete"></button>
             <span id="formNotice" class="notice" aria-live="polite"></span>
+            <button type="button" id="testBtn" class="ghost" data-i18n="form.test" data-i18n-title="form.testTitle"></button>
+            <button type="submit" id="saveBtn" class="primary" data-i18n="form.save"></button>
           </div>
         </form>
 
@@ -423,8 +423,8 @@
           </div>
 
           <div class="form-actions settings-actions">
-            <button type="button" id="saveSettingsBtn" class="primary" disabled data-i18n="settings.save"></button>
             <span class="muted small" aria-live="polite"><span id="settingsDirty" class="dirty-mark hidden" data-i18n="form.unsaved"></span> <span data-i18n="settings.applyHint"></span></span>
+            <button type="button" id="saveSettingsBtn" class="primary" disabled data-i18n="settings.save"></button>
           </div>
         </div>
       </section>
@@ -432,15 +432,15 @@
 
     <footer class="actions">
       <div class="actions-left">
-        <button type="button" id="startBtn"></button>
-        <button type="button" id="stopBtn" class="ghost" data-i18n="actions.stop"></button>
-        <button type="button" id="launchBtn" class="primary" disabled data-i18n="actions.openClaude" data-i18n-title="actions.openClaudeTitle"></button>
-        <button type="button" id="launchCodeBtn" class="ghost" disabled data-i18n="actions.code" data-i18n-title="actions.codeTitle"></button>
+        <button type="button" id="logsBtn" class="ghost" aria-expanded="false" aria-controls="logPanel" data-i18n="actions.logs"></button>
+        <span id="modelCount" class="muted"></span>
+        <span id="claudeState" class="claude-state hidden" role="status"><span class="dot" aria-hidden="true"></span><span id="claudeStateText"></span></span>
       </div>
       <div class="actions-right">
-        <span id="claudeState" class="claude-state hidden" role="status"><span class="dot" aria-hidden="true"></span><span id="claudeStateText"></span></span>
-        <span id="modelCount" class="muted"></span>
-        <button type="button" id="logsBtn" class="ghost" aria-expanded="false" aria-controls="logPanel" data-i18n="actions.logs"></button>
+        <button type="button" id="startBtn"></button>
+        <button type="button" id="stopBtn" class="ghost" data-i18n="actions.stop"></button>
+        <button type="button" id="launchCodeBtn" class="ghost" disabled data-i18n="actions.code" data-i18n-title="actions.codeTitle"></button>
+        <button type="button" id="launchBtn" class="primary" disabled data-i18n="actions.openClaude" data-i18n-title="actions.openClaudeTitle"></button>
       </div>
     </footer>
 
