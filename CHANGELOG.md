@@ -4,6 +4,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+
+- **The Code tab of Claude Desktop works with an Anthropic API key.** Its sessions label their requests `user-agent: claude-cli/… (external, claude-desktop-3p)`, and Anthropic answers an API key with such a label "Your credit balance is too low" whatever the balance, so every message failed with "Billing problem". The gateway now sends the label as the console's (`cli`) to Anthropic-compatible providers.
+
 ## [0.2.2] - 2026-11-24
 
 ### Added

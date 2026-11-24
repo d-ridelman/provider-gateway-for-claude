@@ -1284,6 +1284,62 @@ async fn context_overflow_becomes_anthropics_prompt_too_long_without_the_ladder(
 }
 
 #[tokio::test]
+async fn desktop_user_agent_does_not_reach_the_provider() {
+    // Anthropic answers an API key whose user-agent names Claude Desktop with "credit balance is
+    // too low" (ADR-008): the Code tab's label goes to the provider as the CLI's.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "msg_1", "type": "message", "role": "assistant", "model": "m",
+            "content": [{"type": "text", "text": "ok"}], "stop_reason": "end_turn",
+            "usage": {"input_tokens": 1, "output_tokens": 1}
+        })))
+        .mount(&upstream)
+        .await;
+    let file: ProvidersFile = serde_json::from_value(json!({"providers": [{
+        "id": "p", "type": "anthropic", "base_url": upstream.uri(), "api_key": "sk-upstream",
+        "models": {"claude-p-00000000": "m"}
+    }]}))
+    .unwrap();
+    let state = AppState::new(
+        ModelRouter::new(file).unwrap(),
+        "local-token".into(),
+        false,
+        "user:inference".into(),
+    )
+    .unwrap();
+    for (sent, expected) in [
+        (
+            "claude-cli/2.1.330 (external, claude-desktop-3p)",
+            "claude-cli/2.1.330 (external, cli)",
+        ),
+        (
+            "claude-cli/2.1.330 (external, claude-desktop)",
+            "claude-cli/2.1.330 (external, cli)",
+        ),
+        (
+            "claude-cli/2.1.330 (external, sdk-cli)",
+            "claude-cli/2.1.330 (external, sdk-cli)",
+        ),
+    ] {
+        let mut request = post_messages(json!({"model": "claude-p-00000000", "max_tokens": 8,
+                                               "messages": [{"role": "user", "content": "hi"}]}));
+        request
+            .headers_mut()
+            .insert("user-agent", sent.parse().unwrap());
+        let response = app(state.clone()).oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let got = upstream.received_requests().await.unwrap();
+        assert_eq!(
+            got.last().unwrap().headers["user-agent"],
+            expected,
+            "{sent}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn provider_headers_replace_claudes_and_the_retry_headers_come_back() {
     // A provider that rejects Claude Code's betas: its config blanks anthropic-beta and pins the
     // version. A non-ASCII value goes through instead of failing every request with 502.

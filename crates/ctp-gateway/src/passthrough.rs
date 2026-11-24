@@ -149,6 +149,18 @@ fn upstream_headers(
             headers.insert(name, value.clone());
         }
     }
+    // Anthropic отвечает «credit balance is too low» ключу API, чей user-agent называет Claude
+    // Desktop (вкладка Code: `(external, claude-desktop-3p)`), — уходит меткой консоли (ADR-008).
+    if let Some(agent) = headers.get("user-agent").and_then(|v| v.to_str().ok())
+        && agent.contains("claude-desktop")
+        && let Ok(value) = HeaderValue::from_str(
+            &agent
+                .replace("claude-desktop-3p", "cli")
+                .replace("claude-desktop", "cli"),
+        )
+    {
+        headers.insert("user-agent", value);
+    }
     if let Some((name, value)) =
         provider.session_pair(crate::state::session_id(incoming, body).as_deref())
     {
