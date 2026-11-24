@@ -1284,6 +1284,67 @@ async fn context_overflow_becomes_anthropics_prompt_too_long_without_the_ladder(
 }
 
 #[tokio::test]
+async fn provider_headers_replace_claudes_and_the_retry_headers_come_back() {
+    // A provider that rejects Claude Code's betas: its config blanks anthropic-beta and pins the
+    // version. A non-ASCII value goes through instead of failing every request with 502.
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "7")
+                .insert_header("x-should-retry", "false")
+                .insert_header("request-id", "req_1")
+                .insert_header("anthropic-ratelimit-requests-remaining", "0")
+                .set_body_json(json!({"type": "error", "error": {"type": "rate_limit_error", "message": "slow down"}})),
+        )
+        .mount(&upstream)
+        .await;
+    let file: ProvidersFile = serde_json::from_value(json!({"providers": [{
+        "id": "p", "type": "anthropic", "base_url": upstream.uri(), "api_key": "sk-upstream",
+        "models": {"claude-p-00000000": "m"},
+        "headers": {"anthropic-beta": "", "anthropic-version": "2023-01-01", "X-Title": "Мой шлюз"}
+    }]}))
+    .unwrap();
+    let state = AppState::new(
+        ModelRouter::new(file).unwrap(),
+        "local-token".into(),
+        false,
+        "user:inference".into(),
+    )
+    .unwrap();
+    let request = Request::builder()
+        .method("POST")
+        .uri("/v1/messages")
+        .header("x-api-key", "local-token")
+        .header("content-type", "application/json")
+        .header("anthropic-version", "2023-06-01")
+        .header("anthropic-beta", "context-1m-2025-08-07")
+        .body(Body::from(
+            json!({"model": "claude-p-00000000", "max_tokens": 8,
+                   "messages": [{"role": "user", "content": "hi"}]})
+            .to_string(),
+        ))
+        .unwrap();
+    let response = app(state).oneshot(request).await.unwrap();
+    assert_eq!(response.status().as_u16(), 429);
+    for (name, value) in [
+        ("retry-after", "7"),
+        ("x-should-retry", "false"),
+        ("request-id", "req_1"),
+        ("anthropic-ratelimit-requests-remaining", "0"),
+    ] {
+        assert_eq!(response.headers()[name], value, "{name}");
+    }
+    let sent = &upstream.received_requests().await.unwrap()[0];
+    let versions: Vec<_> = sent.headers.get_all("anthropic-version").iter().collect();
+    assert_eq!(versions, ["2023-01-01"]);
+    assert!(sent.headers.get("anthropic-beta").is_none());
+    // http accepts bytes above ASCII in a value: the title goes as it is, the request is not a 502.
+    assert!(sent.headers.get("x-title").is_some());
+}
+
+#[tokio::test]
 async fn an_anthropic_type_provider_overflow_also_becomes_prompt_too_long() {
     // DeepSeek, GLM, Kimi on their Anthropic endpoints word the overflow their own way.
     let upstream = MockServer::start().await;

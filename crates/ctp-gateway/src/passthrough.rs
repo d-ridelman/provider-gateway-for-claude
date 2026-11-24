@@ -1,7 +1,7 @@
 use crate::error;
 use crate::state::{AppState, Provider};
 use axum::body::{Body, Bytes};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
+use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use futures_util::StreamExt;
 use reqwest::RequestBuilder;
@@ -41,11 +41,7 @@ pub async fn messages(
             .and_then(|value| value.to_str().ok())
             .unwrap_or("application/json")
             .to_string();
-        let retry_after = upstream
-            .headers()
-            .get("retry-after")
-            .and_then(|value| value.to_str().ok())
-            .map(str::to_string);
+        let relayed = relayed_headers(upstream.headers());
         let mut payload = match upstream.bytes().await {
             Ok(payload) => payload,
             Err(exc) => return error::anthropic_error(502, "api_error", exc.to_string()),
@@ -69,15 +65,12 @@ pub async fn messages(
             "POST /v1/messages passthrough"
         );
         let mut response = bytes_response(status.as_u16(), &content_type, payload);
-        if let Some(value) = retry_after
-            && let Ok(value) = HeaderValue::from_str(&value)
-        {
-            response.headers_mut().insert("retry-after", value);
-        }
+        response.headers_mut().extend(relayed);
         return response;
     }
 
     info!(provider = %provider.id, "POST /v1/messages passthrough: stream");
+    let relayed = relayed_headers(upstream.headers());
     let log = RequestLog::new(started, provider.id.clone(), "passthrough");
     let stream_body = async_stream::stream! {
         let _log = log;
@@ -86,12 +79,14 @@ pub async fn messages(
             yield item;
         }
     };
-    Response::builder()
+    let mut response = Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from_stream(stream_body))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    response.headers_mut().extend(relayed);
+    response
 }
 
 /// Счётчик токенов Anthropic-провайдера. Ошибку сети вызывающий превращает
@@ -124,19 +119,25 @@ pub async fn count_tokens(
     Ok(bytes_response(status.as_u16(), &content_type, payload))
 }
 
+/// Заголовки запроса к провайдеру. Свои заголовки провайдера (`headers` в его настройках)
+/// заменяют присланные Claude: так можно подменить `anthropic-beta`, который провайдер
+/// отвергает, а пустое значение убирает заголовок совсем. Неверный — пропускается.
 fn upstream_headers(
-    mut request: RequestBuilder,
+    request: RequestBuilder,
     provider: &Provider,
     incoming: &HeaderMap,
     body: &Value,
 ) -> RequestBuilder {
+    let mut headers = HeaderMap::new();
     let version = incoming
         .get("anthropic-version")
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or(ANTHROPIC_VERSION);
-    request = request.header("anthropic-version", version);
-    if !provider.api_key.is_empty() {
-        request = request.header("x-api-key", &provider.api_key);
+        .cloned()
+        .unwrap_or(HeaderValue::from_static(ANTHROPIC_VERSION));
+    headers.insert("anthropic-version", version);
+    if !provider.api_key.is_empty()
+        && let Ok(value) = HeaderValue::from_str(&provider.api_key)
+    {
+        headers.insert("x-api-key", value);
     }
     for name in [
         "anthropic-beta",
@@ -144,19 +145,44 @@ fn upstream_headers(
         "user-agent",
         "x-claude-code-session-id",
     ] {
-        if let Some(value) = incoming.get(name).and_then(|value| value.to_str().ok()) {
-            request = request.header(name, value);
+        if let Some(value) = incoming.get(name) {
+            headers.insert(name, value.clone());
         }
     }
     if let Some((name, value)) =
         provider.session_pair(crate::state::session_id(incoming, body).as_deref())
     {
-        request = request.header(name, value);
+        headers.insert(name, value);
     }
     for (name, value) in &provider.headers {
-        request = request.header(name, value);
+        let Ok(name) = HeaderName::from_bytes(name.as_bytes()) else {
+            warn!(header = %name, "invalid provider header skipped");
+            continue;
+        };
+        if value.is_empty() {
+            headers.remove(&name);
+        } else if let Ok(value) = HeaderValue::from_str(value) {
+            headers.insert(name, value);
+        } else {
+            warn!(header = %name, "invalid provider header skipped");
+        }
     }
-    request
+    request.headers(headers)
+}
+
+/// Заголовки ответа провайдера, которые Claude Code и Desktop читают сами: когда повторять,
+/// лимиты и `request-id` (по нему Desktop решает, переходить ли на свою проверку auto mode).
+fn relayed_headers(from: &HeaderMap) -> HeaderMap {
+    let mut out = HeaderMap::new();
+    for (name, value) in from {
+        let name_text = name.as_str();
+        if matches!(name_text, "retry-after" | "x-should-retry" | "request-id")
+            || name_text.starts_with("anthropic-ratelimit-")
+        {
+            out.append(name.clone(), value.clone());
+        }
+    }
+    out
 }
 
 pub fn bytes_response(status: u16, content_type: &str, payload: Bytes) -> Response {
