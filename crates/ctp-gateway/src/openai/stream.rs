@@ -41,16 +41,9 @@ pub struct StreamTranslator {
     tools: BTreeMap<u64, ToolCallBuf>,
     output_chars: u64,
     output_tokens: Option<u64>,
-    /// Настоящие входные токены от провайдера (без кэша) и кэш — последнего отрезка:
-    /// его запрос и есть нынешний контекст. Приходят в конце потока, уходят в
-    /// `message_delta` вместо оценки из `message_start`.
+    /// Настоящие входные токены от провайдера (без кэша) и кэш. Приходят в конце потока,
+    /// уходят в `message_delta` вместо оценки из `message_start`.
     provider_input: Option<(u64, Option<u64>)>,
-    /// Токены прошлых отрезков ответа (до вызовов советника).
-    prior_output_tokens: u64,
-    /// Текст текущего отрезка: из него шлюз собирает ответ ассистента для продолжения.
-    segment_text: String,
-    /// Всё рассуждение текущего отрезка, как пришло от провайдера (для продолжения после советника).
-    segment_reasoning: String,
     /// Рассуждение, пришедшее, когда текст ответа уже начался: пока оно короткое, текстовый
     /// блок не рвётся, а оно выходит отдельным блоком после текста (`close_current`).
     late_thinking: String,
@@ -59,21 +52,6 @@ pub struct StreamTranslator {
     secret: String,
     /// Сокращённое для провайдера имя инструмента → настоящее.
     names: std::collections::HashMap<String, String>,
-}
-
-/// Вызов советника, перехваченный у модели.
-pub struct AdvisorCall {
-    /// ID вызова у провайдера: с ним идёт продолжение (`tool_call_id`).
-    pub call_id: String,
-    /// ID блока `server_tool_use` для Claude Code.
-    pub server_id: String,
-    /// Текст отрезка до вызова — содержимое ответа ассистента в продолжении.
-    pub text: String,
-    /// Рассуждение отрезка: в продолжении оно уходит назад (`reasoning_content`, как требует
-    /// DeepSeek в режиме рассуждения).
-    pub reasoning: String,
-    /// Другие вызовы инструментов в том же ответе: тогда продолжения нет.
-    pub others: bool,
 }
 
 impl StreamTranslator {
@@ -88,9 +66,6 @@ impl StreamTranslator {
             output_chars: 0,
             output_tokens: None,
             provider_input: None,
-            prior_output_tokens: 0,
-            segment_text: String::new(),
-            segment_reasoning: String::new(),
             late_thinking: String::new(),
             finish_reason: None,
             done: false,
@@ -177,7 +152,6 @@ impl StreamTranslator {
         let reasoning = reasoning_delta(delta);
         if !reasoning.is_empty() {
             self.output_chars += reasoning.chars().count() as u64;
-            self.segment_reasoning.push_str(&reasoning);
             // Some providers send the tail of the reasoning (even a lone ".") after the first
             // token of the answer: opening a thinking block there cut "Пробую" into "П" and
             // "робую". A short straggler waits; a long one is real interleaved thinking.
@@ -211,7 +185,6 @@ impl StreamTranslator {
                 "delta": {"type": "text_delta", "text": text}
             }));
             self.output_chars += text.chars().count() as u64;
-            self.segment_text.push_str(&text);
         }
 
         if let Some(calls) = delta.get("tool_calls").and_then(Value::as_array) {
@@ -293,7 +266,7 @@ impl StreamTranslator {
         }
 
         let stop_reason = response::map_stop_reason(self.finish_reason.as_deref(), tool_count > 0);
-        let output_tokens = self.prior_output_tokens + self.segment_tokens();
+        let output_tokens = self.output_estimate();
         let mut usage = json!({"output_tokens": output_tokens});
         if let Some((input, cached)) = self.provider_input {
             usage["input_tokens"] = json!(input);
@@ -385,86 +358,9 @@ impl StreamTranslator {
         }
     }
 
-    fn segment_tokens(&self) -> u64 {
+    fn output_estimate(&self) -> u64 {
         self.output_tokens
             .unwrap_or_else(|| (self.output_chars / 4).max(1))
-    }
-
-    /// Модель вызвала советника: вызов убирается из буфера, Claude Code получает блок
-    /// `server_tool_use` (как от сервера Anthropic). Остальные вызовы остаются в буфере.
-    pub fn take_advisor_call(&mut self) -> Option<(AdvisorCall, Vec<Value>)> {
-        if self.done {
-            return None;
-        }
-        let keys: Vec<u64> = self
-            .tools
-            .iter()
-            .filter(|(_, call)| call.name == crate::openai::request::ADVISOR)
-            .map(|(key, _)| *key)
-            .collect();
-        let call = self.tools.remove(keys.first()?)?;
-        // Повторный вызов в том же ответе — тот же совет: лишние убираются, иначе они
-        // ушли бы в Claude Code вызовом незнакомого ему инструмента.
-        for key in &keys[1..] {
-            self.tools.remove(key);
-        }
-        // ID вернётся в истории как `tool_call_id`: у OpenAI предел — 40 символов.
-        let server_id = format!("srvtoolu_{}", &Uuid::new_v4().simple().to_string()[..24]);
-        let call_id = if call.id.is_empty() {
-            format!("call_{}", Uuid::new_v4().simple())
-        } else {
-            call.id
-        };
-        let mut events = self.close_current();
-        let index = self.next_index;
-        self.next_index += 1;
-        events.push(json!({
-            "type": "content_block_start",
-            "index": index,
-            "content_block": {"type": "server_tool_use", "id": server_id, "name": crate::openai::request::ADVISOR, "input": {}}
-        }));
-        events.push(json!({
-            "type": "content_block_delta",
-            "index": index,
-            "delta": {"type": "input_json_delta", "partial_json": ""}
-        }));
-        events.push(json!({"type": "content_block_stop", "index": index}));
-        let advisor = AdvisorCall {
-            call_id,
-            server_id,
-            text: std::mem::take(&mut self.segment_text),
-            reasoning: std::mem::take(&mut self.segment_reasoning),
-            others: !self.tools.is_empty(),
-        };
-        Some((advisor, events))
-    }
-
-    /// Ответ советника для Claude Code: блок `advisor_tool_result`.
-    pub fn advisor_result(&mut self, server_id: &str, content: Value) -> Vec<Value> {
-        let index = self.next_index;
-        self.next_index += 1;
-        vec![
-            json!({
-                "type": "content_block_start",
-                "index": index,
-                "content_block": {"type": "advisor_tool_result", "tool_use_id": server_id, "content": content}
-            }),
-            json!({"type": "content_block_stop", "index": index}),
-        ]
-    }
-
-    /// Новый отрезок того же ответа (продолжение после советника): блоки и номера идут
-    /// дальше, токены складываются.
-    pub fn next_segment(&mut self) {
-        self.prior_output_tokens += self.segment_tokens();
-        self.output_tokens = None;
-        // Размер запроса — только того отрезка, что сообщит его сам (иначе — оценка).
-        self.provider_input = None;
-        self.output_chars = 0;
-        self.segment_text.clear();
-        self.segment_reasoning.clear();
-        self.late_thinking.clear();
-        self.finish_reason = None;
     }
 
     pub fn error_event(message: &str) -> Value {
@@ -1091,21 +987,22 @@ mod tests {
     }
 
     #[test]
-    fn late_reasoning_is_flushed_before_an_advisor_call() {
+    fn late_reasoning_is_flushed_before_a_tool_call() {
         let mut translator = StreamTranslator::new("claude-x", 1);
-        feed(
+        let mut events = feed(
             &mut translator,
             &[
                 json!({"reasoning_content": "plan"}),
                 json!({"content": "Hi"}),
                 json!({"reasoning_content": " ask them"}),
-                tool_call(crate::openai::request::ADVISOR),
+                tool_call("Bash"),
             ],
         );
-        let (call, events) = translator.take_advisor_call().expect("advisor call");
-        assert_eq!(block_kinds(&events), ["thinking", "server_tool_use"]);
-        assert_eq!(streamed(&events, "thinking"), " ask them");
-        // The continuation after the advice sends the reasoning of this segment back too.
-        assert_eq!(call.reasoning, "plan ask them");
+        events.extend(translator.finish());
+        assert_eq!(
+            block_kinds(&events),
+            ["thinking", "text", "thinking", "tool_use"]
+        );
+        assert_eq!(streamed(&events, "thinking"), "plan ask them");
     }
 }

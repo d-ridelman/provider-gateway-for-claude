@@ -13,7 +13,6 @@ use std::time::Instant;
 use tracing::{info, warn};
 
 pub mod adapt;
-pub mod advisor;
 pub mod request;
 pub mod response;
 pub mod stream;
@@ -44,17 +43,6 @@ impl SendError {
                     response.headers_mut().insert("retry-after", value);
                 }
                 response
-            }
-        }
-    }
-
-    /// Та же ошибка внутри уже начатого потока (после `message_start`).
-    fn event(&self, provider: &Provider) -> Value {
-        match self {
-            Self::Network(text) => stream::StreamTranslator::error_event(text),
-            Self::Status { status, text, .. } => {
-                let (_, kind, message) = error::classify(*status, text, &provider.api_key);
-                stream::StreamTranslator::error_event_of(kind, &message)
             }
         }
     }
@@ -259,27 +247,6 @@ fn snippet(text: &str) -> String {
     text.replace(['\n', '\r'], " ")
 }
 
-/// Вызов советника, пришедший не потоком (провайдер проигнорировал `stream`): исполнить
-/// его негде — блок убирается, чтобы Claude Code не получил вызов незнакомого инструмента.
-fn drop_advisor_calls(message: &mut Value) {
-    let Some(content) = message.get_mut("content").and_then(Value::as_array_mut) else {
-        return;
-    };
-    let before = content.len();
-    content.retain(|block| {
-        !(block.get("type").and_then(Value::as_str) == Some("tool_use")
-            && block.get("name").and_then(Value::as_str) == Some(request::ADVISOR))
-    });
-    let tools_left = content
-        .iter()
-        .any(|block| block.get("type").and_then(Value::as_str) == Some("tool_use"));
-    // Ответ, оборванный на пределе токенов (`max_tokens`), остаётся оборванным: сигнал нужен
-    // Claude Code, чтобы поднять предел.
-    if content.len() != before && !tools_left && message["stop_reason"] == "tool_use" {
-        message["stop_reason"] = json!("end_turn");
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 pub async fn messages(
     state: &AppState,
@@ -291,13 +258,7 @@ pub async fn messages(
     started: Instant,
     session: Option<&str>,
 ) -> Response {
-    // Советника шлюз исполняет сам, и только в потоке: там ответ можно продолжить.
-    let advisor_route = if stream {
-        request::advisor_tool(&body).and_then(|named| state.router.advisor_for(named))
-    } else {
-        None
-    };
-    let mut payload = request::build(provider, &body, stream, advisor_route.is_some());
+    let mut payload = request::build(provider, &body, stream);
     // Если провайдеру придётся сокращать имена инструментов, в ответе они вернутся прежними.
     let names = adapt::name_map(&body);
     let headers = upstream_headers(provider, session);
@@ -371,9 +332,6 @@ pub async fn messages(
             Err(exc) => return error::anthropic_error(502, "api_error", exc.to_string()),
         };
         response::restore_names(&mut message, &names);
-        if advisor_route.is_some() {
-            drop_advisor_calls(&mut message);
-        }
         info!(
             provider = %provider.id,
             model = %upstream_model,
@@ -387,152 +345,52 @@ pub async fn messages(
         .with_names(names);
     let start = translator.start();
     let log = RequestLog::new(started, provider.id.clone(), "openai stream");
-    // Для продолжений после советника поток живёт дольше этого вызова.
-    let state = state.clone();
-    let provider = provider.clone();
-    let upstream_model = upstream_model.to_string();
-    let session = session.map(str::to_string);
     let events = async_stream::stream! {
         let _log = log;
         yield Ok::<Bytes, Infallible>(sse::frame(&start));
 
-        let mut upstream = upstream;
-        let mut advisor_calls = 0u32;
         let mut ticker = tokio::time::interval_at(
             tokio::time::Instant::now() + std::time::Duration::from_secs(15),
             std::time::Duration::from_secs(15),
         );
-        // Отрезки одного ответа: модель вызвала советника — шлюз спрашивает его и
-        // продолжает тот же ответ с его советом.
-        'segments: loop {
-            let mut source = upstream.bytes_stream().eventsource();
-            loop {
-                let item = tokio::select! {
-                    item = source.next() => item,
-                    _ = ticker.tick() => {
-                        yield Ok::<Bytes, Infallible>(sse::frame(&json!({"type": "ping"})));
-                        continue;
-                    }
-                };
-                let Some(item) = item else { break };
-                let event = match item {
-                    Ok(event) => event,
-                    Err(exc) => {
-                        yield Ok::<Bytes, Infallible>(sse::frame(
-                            &stream::StreamTranslator::error_event(&format!("upstream stream: {exc}"))
-                        ));
-                        translator.abort();
-                        break 'segments;
-                    }
-                };
-                if event.data.trim() == "[DONE]" {
-                    break;
-                }
-                let chunk: Value = match serde_json::from_str(&event.data) {
-                    Ok(chunk) => chunk,
-                    Err(_) => {
-                        yield Ok::<Bytes, Infallible>(sse::frame(
-                            &stream::StreamTranslator::error_event("upstream sent invalid JSON")
-                        ));
-                        translator.abort();
-                        break 'segments;
-                    }
-                };
-                for value in translator.on_chunk(&chunk) {
-                    yield Ok::<Bytes, Infallible>(sse::frame(&value));
-                }
-                if translator.is_done() {
-                    break 'segments;
-                }
-            }
-
-            let Some(route) = advisor_route.as_ref() else { break };
-            let Some((call, events)) = translator.take_advisor_call() else { break };
-            for value in events {
-                yield Ok::<Bytes, Infallible>(sse::frame(&value));
-            }
-
-            // Советник видит весь разговор и текст этого отрезка до вызова.
-            let mut seen = payload["messages"].as_array().cloned().unwrap_or_default();
-            if !call.text.is_empty() {
-                seen.push(json!({"role": "assistant", "content": call.text}));
-            }
-            // Сверх лимита сильную модель не спрашиваем, даже если модель зовёт советника
-            // уже без объявленной функции (имя она видит в истории).
-            let over = advisor_calls >= advisor::MAX_CALLS;
-            let consult = advisor::consult(&state, route, &seen, session.as_deref());
-            tokio::pin!(consult);
-            let result = if over {
-                Err("max_uses_exceeded")
-            } else {
-                loop {
-                    tokio::select! {
-                        result = &mut consult => break result,
-                        _ = ticker.tick() => {
-                            yield Ok::<Bytes, Infallible>(sse::frame(&json!({"type": "ping"})));
-                        }
-                    }
+        let mut source = upstream.bytes_stream().eventsource();
+        loop {
+            let item = tokio::select! {
+                item = source.next() => item,
+                _ = ticker.tick() => {
+                    yield Ok::<Bytes, Infallible>(sse::frame(&json!({"type": "ping"})));
+                    continue;
                 }
             };
-            let content = match result {
-                Ok(text) => json!({"type": "advisor_result", "text": text}),
-                Err(code) => json!({"type": "advisor_tool_result_error", "error_code": code}),
-            };
-            let advice = request::advisor_text(&content);
-            for value in translator.advisor_result(&call.server_id, content) {
-                yield Ok::<Bytes, Infallible>(sse::frame(&value));
-            }
-            advisor_calls += 1;
-            // Вместе с советником модель вызвала и инструменты Claude Code: их вызовы
-            // уходят ему, ответ кончается — продолжит модель уже с их результатами.
-            // Сверх лимита ответ тоже кончается: иначе модель могла бы звать его без конца.
-            if call.others || over {
-                break;
-            }
-
-            if let Some(messages) = payload["messages"].as_array_mut() {
-                let mut asked = json!({
-                    "role": "assistant",
-                    "content": if call.text.is_empty() { Value::Null } else { json!(call.text) },
-                    "tool_calls": [{
-                        "id": call.call_id,
-                        "type": "function",
-                        "function": {"name": request::ADVISOR, "arguments": "{}"}
-                    }]
-                });
-                // Рассуждение отрезка уходит назад вместе с ним (DeepSeek в режиме рассуждения
-                // требует это при запросе с инструментами; лесенка уберёт поле, если не так).
-                if !call.reasoning.is_empty() {
-                    asked["reasoning_content"] = json!(call.reasoning);
-                }
-                messages.push(asked);
-                messages.push(json!({"role": "tool", "tool_call_id": call.call_id, "content": advice}));
-            }
-            if advisor_calls >= advisor::MAX_CALLS
-                && let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut)
-            {
-                tools.retain(|tool| {
-                    tool.pointer("/function/name").and_then(Value::as_str) != Some(request::ADVISOR)
-                });
-                // Пустой `tools` OpenAI отвергает (400) — без инструментов поля не нужны.
-                if tools.is_empty()
-                    && let Some(fields) = payload.as_object_mut()
-                {
-                    for key in ["tools", "tool_choice", "parallel_tool_calls"] {
-                        fields.remove(key);
-                    }
-                    // Нет инструментов — рассуждение прошлых ответов не нужно (как в `build`).
-                    request::strip_reasoning(&mut payload);
-                }
-            }
-            translator.next_segment();
-            match send(&state, &provider, &headers, &upstream_model, &mut payload).await {
-                Ok(next) => upstream = next,
+            let Some(item) = item else { break };
+            let event = match item {
+                Ok(event) => event,
                 Err(exc) => {
-                    yield Ok::<Bytes, Infallible>(sse::frame(&exc.event(&provider)));
+                    yield Ok::<Bytes, Infallible>(sse::frame(
+                        &stream::StreamTranslator::error_event(&format!("upstream stream: {exc}"))
+                    ));
                     translator.abort();
                     break;
                 }
+            };
+            if event.data.trim() == "[DONE]" {
+                break;
+            }
+            let chunk: Value = match serde_json::from_str(&event.data) {
+                Ok(chunk) => chunk,
+                Err(_) => {
+                    yield Ok::<Bytes, Infallible>(sse::frame(
+                        &stream::StreamTranslator::error_event("upstream sent invalid JSON")
+                    ));
+                    translator.abort();
+                    break;
+                }
+            };
+            for value in translator.on_chunk(&chunk) {
+                yield Ok::<Bytes, Infallible>(sse::frame(&value));
+            }
+            if translator.is_done() {
+                break;
             }
         }
 
@@ -576,22 +434,4 @@ pub(crate) fn upstream_headers(provider: &Provider, session: Option<&str>) -> He
         }
     }
     headers
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn dropping_the_advisor_call_keeps_a_cut_answer_cut() {
-        let call = json!({"type": "tool_use", "id": "t", "name": request::ADVISOR, "input": {}});
-        let mut done = json!({"content": [call.clone()], "stop_reason": "tool_use"});
-        drop_advisor_calls(&mut done);
-        assert_eq!(done["stop_reason"], "end_turn");
-        // A call the model started and the token limit cut off was dropped earlier: the answer
-        // is still a cut one.
-        let mut cut = json!({"content": [call], "stop_reason": "max_tokens"});
-        drop_advisor_calls(&mut cut);
-        assert_eq!(cut["stop_reason"], "max_tokens");
-    }
 }

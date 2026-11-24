@@ -1768,75 +1768,6 @@ async fn a_screenshot_from_a_tool_is_dropped_for_a_model_that_rejects_images() {
     assert!(retried.contains("screenshot"));
 }
 
-/// Основная модель `main-model` и сильная `strong-model` — советник из настроек.
-fn advisor_state(base_url: &str) -> AppState {
-    let file: ProvidersFile = serde_json::from_value(json!({
-        "advisor": "claude-p-11111111",
-        "providers": [{
-            "id": "p", "type": "openai", "base_url": base_url, "api_key": "sk-upstream",
-            "models": {"claude-p-00000000": "main-model", "claude-p-11111111": "strong-model"}
-        }]
-    }))
-    .unwrap();
-    AppState::new(
-        ModelRouter::new(file).unwrap(),
-        "local-token".into(),
-        false,
-        "user:inference".into(),
-    )
-    .unwrap()
-}
-
-fn sse_body(chunks: &[Value]) -> String {
-    let mut out: String = chunks.iter().map(|c| format!("data: {c}\n\n")).collect();
-    out.push_str("data: [DONE]\n\n");
-    out
-}
-
-/// Основная модель зовёт советника: ответ первой части — текст и вызов `advisor`.
-async fn mount_main_calling_advisor(upstream: &MockServer) {
-    let first = sse_body(&[
-        json!({"choices": [{"index": 0, "delta": {"content": "Let me ask. "}, "finish_reason": null}]}),
-        json!({"choices": [{"index": 0, "delta": {"tool_calls": [{"index": 0, "id": "call_adv",
-            "type": "function", "function": {"name": "advisor", "arguments": "{}"}}]}, "finish_reason": null}]}),
-        json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}],
-               "usage": {"completion_tokens": 5}}),
-    ]);
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(wiremock::matchers::body_string_contains("main-model"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(first, "text/event-stream"))
-        .with_priority(10)
-        .mount(upstream)
-        .await;
-    // Продолжение — с результатом советника в истории.
-    let rest = sse_body(&[
-        json!({"choices": [{"index": 0, "delta": {"content": "Done."}, "finish_reason": "stop"}],
-               "usage": {"completion_tokens": 7}}),
-    ]);
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(wiremock::matchers::body_string_contains("main-model"))
-        .and(wiremock::matchers::body_string_contains(
-            "\"tool_call_id\":\"call_adv\"",
-        ))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(rest, "text/event-stream"))
-        .with_priority(1)
-        .mount(upstream)
-        .await;
-}
-
-fn ask_with_advisor() -> Request<Body> {
-    post_messages(json!({
-        "model": "claude-p-00000000",
-        "max_tokens": 64,
-        "stream": true,
-        // Модель Anthropic, которой у шлюза нет: советник — из настроек.
-        "tools": [{"type": "advisor_20260301", "name": "advisor", "model": "claude-fable-5-2"}],
-        "messages": [{"role": "user", "content": "fix it"}]
-    }))
-}
-
 /// Блоки ответа Claude Code по порядку: (тип, содержимое) из `content_block_start`.
 fn started_blocks(sse: &str) -> Vec<Value> {
     sse.lines()
@@ -1847,253 +1778,31 @@ fn started_blocks(sse: &str) -> Vec<Value> {
         .collect()
 }
 
-#[tokio::test]
-async fn gateway_answers_the_advisor_and_continues_the_same_reply() {
-    let upstream = MockServer::start().await;
-    mount_main_calling_advisor(&upstream).await;
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(wiremock::matchers::body_string_contains("strong-model"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ADVICE: test first"},
-                         "finish_reason": "stop"}]
-        })))
-        .expect(1)
-        .mount(&upstream)
-        .await;
-
-    let response = app(advisor_state(&upstream.uri()))
-        .oneshot(ask_with_advisor())
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let body = text_body(response).await;
-    let blocks = started_blocks(&body);
-    let kinds: Vec<&str> = blocks.iter().filter_map(|b| b["type"].as_str()).collect();
-    assert_eq!(
-        kinds,
-        ["text", "server_tool_use", "advisor_tool_result", "text"],
-        "{body}"
-    );
-    assert_eq!(blocks[1]["name"], "advisor");
-    // ID вернётся в истории как tool_call_id: у OpenAI предел — 40 символов.
-    assert!(blocks[1]["id"].as_str().unwrap().len() <= 40);
-    assert_eq!(blocks[2]["tool_use_id"], blocks[1]["id"]);
-    assert_eq!(blocks[2]["content"]["type"], "advisor_result");
-    assert_eq!(blocks[2]["content"]["text"], "ADVICE: test first");
-    assert!(body.contains("\"text\":\"Done.\""));
-    assert!(body.contains("\"stop_reason\":\"end_turn\""));
-    // Токены обоих отрезков.
-    assert!(body.contains("\"output_tokens\":12"), "{body}");
-    assert!(!body.contains("\"type\":\"tool_use\""));
-    assert_eq!(body.matches("event: message_start").count(), 1);
-
-    // Модели объявлена функция `advisor`; советник получил разговор текстом, без tools.
-    let requests = upstream.received_requests().await.unwrap();
-    let bodies: Vec<Value> = requests
-        .iter()
-        .map(|r| serde_json::from_slice(&r.body).unwrap())
-        .collect();
-    let first = bodies.iter().find(|b| b["model"] == "main-model").unwrap();
-    assert!(
-        first["tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|t| t["function"]["name"] == "advisor")
-    );
-    let advice = bodies
-        .iter()
-        .find(|b| b["model"] == "strong-model")
-        .unwrap();
-    assert!(advice.get("tools").is_none());
-    // Потоком: иначе на большом разговоре посредники рвут молчащее соединение.
-    assert_eq!(advice["stream"], true);
-    let transcript = advice["messages"][1]["content"].as_str().unwrap();
-    assert!(transcript.contains("fix it") && transcript.contains("Let me ask."));
-    // В продолжении: ответ ассистента с вызовом и результат советника.
-    let rest = bodies
-        .iter()
-        .find(|b| b.to_string().contains("tool_call_id"))
-        .unwrap();
-    let messages = rest["messages"].as_array().unwrap();
-    let n = messages.len();
-    assert_eq!(
-        messages[n - 2]["tool_calls"][0]["function"]["name"],
-        "advisor"
-    );
-    assert_eq!(messages[n - 2]["content"], "Let me ask. ");
-    assert_eq!(messages[n - 1]["content"], "ADVICE: test first");
-}
-
-#[tokio::test]
-async fn advisor_calls_are_capped_even_if_the_model_keeps_calling() {
-    let upstream = MockServer::start().await;
-    // Модель зовёт советника всегда, даже после того, как функцию у неё убрали; и
-    // дважды в одном ответе — второй вызов не должен уйти в Claude Code.
-    let calling = sse_body(&[
-        json!({"choices": [{"index": 0, "delta": {"tool_calls": [
-            {"index": 0, "id": "call_a", "type": "function", "function": {"name": "advisor", "arguments": "{}"}},
-            {"index": 1, "id": "call_b", "type": "function", "function": {"name": "advisor", "arguments": "{}"}}
-        ]}, "finish_reason": null}]}),
-        json!({"choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]}),
-    ]);
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(wiremock::matchers::body_string_contains("main-model"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(calling, "text/event-stream"))
-        .mount(&upstream)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(wiremock::matchers::body_string_contains("strong-model"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "choices": [{"index": 0, "message": {"role": "assistant", "content": "advice"},
-                         "finish_reason": "stop"}]
-        })))
-        .expect(3)
-        .mount(&upstream)
-        .await;
-
-    // Без других инструментов: после лимита `tools` пустеет и уходит из запроса целиком.
-    let response = app(advisor_state(&upstream.uri()))
-        .oneshot(ask_with_advisor())
-        .await
-        .unwrap();
-    let body = text_body(response).await;
-    let results: Vec<Value> = started_blocks(&body)
-        .into_iter()
-        .filter(|b| b["type"] == "advisor_tool_result")
-        .collect();
-    assert_eq!(results.len(), 4, "{body}");
-    assert_eq!(results[3]["content"]["error_code"], "max_uses_exceeded");
-    assert!(!body.contains("\"type\":\"tool_use\""), "{body}");
-    // Вызовов для Claude Code нет — и стоп не «жду инструмент».
-    assert!(body.contains("\"stop_reason\":\"end_turn\""), "{body}");
-    assert!(body.contains("event: message_stop"));
-
-    let requests = upstream.received_requests().await.unwrap();
-    let last_main: Value = requests
-        .iter()
-        .map(|r| serde_json::from_slice::<Value>(&r.body).unwrap())
-        .rfind(|b| b["model"] == "main-model")
-        .unwrap();
-    assert!(last_main.get("tools").is_none(), "{last_main}");
-    assert!(last_main.get("tool_choice").is_none());
-}
-
-#[tokio::test]
-async fn streamed_advice_is_collected_without_the_reasoning() {
-    let upstream = MockServer::start().await;
-    mount_main_calling_advisor(&upstream).await;
-    let advice = sse_body(&[
-        json!({"choices": [{"index": 0, "delta": {"reasoning_content": "thinking…"}, "finish_reason": null}]}),
-        json!({"choices": [{"index": 0, "delta": {"content": "Test "}, "finish_reason": null}]}),
-        json!({"choices": [{"index": 0, "delta": {"content": "first."}, "finish_reason": "stop"}]}),
-    ]);
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(wiremock::matchers::body_string_contains("strong-model"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(advice, "text/event-stream"))
-        .mount(&upstream)
-        .await;
-
-    let response = app(advisor_state(&upstream.uri()))
-        .oneshot(ask_with_advisor())
-        .await
-        .unwrap();
-    let body = text_body(response).await;
-    let blocks = started_blocks(&body);
-    assert_eq!(blocks[2]["content"]["type"], "advisor_result", "{body}");
-    assert_eq!(blocks[2]["content"]["text"], "Test first.");
-    assert!(body.contains("\"text\":\"Done.\""));
-}
-
-#[tokio::test]
-async fn advice_cut_off_mid_stream_is_not_passed_as_whole() {
-    let upstream = MockServer::start().await;
-    mount_main_calling_advisor(&upstream).await;
-    // Ни `[DONE]`, ни `finish_reason`: провайдер закрыл поток на полуслове.
-    let cut = format!(
-        "data: {}\n\n",
-        json!({"choices": [{"index": 0, "delta": {"content": "Test fir"}, "finish_reason": null}]})
-    );
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(wiremock::matchers::body_string_contains("strong-model"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(cut, "text/event-stream"))
-        .mount(&upstream)
-        .await;
-
-    let response = app(advisor_state(&upstream.uri()))
-        .oneshot(ask_with_advisor())
-        .await
-        .unwrap();
-    let body = text_body(response).await;
-    let blocks = started_blocks(&body);
-    assert_eq!(
-        blocks[2]["content"]["type"], "advisor_tool_result_error",
-        "{body}"
-    );
-    assert_eq!(blocks[2]["content"]["error_code"], "unavailable");
-    assert!(body.contains("\"text\":\"Done.\""));
-}
-
-#[tokio::test]
-async fn advisor_failure_is_a_result_and_the_reply_goes_on() {
-    let upstream = MockServer::start().await;
-    mount_main_calling_advisor(&upstream).await;
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(wiremock::matchers::body_string_contains("strong-model"))
-        .respond_with(ResponseTemplate::new(429).set_body_json(json!({
-            "error": {"message": "slow down sk-upstream"}
-        })))
-        .mount(&upstream)
-        .await;
-
-    let response = app(advisor_state(&upstream.uri()))
-        .oneshot(ask_with_advisor())
-        .await
-        .unwrap();
-    let body = text_body(response).await;
-    let blocks = started_blocks(&body);
-    assert_eq!(blocks[2]["content"]["type"], "advisor_tool_result_error");
-    assert_eq!(blocks[2]["content"]["error_code"], "too_many_requests");
-    assert!(body.contains("\"text\":\"Done.\""));
-    assert!(!body.contains("sk-upstream"));
-}
-
-#[tokio::test]
-async fn without_an_advisor_model_the_tool_is_not_offered() {
-    let upstream = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_raw(
-            sse_body(&[json!({"choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}]})]),
-            "text/event-stream",
-        ))
-        .mount(&upstream)
-        .await;
-    // Нет `advisor` в настройках, а Claude Code назвал модель, которой у шлюза нет.
-    let response = app(state_with(&upstream.uri(), "openai", "gpt-5.2"))
-        .oneshot(ask_with_advisor_for("claude-p-00000000"))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
-    let sent: Value =
-        serde_json::from_slice(&upstream.received_requests().await.unwrap()[0].body).unwrap();
-    assert!(sent.get("tools").is_none(), "{sent}");
-}
-
-fn ask_with_advisor_for(model: &str) -> Request<Body> {
-    post_messages(json!({
-        "model": model,
-        "max_tokens": 64,
-        "stream": true,
-        "tools": [{"type": "advisor_20260301", "name": "advisor", "model": "claude-fable-5-2"}],
-        "messages": [{"role": "user", "content": "fix it"}]
-    }))
+/// Запрос с советником: его объявление (остался `advisorModel` в настройках Claude Code) и
+/// блоки старой сессии в истории до провайдера не доходят — ни до какого.
+fn ask_with_advisor_history(only_advisor: bool) -> Value {
+    let mut tools =
+        vec![json!({"type": "advisor_20260301", "name": "advisor", "model": "claude-fable-5-2"})];
+    if !only_advisor {
+        tools.push(json!({"name": "Read", "input_schema": {"type": "object"}}));
+    }
+    json!({
+        "model": "claude-p-00000000",
+        "max_tokens": 32,
+        "tools": tools,
+        "tool_choice": {"type": "auto"},
+        "messages": [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": [
+                {"type": "text", "text": "asking"},
+                {"type": "server_tool_use", "id": "srvtoolu_1", "name": "advisor", "input": {}},
+                {"type": "advisor_tool_result", "tool_use_id": "srvtoolu_1",
+                 "content": {"type": "advisor_result", "text": "advice"}},
+                {"type": "text", "text": "then"}
+            ]},
+            {"role": "user", "content": "go on"}
+        ]
+    })
 }
 
 #[tokio::test]
@@ -2113,24 +1822,7 @@ async fn anthropic_provider_gets_no_advisor_tool_or_blocks() {
         "anthropic",
         "claude-sonnet-4-5",
     ))
-    .oneshot(post_messages(json!({
-        "model": "claude-p-00000000",
-        "max_tokens": 32,
-        "tools": [
-            {"type": "advisor_20260301", "name": "advisor", "model": "claude-fable-5-2"},
-            {"name": "Read", "input_schema": {"type": "object"}}
-        ],
-        "messages": [
-            {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": [
-                {"type": "text", "text": "asking"},
-                {"type": "server_tool_use", "id": "srvtoolu_1", "name": "advisor", "input": {}},
-                {"type": "advisor_tool_result", "tool_use_id": "srvtoolu_1",
-                 "content": {"type": "advisor_result", "text": "advice"}}
-            ]},
-            {"role": "user", "content": "go on"}
-        ]
-    })))
+    .oneshot(post_messages(ask_with_advisor_history(false)))
     .await
     .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -2140,8 +1832,59 @@ async fn anthropic_provider_gets_no_advisor_tool_or_blocks() {
     assert_eq!(sent["tools"][0]["name"], "Read");
     assert_eq!(
         sent["messages"][1]["content"],
-        json!([{"type": "text", "text": "asking"}])
+        json!([{"type": "text", "text": "asking"}, {"type": "text", "text": "then"}])
     );
+}
+
+#[tokio::test]
+async fn openai_provider_gets_no_advisor_function_or_calls() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-1",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "ok"},
+                         "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1}
+        })))
+        .mount(&upstream)
+        .await;
+    let state = state_with(&upstream.uri(), "openai", "gpt-5.2");
+    for only_advisor in [false, true] {
+        let response = app(state.clone())
+            .oneshot(post_messages(ask_with_advisor_history(only_advisor)))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    let requests = upstream.received_requests().await.unwrap();
+    let with_read: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    let names: Vec<&str> = with_read["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|t| t["function"]["name"].as_str())
+        .collect();
+    assert_eq!(names, ["Read"]);
+    let history = with_read["messages"].to_string();
+    assert!(
+        !history.contains("advisor") && !history.contains("srvtoolu"),
+        "{history}"
+    );
+    let reply: Vec<&Value> = with_read["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "assistant")
+        .collect();
+    assert_eq!(reply.len(), 1);
+    assert!(reply[0]["content"].as_str().unwrap().contains("asking"));
+    assert!(reply[0]["content"].as_str().unwrap().contains("then"));
+    // Был только советник: ни пустого `tools`, ни выбора инструмента без инструментов.
+    let bare: Value = serde_json::from_slice(&requests[1].body).unwrap();
+    for key in ["tools", "tool_choice", "parallel_tool_calls"] {
+        assert!(bare.get(key).is_none(), "{key}: {bare}");
+    }
 }
 
 #[tokio::test]

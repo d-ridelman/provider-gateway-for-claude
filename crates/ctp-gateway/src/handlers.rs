@@ -105,6 +105,10 @@ pub async fn messages(
     let upstream_model = route.model.clone();
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     body["model"] = json!(upstream_model.clone());
+    // Советника (`/advisor`) шлюз не исполняет: его объявление (остался `advisorModel` в
+    // настройках Claude Code) и блоки в истории старых сессий провайдер бы не понял. До
+    // распознавания пробы и `WebSearch`: те смотрят на список инструментов.
+    strip_advisor(&mut body);
 
     if state.debug_prompts {
         let system = body
@@ -192,8 +196,6 @@ pub async fn messages(
     let session = crate::state::session_id(&headers, &body);
     match provider.kind {
         ProviderKind::Anthropic => {
-            // shortcut: советник шлюза — только для OpenAI-провайдеров; Anthropic-совместимому серверный инструмент `advisor` с моделью шлюза не по силам, поэтому он убирается. Сделать, если появится такой провайдер со своим советником.
-            strip_advisor(&mut body);
             passthrough::messages(&state, &provider, &uri, &headers, body, stream, started).await
         }
         ProviderKind::OpenAi => {
@@ -343,12 +345,23 @@ fn truncate_chars(text: &str, limit: usize) -> String {
 /// Без советника: объявление `advisor_*` из инструментов и его блоки из истории.
 fn strip_advisor(body: &mut Value) {
     if let Some(tools) = body.get_mut("tools").and_then(Value::as_array_mut) {
+        let before = tools.len();
         tools.retain(|tool| {
             !tool
                 .get("type")
                 .and_then(Value::as_str)
                 .is_some_and(|kind| kind.starts_with("advisor_"))
         });
+        // Был только советник: пустой `tools` OpenAI отвергает (400), а выбор инструмента
+        // без инструментов не нужен.
+        if tools.is_empty()
+            && before > 0
+            && let Some(fields) = body.as_object_mut()
+        {
+            for key in ["tools", "tool_choice"] {
+                fields.remove(key);
+            }
+        }
     }
     for message in body
         .get_mut("messages")
@@ -362,8 +375,7 @@ fn strip_advisor(body: &mut Value) {
                 let kind = block.get("type").and_then(Value::as_str);
                 !(kind == Some("advisor_tool_result")
                     || kind == Some("server_tool_use")
-                        && block.get("name").and_then(Value::as_str)
-                            == Some(openai::request::ADVISOR))
+                        && block.get("name").and_then(Value::as_str) == Some("advisor"))
             });
             // Пустое содержимое Anthropic отвергает (400).
             if content.is_empty() && before > 0 {

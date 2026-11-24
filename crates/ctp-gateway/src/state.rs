@@ -225,8 +225,6 @@ pub struct ModelRouter {
     route_index: HashMap<String, usize>,
     by_model: HashMap<String, Route>,
     pub default: Option<Route>,
-    /// Модель советника из настроек (см. `ProvidersFile::advisor`).
-    pub advisor: Option<Route>,
 }
 
 impl ModelRouter {
@@ -274,7 +272,6 @@ impl ModelRouter {
             .as_deref()
             .and_then(find)
             .or_else(|| routes.first().map(|(_, route)| route.clone()));
-        let advisor = file.advisor.as_deref().and_then(find);
 
         for provider in &providers {
             if provider.base_url.is_empty() {
@@ -288,7 +285,6 @@ impl ModelRouter {
             route_index,
             by_model,
             default,
-            advisor,
         })
     }
 
@@ -305,15 +301,6 @@ impl ModelRouter {
             return Some(self.routes[index].1.clone());
         }
         self.by_model.get(name).cloned()
-    }
-
-    /// Модель советника: названная Claude Code, если она у шлюза есть, иначе из настроек.
-    /// Только на OpenAI-совместимом провайдере: другого советника шлюз не исполняет.
-    pub fn advisor_for(&self, requested: Option<&str>) -> Option<Route> {
-        requested
-            .and_then(|name| self.resolve_exact(name))
-            .or_else(|| self.advisor.clone())
-            .filter(|route| self.providers[route.provider].kind == ProviderKind::OpenAi)
     }
 }
 
@@ -518,7 +505,6 @@ mod tests {
     fn routes_by_alias_model_and_default() {
         let router = ModelRouter::new(ProvidersFile {
             default: Some("claude-openai-80673633".into()),
-            advisor: Some("claude-sonnet-4-5".into()),
             providers: vec![
                 provider(
                     "openai",
@@ -541,17 +527,6 @@ mod tests {
         let unknown = router.resolve("claude-haiku-4-5").unwrap();
         assert_eq!(unknown.model, "gpt-5.2");
         assert!(router.resolve_exact("claude-haiku-4-5").is_none());
-
-        // Советник: своя модель шлюза — она; чужое имя (`claude-fable-5-2`) — из настроек,
-        // но только на OpenAI-провайдере (здесь в настройках Anthropic-модель — советника нет).
-        let named = router.advisor_for(Some("claude-openai-80673633")).unwrap();
-        assert_eq!(named.model, "gpt-5.2");
-        assert!(router.advisor_for(Some("claude-fable-5-2")).is_none());
-        assert!(
-            router
-                .advisor_for(Some("claude-anthropic-18183586"))
-                .is_none()
-        );
     }
 
     #[test]

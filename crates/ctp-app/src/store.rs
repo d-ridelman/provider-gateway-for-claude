@@ -413,11 +413,7 @@ pub fn build_file(config: &Config) -> Result<ProvidersFile, String> {
             .first()
             .and_then(|provider| provider.models.first().map(|(alias, _)| alias.clone()))
     });
-    Ok(ProvidersFile {
-        default,
-        advisor: None,
-        providers,
-    })
+    Ok(ProvidersFile { default, providers })
 }
 
 fn is_local(base_url: &str) -> bool {

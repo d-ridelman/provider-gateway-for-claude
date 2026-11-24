@@ -363,7 +363,7 @@ fn simplify_tools(payload: &mut Value) -> bool {
     changed
 }
 
-/// Больше предела — первые `TOOL_CAP`; функция советника шлюза остаётся всегда.
+/// Больше предела — первые `TOOL_CAP`.
 fn cap_tools(payload: &mut Value) -> bool {
     let Some(tools) = payload.get_mut("tools").and_then(Value::as_array_mut) else {
         return false;
@@ -371,14 +371,7 @@ fn cap_tools(payload: &mut Value) -> bool {
     if tools.len() <= TOOL_CAP {
         return false;
     }
-    let is_advisor = |tool: &Value| {
-        tool.pointer("/function/name").and_then(Value::as_str)
-            == Some(crate::openai::request::ADVISOR)
-    };
-    let advisor: Vec<Value> = tools.iter().filter(|t| is_advisor(t)).cloned().collect();
-    tools.retain(|tool| !is_advisor(tool));
-    tools.truncate(TOOL_CAP - advisor.len());
-    tools.extend(advisor);
+    tools.truncate(TOOL_CAP);
     true
 }
 
@@ -999,11 +992,10 @@ mod tests {
     }
 
     #[test]
-    fn the_tool_cap_keeps_the_advisor() {
-        let mut tools: Vec<Value> = (0..200)
+    fn the_tool_cap_keeps_the_first_tools() {
+        let tools: Vec<Value> = (0..200)
             .map(|i| tool(&format!("t{i}"), json!({"type": "object"})))
             .collect();
-        tools.push(tool("advisor", json!({"type": "object", "properties": {}})));
         let mut payload = json!({"tools": tools});
         assert!(cap_tools(&mut payload));
         let names: Vec<&str> = payload["tools"]
@@ -1014,7 +1006,7 @@ mod tests {
             .collect();
         assert_eq!(names.len(), TOOL_CAP);
         assert_eq!(names[0], "t0");
-        assert_eq!(*names.last().unwrap(), "advisor");
+        assert_eq!(*names.last().unwrap(), format!("t{}", TOOL_CAP - 1));
         assert!(!cap_tools(&mut payload));
     }
 
