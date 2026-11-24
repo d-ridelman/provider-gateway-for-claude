@@ -689,7 +689,7 @@ fn build(app_dir: &Path, building: &Path, ru_json: &[u8], marker: &str) -> Resul
 
 /// Недособранные папки, корзина и копии прошлых версий (~700 МБ каждая).
 /// Открытую копию переименовать нельзя — её не трогаем.
-fn remove_leftovers(cache_root: &Path, keep: &str) {
+pub(crate) fn remove_leftovers(cache_root: &Path, keep: &str) {
     let Ok(entries) = fs::read_dir(cache_root) else {
         return;
     };

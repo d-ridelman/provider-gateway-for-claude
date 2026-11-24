@@ -751,7 +751,12 @@ fn prepare_copy(
     }
     let ru = fs::read(config_dir.join(ruui::TRANSLATION_FILE))?;
     match ruui::copy_state(&app, copies, &ru)? {
-        ruui::CopyState::Current => return Ok(Some(version)),
+        ruui::CopyState::Current => {
+            // Копия, открытая во время прошлой сборки, осталась рядом (до 700 МБ): убираем,
+            // а не ждём следующей версии Claude. Занятую Windows не отдаст — попробуем позже.
+            ruui::remove_leftovers(copies, &version);
+            return Ok(Some(version));
+        }
         // Открытую копию Windows не даст заменить: соберём после закрытия.
         ruui::CopyState::Open => return Ok(None),
         ruui::CopyState::Stale => {}
