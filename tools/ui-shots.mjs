@@ -136,6 +136,7 @@ const STUB = String.raw`
     { id: "issues-log", action: "create", path: "docs/knowledge/issues.md", what: "Создать docs/knowledge/issues.md" },
     { id: "deny-secrets", action: "add", path: ".claude/settings.json", what: "deny reading secret files: Read(**/.env*), Read(**/*.pem), Read(**/*.key)" },
     { id: "gate", action: "create", path: ".claude/gates.json", what: "change gate in observe mode" },
+    { id: "critic-md", action: "create", path: ".claude/critic.md", default: false, rules: ["Все суммы — только целые копейки.", "День отчёта считается по местному времени, а не по UTC."], what: "Создать .claude/critic.md из правил проекта (черновик кодом, правил — 2); по умолчанию без галочки" },
     { id: "pre-push", action: "keep", path: ".githooks/pre-push", what: "the project's own hook: add the kit's checks to it" },
   ];
   const kitData = () => ({

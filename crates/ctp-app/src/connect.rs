@@ -347,6 +347,16 @@ pub struct PlanItem {
     pub path: String,
     #[serde(default)]
     pub what: String,
+    /// `false` — окно показывает пункт без галочки (черновик `critic.md`, ADR-019).
+    #[serde(default = "yes")]
+    pub default: bool,
+    /// Правила черновика `critic.md`: окно показывает их целиком.
+    #[serde(default)]
+    pub rules: Vec<String>,
+}
+
+fn yes() -> bool {
+    true
 }
 
 /// План из ответа `setup --json`; пункты `keep` — только совет человеку.
@@ -1608,12 +1618,36 @@ mod tests {
         assert!(chosen_checks(&p, &[]).is_empty());
     }
 
+    #[test]
+    fn case_30_the_critic_draft_is_unticked_with_its_rules() {
+        let plan = parse_plan(
+            r#"{"items": [
+                {"id": "critic-md", "action": "create", "path": ".claude/critic.md", "default": false,
+                 "rules": ["Все суммы — только целые копейки."], "what": "Создать .claude/critic.md"},
+                {"id": "issues-log", "action": "create", "path": "docs/knowledge/issues.md"}]}"#,
+        )
+        .unwrap();
+        assert!(
+            !plan[0].default && plan[1].default,
+            "без поля — с галочкой, как раньше"
+        );
+        assert_eq!(plan[0].rules, ["Все суммы — только целые копейки."]);
+        // Применяется, только когда человек его отметил: окно передаёт id лишь тогда.
+        assert_eq!(applicable(&plan, &strings(&["issues-log"])), ["issues-log"]);
+        assert_eq!(
+            applicable(&plan, &strings(&["critic-md", "issues-log"])),
+            ["critic-md", "issues-log"]
+        );
+    }
+
     fn item(id: &str, action: &str) -> PlanItem {
         PlanItem {
             id: id.into(),
             action: action.into(),
             path: id.into(),
             what: String::new(),
+            default: true,
+            rules: Vec::new(),
         }
     }
 

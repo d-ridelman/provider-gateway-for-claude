@@ -405,23 +405,36 @@ function renderProject() {
       const box = document.createElement("input");
       box.type = "checkbox";
       box.value = item.id;
-      box.checked = !p.unticked?.includes(item.id);
+      box.checked = planTicked(p, item);
       box.addEventListener("change", () => {
-        const off = new Set(state.project.unticked ?? []);
-        if (box.checked) off.delete(item.id);
-        else off.add(item.id);
-        state.project.unticked = [...off];
+        // What the person changed against the item's default, so a re-render keeps it.
+        const key = item.default === false ? "planOn" : "unticked";
+        const set = new Set(state.project[key] ?? []);
+        if (box.checked === (item.default !== false)) set.delete(item.id);
+        else set.add(item.id);
+        state.project[key] = [...set];
       });
       const span = document.createElement("span");
       // agent-kit's own text may already name the file ("Create docs/x.md"): no second copy of it.
       span.textContent = item.what.includes(item.path) ? item.what : `${t(item.action === "add" ? "project.add" : "project.create")} ${item.path} — ${item.what}`;
       label.append(box, span);
       li.append(label);
+      // A draft (critic.md rules) is shown in full: the person reads what would be written.
+      if (item.rules?.length) {
+        const pre = document.createElement("pre");
+        pre.textContent = item.rules.map((rule) => `- ${rule}`).join("\n");
+        li.append(pre);
+      }
     }
     plan.append(li);
   }
   renderChecks(p, data);
   $("projectApplyBtn").classList.toggle("hidden", !(data.plan ?? []).some((item) => item.action !== "keep") && !checksOf(data).length);
+}
+
+// A plan item is ticked by default unless agent-kit says otherwise (default: false — a draft).
+function planTicked(p, item) {
+  return item.default === false ? !!p.planOn?.includes(item.id) : !p.unticked?.includes(item.id);
 }
 
 // Checks the project writes down (ADR-016): the code's pick ticked, the ones its name rule set aside unticked.
@@ -569,14 +582,14 @@ function applyProject() {
   const data = state.project?.data;
   if (!data || state.project.busy) return;
   const dir = state.project.dir;
-  const off = new Set(state.project.unticked ?? []);
-  const chosen = (data.plan ?? []).filter((item) => item.action !== "keep" && !off.has(item.id)).map((item) => item.id);
+  const chosen = (data.plan ?? []).filter((item) => item.action !== "keep" && planTicked(state.project, item)).map((item) => item.id);
   const checks = checksOf(data).filter((check) => checkTicked(state.project, check)).map((check) => check.id);
   projectStep("apply", async () => {
     const next = await invoke("connect_apply", { root: data.root, chosen, checks });
     if (!projectStillOn(dir)) return;
     state.project.data = next;
     state.project.unticked = [];
+    state.project.planOn = [];
     state.project.checksOff = [];
     state.project.checksOn = [];
     const applied = next.applied?.applied?.length ?? 0;
