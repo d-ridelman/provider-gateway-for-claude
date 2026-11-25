@@ -157,7 +157,7 @@ const STUB = String.raw`
   const src = (file, line) => ({ file, line });
   const kitChecks = {
     checks: [
-      { id: "npm:test", cmd: "npm test", kind: "test", source: src("package.json", 7) },
+      { id: "npm:test", cmd: "npm test", kind: "test", source: src("package.json", 7), present: scenario === "kitown" },
       { id: "cargo:clippy", cmd: "cargo clippy --all-targets", kind: "lint", source: src("Cargo.toml", 1) },
       scenario === "kitlong"
         ? { id: "npm:packages/web-frontend-monorepo-workspace#test:integration", cmd: "npm --prefix packages/web-frontend-monorepo-workspace run test:integration -- --runInBand --coverage", kind: "test", source: src("packages/web-frontend-monorepo-workspace/package.json", 24) }

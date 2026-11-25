@@ -388,6 +388,9 @@ pub struct CheckItem {
     /// Слово правила имён, по которому отсеяна (`fix`, `deploy`…): окно пишет причину по-своему.
     #[serde(default)]
     pub ruled: String,
+    /// Своя `.claude/verify.json` уже запускает эту команду: окно не ставит галочку.
+    #[serde(default)]
+    pub present: bool,
 }
 
 /// Отбор проверок кодом: `checks` — с галочкой, `struck` — без галочки, с причиной.
@@ -1543,6 +1546,11 @@ mod tests {
         assert_eq!(p.checks[0].cmd, "cargo test");
         assert_eq!(p.checks[0].source.as_ref().unwrap().file, "Cargo.toml");
         assert_eq!(p.struck[0].why, "the name says bench");
+        assert!(!p.checks[0].present);
+        let own = parse_proposal(
+            r#"{"checks": [{"id": "npm:test", "cmd": "npm test", "present": true}]}"#,
+        );
+        assert!(own.unwrap().checks[0].present, "уже в своём verify.json");
         // Без `--model` в команде: файлы проекта никуда не уходят.
         let source = include_str!("connect.rs");
         let call = source.split("pub fn propose(").nth(1).unwrap();

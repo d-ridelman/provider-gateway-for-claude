@@ -426,7 +426,8 @@ function renderProject() {
 // Checks the project writes down (ADR-016): the code's pick ticked, the ones its name rule set aside unticked.
 function checksOf(data) {
   const c = data.checks;
-  return c ? [...c.checks.map((x) => ({ ...x, on: true })), ...c.struck.map((x) => ({ ...x, on: false }))] : [];
+  // One already run by the project's own verify.json is not offered again: unticked, with a note.
+  return c ? [...c.checks.map((x) => ({ ...x, on: !x.present })), ...c.struck.map((x) => ({ ...x, on: false }))] : [];
 }
 
 function checkTicked(p, check) {
@@ -476,7 +477,8 @@ function renderChecks(p, data) {
     meta.className = "muted";
     const where = check.source ? `${check.source.file}:${check.source.line}` : "";
     const kind = check.kind === "other" ? "" : check.kind;
-    const why = check.on ? "" : t("project.checkStruck", { why: check.ruled ? t("project.checkRuled", { word: check.ruled }) : check.why });
+    const why = check.present ? t("project.checkPresent")
+      : check.on ? "" : t("project.checkStruck", { why: check.ruled ? t("project.checkRuled", { word: check.ruled }) : check.why });
     meta.textContent = ` — ${[[where, kind].filter(Boolean).join(" · "), why].filter(Boolean).join(" — ")}`;
     span.append(cmd, meta);
     label.append(box, span);
