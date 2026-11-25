@@ -413,7 +413,8 @@ function renderProject() {
         state.project.unticked = [...off];
       });
       const span = document.createElement("span");
-      span.textContent = `${t(item.action === "add" ? "project.add" : "project.create")} ${item.path} — ${item.what}`;
+      // agent-kit's own text may already name the file ("Create docs/x.md"): no second copy of it.
+      span.textContent = item.what.includes(item.path) ? item.what : `${t(item.action === "add" ? "project.add" : "project.create")} ${item.path} — ${item.what}`;
       label.append(box, span);
       li.append(label);
     }

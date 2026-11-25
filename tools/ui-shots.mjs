@@ -133,7 +133,7 @@ const STUB = String.raw`
     update: scenario === "kitupdate" ? { from: "92b16a29f355", to: "a1b2c3d4e5f6" } : null,
   });
   const kitPlan = [
-    { id: "issues-log", action: "create", path: "docs/knowledge/issues.md", what: "findings log: what was noticed outside the task" },
+    { id: "issues-log", action: "create", path: "docs/knowledge/issues.md", what: "Создать docs/knowledge/issues.md" },
     { id: "deny-secrets", action: "add", path: ".claude/settings.json", what: "deny reading secret files: Read(**/.env*), Read(**/*.pem), Read(**/*.key)" },
     { id: "gate", action: "create", path: ".claude/gates.json", what: "change gate in observe mode" },
     { id: "pre-push", action: "keep", path: ".githooks/pre-push", what: "the project's own hook: add the kit's checks to it" },

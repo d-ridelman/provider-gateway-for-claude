@@ -817,6 +817,11 @@ pub fn installed(config: &Config, root: &Path) -> Result<PathBuf, String> {
     }
 }
 
+/// Язык текстов agent-kit для человека — как у окна PGC.
+fn lang() -> &'static str {
+    if crate::i18n::is_ru() { "ru" } else { "en" }
+}
+
 fn cli(kit: &Path) -> PathBuf {
     kit.join("scripts").join("cli.mjs")
 }
@@ -826,7 +831,11 @@ pub fn inspect(kit: &Path, root: &Path) -> Result<Value, String> {
     let root_text = root.display().to_string();
     let text = ok(
         run(
-            node(&cli(kit), &["inspect", "--json", "--cwd", &root_text], root),
+            node(
+                &cli(kit),
+                &["inspect", "--json", "--lang", lang(), "--cwd", &root_text],
+                root,
+            ),
             TIMEOUT,
         )?,
         "agent-kit inspect",
@@ -839,7 +848,11 @@ pub fn plan(kit: &Path, root: &Path) -> Result<Vec<PlanItem>, String> {
     let root_text = root.display().to_string();
     parse_plan(&ok(
         run(
-            node(&cli(kit), &["setup", "--json", "--cwd", &root_text], root),
+            node(
+                &cli(kit),
+                &["setup", "--json", "--lang", lang(), "--cwd", &root_text],
+                root,
+            ),
             TIMEOUT,
         )?,
         "agent-kit setup",
@@ -853,7 +866,15 @@ pub fn propose(kit: &Path, root: &Path) -> Result<Proposal, String> {
         run(
             node(
                 &cli(kit),
-                &["setup", "--propose", "--json", "--cwd", &root_text],
+                &[
+                    "setup",
+                    "--propose",
+                    "--json",
+                    "--lang",
+                    lang(),
+                    "--cwd",
+                    &root_text,
+                ],
                 root,
             ),
             TIMEOUT,
@@ -880,7 +901,7 @@ pub fn apply(
     };
     let root_text = root.display().to_string();
     let mut args: Vec<&str> = args.iter().map(String::as_str).collect();
-    args.extend(["--json", "--cwd", &root_text]);
+    args.extend(["--json", "--lang", lang(), "--cwd", &root_text]);
     let text = ok(
         run(node(&cli(kit), &args, root), TIMEOUT)?,
         "agent-kit setup --apply",
@@ -1556,6 +1577,9 @@ mod tests {
         let call = source.split("pub fn propose(").nth(1).unwrap();
         let call = &call[..call.find("\n}").unwrap()];
         assert!(call.contains("\"--propose\"") && !call.contains("--model"));
+        // Тексты для человека — на языке окна PGC.
+        let flat: String = call.split_whitespace().collect();
+        assert!(flat.contains("\"--lang\",lang(),"));
     }
 
     #[test]
