@@ -47,7 +47,7 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 - **Adapts to picky models.** Providers differ in what they accept, and many answer with a bare 400. The gateway prevents the known trouble (repeated tool names, a conversation that no longer fits the window is reported to Claude Code the way Anthropic does, so it compacts by itself), and when a model refuses a request without saying why, it simplifies it step by step: images left out, reasoning effort, sampling parameters and stream options dropped, tool names shortened, consecutive messages merged, tool schemas simplified, tools capped at 128. The reasoning of earlier replies goes back to providers that require it (DeepSeek's thinking mode with tools) and is dropped for those that refuse it. The one step that made the difference, confirmed twice for a model, is remembered in `model-profiles.json` next to the settings (delete it to forget; entries expire after 30 days) and the gateway log says what it did and what the provider answered.
 - **Keeps working after Claude updates**: the app reads Claude's model rules from the installed version, checks its config fields and tells you in Settings if something no longer matches.
 - **Russian interface for Claude Desktop** (optional): a separate patched copy of Claude with claude.ai's own Russian translation. The copy also brings back **No folder** in the Code folder picker, which third-party mode hides. When Claude updates, the app prepares the new copy in the background, so **Open Claude** does not wait. Your installed Claude is not modified. The copy is built without Russian too (no translation): only in it do the processes Claude starts (Code sessions, their npm, uv, git, MCP servers) see the real `AppData\Local` instead of the app's folder. The copy itself does not update Claude; new versions come from the regular Claude.
-- **Connect a project to agent-kit** without typing commands: checks after the agent's edits, a second model that reviews its work, and secret guarding. The project's own checks are listed with ticks and nothing leaves the computer. See [Connect a project](#connect-a-project).
+- **Projects: connect agent-kit and disconnect it** without typing commands: checks after the agent's edits, a second model that reviews its work, and secret guarding. The project's own checks are listed with ticks, nothing leaves the computer, and Disconnect removes only what agent-kit added and you did not change. See [Projects](#projects).
 - **A critic model for project scripts**: pick another gateway model that reviews an agent's work, so a reviewer works without a Claude subscription too.
 - **"?" next to the harder settings** opens a short explanation in plain words: what it is, why it is there and what happens if you leave it alone.
 - **Lives in the tray** while you work; the gateway keeps running when the window is closed.
@@ -61,7 +61,7 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 - [Claude Desktop](https://claude.ai/download) for the desktop chat. Tested with Claude Desktop 6.28899.6.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) for the terminal agent (optional). Tested with Claude Code 2.1.331.
 - An account and API key with at least one provider, or a local model server.
-- For **Connect a project** only: [Node.js](https://nodejs.org) 22 or newer, git and Claude Code.
+- For **Projects** only: [Node.js](https://nodejs.org) 22 or newer, git and Claude Code.
 
 ## Install
 
@@ -100,13 +100,13 @@ Settings → **Model for Claude Code** picks the gateway model for Claude Code. 
 
 Settings → **Critic for project scripts** picks a second gateway model that reviews an agent's work (agent-kit's critic answers ACCEPT or REJECT with a reason). Another model than the main one is better: the same model has the same blind spots. When a critic is chosen and the gateway runs, Claude Desktop and the console opened from PGC get `AGENT_KIT_PGC_URL`, `AGENT_KIT_PGC_TOKEN` (the gateway's local token), `AGENT_KIT_PGC_MODEL` and `AGENT_KIT_CRITIC_VIA=pgc`, so project scripts started there can call it. The token works only on `127.0.0.1`; still, every script started from those sessions can read it. Changing the critic does not restart the gateway.
 
-### Connect a project
+### Projects
 
 <p align="center">
-  <img src="docs/images/project-en.png" width="860" alt="Connect a project: the inspection, the project's checks with ticks and the plan in plain words">
+  <img src="docs/images/project-en.png" width="860" alt="Projects: the inspection, the project's checks with ticks and the plan in plain words">
 </p>
 
-**Connect a project** (bottom left) sets up [agent-kit](#agent-kit), a Claude Code plugin, in a project folder without commands:
+**Projects** (bottom left) sets up [agent-kit](#agent-kit), a Claude Code plugin, in a project folder without commands, and takes it out again:
 
 1. **Check** changes nothing. It says what is missing: Node.js 22+, git, Claude Code, a git repository, where to get agent-kit, no critic chosen, uncommitted edits.
 2. **Connect** turns the plugin on only for you (`.claude/settings.local.json`, outside git), unless you tick **For the whole team**. A plugin you turned off is turned back on only in this project.
@@ -114,7 +114,8 @@ Settings → **Critic for project scripts** picks a second gateway model that re
    - checks are the commands the project already writes down (package.json scripts, Cargo, Makefile, pyproject, Go, its CI), each with the file and line it comes from. Commands whose name says they change or ship something (`fix`, `deploy`, `publish`…) are unticked, with the reason. The ticked ones become the steps of a new `.claude/verify.json`; a project's own `verify.json` is not changed, and the steps are shown to add by hand. Nothing is run;
    - the plan groups what agent-kit offers to add (instructions for the agent, checks and the critic, protection, project documents) under plain names; "?" says what each one is for;
    - a draft of critic rules made from the project's own README, AGENTS.md and ADRs is offered unticked, with each rule and the file and line it came from.
-4. **Apply the ticked** applies only what is ticked. Existing files are not replaced; `.gitignore` and the Claude settings get lines added. New Claude sessions see the plugin.
+4. **Apply the ticked** applies only what is ticked. Existing files are not replaced; `.gitignore` and the Claude settings get lines added. New Claude sessions see the plugin. **Back** returns to the folder.
+5. For a connected folder, **Disconnect…** shows what to remove, with ticks: files agent-kit added and you did not change, and the lines it added to `.gitignore` and the Claude settings. A file you edited is listed but left alone. The plugin is taken out of this project last (only for you; "for the whole team" is a separate, unticked item). agent-kit knows its own files from a journal it keeps next to git (`.git/agent-kit/applied.jsonl`); what was in git comes back from git.
 
 No model is asked and no project file is sent anywhere: on 15 open projects a pick by code found as many of their CI checks as a model did.
 
@@ -168,7 +169,7 @@ The app talks to:
 | The providers you add | When Claude or Claude Code sends a request, and on **Load from provider** / **Test connection** |
 | `models.opencode.ai` | On **Load from provider**, for model names and limits; nothing about you is sent |
 | `claude.ai/i18n/ru.json`, `claude.ai/i18n/dynamic/ru.json` | Only with the Russian Claude interface turned on, when Claude updates |
-| An agent-kit source you type yourself on **Connect a project** | Only if Claude Code has no agent-kit marketplace and you set one; the built-in agent-kit needs no network |
+| An agent-kit source you type yourself on **Projects** | Only if Claude Code has no agent-kit marketplace and you set one; the built-in agent-kit needs no network |
 | `github.com` (this repository's releases) | Update check at start and once a day; turn it off in Settings |
 | `html.duckduckgo.com`, `lite.duckduckgo.com`, `search.brave.com` | When Claude's built-in web search runs: the gateway answers it itself and sends the words the model chose to search for (no account, no keys). It is always on (there is no switch for it yet) |
 | `github.com/MetaCubeX/mihomo` (releases) | Only on **Download the core** |

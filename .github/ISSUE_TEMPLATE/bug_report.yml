@@ -26,14 +26,14 @@ body:
       options:
         - Claude Desktop through the gateway / Claude Desktop через шлюз
         - Claude Code console / Консоль Claude Code
-        - Connect a project (agent-kit) / Подключить проект (agent-kit)
+        - Projects (agent-kit) / Проекты (agent-kit)
         - Proxy and VPN / Прокси и VPN
         - Settings, updates, the window / Настройки, обновления, окно
         - Other / Другое
   - type: input
     id: kit
     attributes:
-      label: agent-kit version, for Connect a project / Версия agent-kit, для «Подключить проект»
+      label: agent-kit version, for Projects / Версия agent-kit, для «Проектов»
       description: The version of agent-kit@agent-kit in `claude plugin list` / Версия agent-kit@agent-kit в `claude plugin list`
       placeholder: "3f0470a607fc"
   - type: input
