@@ -38,7 +38,7 @@ cargo run -p ctp-gateway -- --providers-file providers.json
 - A change that touches more than one module or a contract (with Claude, a provider or the person) starts with a decision record in [docs/adr](docs/adr/README.md). The cases of **Connect a project** are a table in ADR-014; each row has a test, and a test fails when a row has none.
 - A "?" explanation lives in `ui/i18n.js` as `help.<topic>.title` and `help.<topic>.body`, in plain words: what it is, why, and what happens if the person leaves it alone.
 - Every user-facing string exists in both English and Russian: `tr!("ru", "en")` in Rust, `ui/i18n.js` in the interface. `node tools/check_i18n.js` checks that the two dictionaries match.
-- The interface follows the system light/dark theme and must stay usable with the keyboard alone.
+- The interface follows the Windows light/dark theme by default and can be switched; it must stay usable with the keyboard alone.
 - Run `cargo fmt` before committing.
 
 By contributing you agree that your work is dual-licensed under [MIT](LICENSE-MIT) and [Apache-2.0](LICENSE-APACHE), like the rest of the project.

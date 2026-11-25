@@ -108,7 +108,7 @@ Settings → **Critic for project scripts** picks a second gateway model that re
 
 **Connect a project** (bottom left) sets up [agent-kit](#agent-kit), a Claude Code plugin, in a project folder without commands:
 
-1. **Check** changes nothing. It says what is missing: Node.js 22+, git, Claude Code, a git repository, no critic chosen, uncommitted edits.
+1. **Check** changes nothing. It says what is missing: Node.js 22+, git, Claude Code, a git repository, where to get agent-kit, no critic chosen, uncommitted edits.
 2. **Connect** turns the plugin on only for you (`.claude/settings.local.json`, outside git), unless you tick **For the whole team**. A plugin you turned off is turned back on only in this project.
 3. The page then shows what the project has, the **project checks** and a **plan with ticks**:
    - checks are the commands the project already writes down (package.json scripts, Cargo, Makefile, pyproject, Go, its CI), each with the file and line it comes from. Commands whose name says they change or ship something (`fix`, `deploy`, `publish`…) are unticked, with the reason. The ticked ones become the steps of a new `.claude/verify.json`; a project's own `verify.json` is not changed, and the steps are shown to add by hand. Nothing is run;
@@ -120,7 +120,7 @@ No model is asked and no project file is sent anywhere: on 15 open projects a pi
 
 #### agent-kit
 
-The installer and the portable exe carry a pinned agent-kit (MIT). When Claude Code has no agent-kit marketplace, PGC unpacks it to its own folder and installs it from there. A newer PGC, or a newer agent-kit in a marketplace folder you added yourself, offers **Update agent-kit** on the page; nothing updates by itself.
+The installer and the portable exe carry a pinned agent-kit (MIT). When Claude Code has no agent-kit marketplace, PGC unpacks it to its own folder and installs it from there. When the agent-kit in PGC, or in a marketplace folder you added yourself, differs from the project's copy, the page offers **Update agent-kit**; nothing updates by itself.
 
 ### Web search
 
@@ -165,7 +165,7 @@ The app talks to:
 
 | Where | When |
 |---|---|
-| The providers you add | When Claude or Claude Code sends a request, and on Load models / Test connection |
+| The providers you add | When Claude or Claude Code sends a request, and on **Load from provider** / **Test connection** |
 | `models.opencode.ai` | On **Load from provider**, for model names and limits; nothing about you is sent |
 | `claude.ai/i18n/ru.json`, `claude.ai/i18n/dynamic/ru.json` | Only with the Russian Claude interface turned on, when Claude updates |
 | An agent-kit source you type yourself on **Connect a project** | Only if Claude Code has no agent-kit marketplace and you set one; the built-in agent-kit needs no network |
@@ -201,7 +201,7 @@ claude.ai sometimes answers programs with a bot check. The app then loads the tr
 
 ## Build from source
 
-Requirements: Rust 1.90+ with the MSVC toolchain, Node.js (for the installer), Python 3 (optional, refreshes license notices).
+Requirements: Rust 1.90+ with the MSVC toolchain, Node.js (for the translation check in `tools\ci.ps1` and for the installer), Python 3 (optional, refreshes license notices).
 
 ```powershell
 .\tools\ci.ps1               # translations, fmt, clippy and tests, as GitHub CI runs them

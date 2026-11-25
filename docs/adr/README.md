@@ -44,4 +44,4 @@
 | [013](013-agent-kit-in-pgc.md) | Проверки и критик PGC через agent-kit | Accepted |
 | [014](014-connect-project.md) | Кнопка «Подключить проект»: agent-kit без ручных команд | Accepted |
 | [015](015-agent-kit-in-the-installer.md) | agent-kit приезжает внутри PGC | Accepted |
-| [016](016-smart-setup.md) | Умная настройка: модель советует из готового списка, включается после замера | Accepted |
+| [016](016-smart-setup.md) | Проверки проекта отбирает код; шаг с моделью по замеру не включён | Accepted |

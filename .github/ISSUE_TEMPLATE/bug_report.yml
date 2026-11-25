@@ -18,7 +18,7 @@ body:
     id: claude
     attributes:
       label: Claude Desktop / Claude Code version / Версия Claude
-      placeholder: "Claude 6.28899.6, Claude Code 2.1.330"
+      placeholder: "Claude Desktop 6.28899.6, Claude Code 2.1.331"
   - type: dropdown
     id: area
     attributes:
