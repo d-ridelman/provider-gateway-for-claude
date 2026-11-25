@@ -367,6 +367,7 @@ function renderProject() {
   const data = p.data;
   $("projectStateGroup").classList.toggle("hidden", !data);
   $("projectPlanGroup").classList.toggle("hidden", !data);
+  $("projectChecksGroup").classList.toggle("hidden", !data?.checks);
   if (!data) return;
   const findings = data.inspect?.findings ?? [];
   const count = (status) => findings.filter((f) => f.status === status).length;
@@ -434,7 +435,6 @@ function checkTicked(p, check) {
 
 function renderChecks(p, data) {
   const all = checksOf(data);
-  $("projectChecksGroup").classList.toggle("hidden", !data.checks);
   const list = $("projectChecks");
   list.replaceChildren();
   if (!data.checks) return;
@@ -442,11 +442,14 @@ function renderChecks(p, data) {
   $("projectChecksNote").textContent = !all.length ? t("project.checksEmpty") : t(own ? "project.checksOwn" : "project.checksHint");
   // After applying with an own verify.json: the steps to add by hand (agent-kit never edits that file).
   const byHand = data.applied?.skipped?.find((s) => s.id === "verify-checks");
-  const steps = byHand?.why.match(/\{[^{}]*\}/g);
-  if (steps) {
+  if (byHand) {
     const li = checkItem("human", t("project.checksByHand"));
     const pre = document.createElement("pre");
-    pre.textContent = steps.join(",\n");
+    // The steps follow "by hand: " as JSON objects; a command may hold braces (${{ matrix.n }}), so
+    // the rest is shown as is, never picked apart. `steps` — when agent-kit gives them as a list.
+    const steps = byHand.steps ?? null;
+    const rest = byHand.why.split("by hand: ")[1];
+    pre.textContent = steps ? steps.map((s) => JSON.stringify(s)).join(",\n") : rest ? rest.replaceAll('"}, {"', '"},\n{"') : byHand.why;
     li.append(pre);
     list.append(li);
   }

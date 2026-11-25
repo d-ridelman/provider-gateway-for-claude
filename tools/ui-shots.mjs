@@ -282,6 +282,8 @@ const SCREENS = {
   // Connect a project: the check, then the inspection and the plan.
   projectempty: "document.getElementById('projectBtn').click()",
   project: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); })()",
+  // Another folder typed after connecting: nothing of the old project may stay on the page.
+  projectreset: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectConnectBtn').click(); await new Promise((r) => setTimeout(r, 1500)); const input = document.getElementById('projectDirInput'); input.value = 'D:\\\\Projects\\\\other'; input.dispatchEvent(new Event('input')); })()",
   projectopen: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectConnectBtn').click(); })()",
   // Installing over a regular Claude asks first.
   installask: "(async () => { document.getElementById('settingsBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.getElementById('desktopInstallBtn').click(); })()",
@@ -346,6 +348,7 @@ add("kitupdate", "projectopen", [1], ["light", "dark"], "ru", { settleMs: 400 })
 add("normal", "projectopen", [0, 1, 2], ["light", "dark"], "ru", { settleMs: 400 });
 add("kitold", "projectopen", [1], ["dark"], "ru", { settleMs: 400 });
 add("kitown", "projectopen", [1], ["light", "dark"], "ru", { settleMs: 400 });
+add("normal", "projectreset", [1], ["dark"], "ru", { settleMs: 900 });
 add("kitlong", "projectopen", [1, 2], ["dark"], "ru", { settleMs: 400 });
 add("error", "projectopen", [1], ["dark"], "ru", { settleMs: 400 });
 add("normal", "projectopen", [1], ["dark"], "en", { settleMs: 400 });
