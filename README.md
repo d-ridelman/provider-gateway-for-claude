@@ -217,7 +217,7 @@ The workspace has three crates:
 - `crates/ctp-gateway` — the Anthropic Messages gateway, also usable on its own (`ctp-gateway --providers-file providers.json`, with the client token in `GATEWAY_TOKEN`);
 - `crates/ctp-app` — the Windows app (Tauri 2).
 
-A build carries agent-kit only after `.\tools\kit-snapshot.ps1` has taken the commit pinned in `crates\ctp-app\kit.pin` from an agent-kit clone in `..\agent-kit`; without it the app works and **Connect a project** installs agent-kit from a marketplace or a source you set. Without the project's updater key (`TAURI_SIGNING_PRIVATE_KEY`), `-Installer` builds a plain installer with no update signatures. Releases are prepared with `tools/release.ps1` (signed installer, `latest.json`, checksums). `tools/cloudflare-mirror` is an optional update mirror for networks where GitHub is slow or unreachable.
+A build carries agent-kit only after `.\tools\kit-snapshot.ps1` has taken the commit pinned in `crates\ctp-app\kit.pin` from an agent-kit clone in `..\agent-kit`; without it the app works and **Connect a project** installs agent-kit from a marketplace or a source you set. agent-kit has no repository of its own: it ships only inside PGC, and its source (MIT) is the copy inside the installer, unpacked to `%LOCALAPPDATA%\ClaudeProviderGateway\agent-kit`. Without the project's updater key (`TAURI_SIGNING_PRIVATE_KEY`), `-Installer` builds a plain installer with no update signatures. Releases are prepared with `tools/release.ps1` (signed installer, `latest.json`, checksums). `tools/cloudflare-mirror` is an optional update mirror for networks where GitHub is slow or unreachable.
 
 ## Contributing
 

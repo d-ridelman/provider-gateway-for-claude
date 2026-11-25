@@ -217,7 +217,7 @@ claude.ai иногда отвечает программам проверкой 
 - `crates/ctp-gateway` — шлюз Anthropic Messages, работает и сам по себе (`ctp-gateway --providers-file providers.json`, токен клиентов — в `GATEWAY_TOKEN`);
 - `crates/ctp-app` — приложение для Windows (Tauri 2).
 
-agent-kit попадает в сборку, только если `.\tools\kit-snapshot.ps1` взял коммит из `crates\ctp-app\kit.pin` из клона agent-kit в `..\agent-kit`; без этого приложение работает, а «Подключить проект» ставит agent-kit из маркетплейса или заданного источника. Без ключа обновлений проекта (`TAURI_SIGNING_PRIVATE_KEY`) `-Installer` соберёт обычный установщик без подписей обновлений. Релизы готовит `tools/release.ps1` (подписанный установщик, `latest.json`, контрольные суммы). `tools/cloudflare-mirror` — необязательное зеркало обновлений для сетей, где GitHub медленный или недоступен.
+agent-kit попадает в сборку, только если `.\tools\kit-snapshot.ps1` взял коммит из `crates\ctp-app\kit.pin` из клона agent-kit в `..\agent-kit`; без этого приложение работает, а «Подключить проект» ставит agent-kit из маркетплейса или заданного источника. Своего репозитория у agent-kit нет: он выходит только внутри PGC, и его исходники (MIT) — копия в установщике, которая распаковывается в `%LOCALAPPDATA%\ClaudeProviderGateway\agent-kit`. Без ключа обновлений проекта (`TAURI_SIGNING_PRIVATE_KEY`) `-Installer` соберёт обычный установщик без подписей обновлений. Релизы готовит `tools/release.ps1` (подписанный установщик, `latest.json`, контрольные суммы). `tools/cloudflare-mirror` — необязательное зеркало обновлений для сетей, где GitHub медленный или недоступен.
 
 ## Участие
 
