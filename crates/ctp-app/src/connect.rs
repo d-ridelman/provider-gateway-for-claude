@@ -365,6 +365,59 @@ pub fn parse_plan(text: &str) -> Result<Vec<PlanItem>, String> {
         })
 }
 
+/// Где проект записал проверку.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckSource {
+    pub file: String,
+    #[serde(default)]
+    pub line: u32,
+}
+
+/// Проверка из `setup --propose --json` (ADR-016): команда, которую проект уже записал.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckItem {
+    pub id: String,
+    pub cmd: String,
+    #[serde(default)]
+    pub kind: String,
+    #[serde(default)]
+    pub source: Option<CheckSource>,
+    /// Почему отсеяна (только у `struck`): окно показывает её без галочки.
+    #[serde(default)]
+    pub why: String,
+    /// Слово правила имён, по которому отсеяна (`fix`, `deploy`…): окно пишет причину по-своему.
+    #[serde(default)]
+    pub ruled: String,
+}
+
+/// Отбор проверок кодом: `checks` — с галочкой, `struck` — без галочки, с причиной.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Proposal {
+    pub checks: Vec<CheckItem>,
+    #[serde(default)]
+    pub struck: Vec<CheckItem>,
+}
+
+pub fn parse_proposal(text: &str) -> Result<Proposal, String> {
+    serde_json::from_str(text).map_err(|exc| {
+        tr!(
+            "непонятный список проверок agent-kit: {exc}",
+            "unreadable agent-kit list of checks: {exc}"
+        )
+    })
+}
+
+/// Выбранные проверки, которые можно передать: только id из отбора, в его порядке.
+pub fn chosen_checks(proposal: &Proposal, chosen: &[String]) -> Vec<String> {
+    proposal
+        .checks
+        .iter()
+        .chain(&proposal.struck)
+        .filter(|check| chosen.contains(&check.id))
+        .map(|check| check.id.clone())
+        .collect()
+}
+
 /// Выбранные человеком пункты, которые можно применить: только известные и не `keep`.
 pub fn applicable(plan: &[PlanItem], chosen: &[String]) -> Vec<String> {
     plan.iter()
@@ -790,29 +843,81 @@ pub fn plan(kit: &Path, root: &Path) -> Result<Vec<PlanItem>, String> {
     )?)
 }
 
-/// Применить выбранные пункты плана.
-pub fn apply(kit: &Path, root: &Path, chosen: &[String]) -> Result<Value, String> {
-    let ids = applicable(&plan(kit, root)?, chosen);
-    if ids.is_empty() {
-        return Ok(serde_json::json!({"applied": [], "skipped": []}));
-    }
+/// Отбор проверок кодом. Без `--model`: файлы проекта никуда не уходят (ADR-016).
+pub fn propose(kit: &Path, root: &Path) -> Result<Proposal, String> {
     let root_text = root.display().to_string();
-    let only = ids.join(",");
-    let text = ok(
+    parse_proposal(&ok(
         run(
             node(
                 &cli(kit),
-                &[
-                    "setup", "--apply", "--only", &only, "--json", "--cwd", &root_text,
-                ],
+                &["setup", "--propose", "--json", "--cwd", &root_text],
                 root,
             ),
             TIMEOUT,
         )?,
+        "agent-kit setup --propose",
+    )?)
+}
+
+/// Применить выбранные пункты плана.
+pub fn apply(
+    kit: &Path,
+    root: &Path,
+    chosen: &[String],
+    checks: &[String],
+) -> Result<Value, String> {
+    let plan = plan(kit, root)?;
+    let checks = if checks.is_empty() {
+        Vec::new()
+    } else {
+        chosen_checks(&propose(kit, root)?, checks)
+    };
+    let Some(args) = apply_args(&plan, chosen, &checks) else {
+        return Ok(serde_json::json!({"applied": [], "skipped": []}));
+    };
+    let root_text = root.display().to_string();
+    let mut args: Vec<&str> = args.iter().map(String::as_str).collect();
+    args.extend(["--json", "--cwd", &root_text]);
+    let text = ok(
+        run(node(&cli(kit), &args, root), TIMEOUT)?,
         "agent-kit setup --apply",
     )?;
     serde_json::from_str(&text).map_err(|exc| exc.to_string())
 }
+
+/// Аргументы `setup --apply`; `None` — применять нечего. Отмеченные проверки идут в новый
+/// `.claude/verify.json` (его пункт плана), а если свой файл уже есть — в пункт `verify-checks`:
+/// agent-kit его не меняет и отдаёт шаги текстом для ручного добавления (случай 28).
+pub fn apply_args(plan: &[PlanItem], chosen: &[String], checks: &[String]) -> Option<Vec<String>> {
+    let mut only = applicable(plan, chosen);
+    if !checks.is_empty() {
+        let verify = VERIFY_FILE;
+        let item = if plan.iter().any(|item| item.id == verify) {
+            verify
+        } else {
+            "verify-checks"
+        };
+        if !only.iter().any(|id| id == item) {
+            only.push(item.to_string());
+        }
+    }
+    if only.is_empty() {
+        return None;
+    }
+    let mut args = vec![
+        "setup".into(),
+        "--apply".into(),
+        "--only".into(),
+        only.join(","),
+    ];
+    if !checks.is_empty() {
+        args.extend(["--checks".into(), checks.join(",")]);
+    }
+    Some(args)
+}
+
+/// Пункт плана, который создаёт файл проверок проекта.
+pub const VERIFY_FILE: &str = ".claude/verify.json";
 
 #[cfg(test)]
 mod tests {
@@ -1427,6 +1532,99 @@ mod tests {
     }
 
     /// Полнота: у каждой строки таблицы ADR-014 есть тест `case_NN_…`.
+    const PROPOSAL: &str = r#"{"format": 1, "via": "code", "model": "",
+        "checks": [{"id": "cargo:test", "cmd": "cargo test", "kind": "test", "source": {"file": "Cargo.toml", "line": 1}}],
+        "struck": [{"id": "npm:bench", "cmd": "npm run bench", "kind": "other", "why": "the name says bench"}],
+        "usage": {"input": 0, "output": 0}}"#;
+
+    #[test]
+    fn case_25_checks_ticked_and_struck_with_a_reason() {
+        let p = parse_proposal(PROPOSAL).unwrap();
+        assert_eq!(p.checks[0].cmd, "cargo test");
+        assert_eq!(p.checks[0].source.as_ref().unwrap().file, "Cargo.toml");
+        assert_eq!(p.struck[0].why, "the name says bench");
+        // Без `--model` в команде: файлы проекта никуда не уходят.
+        let source = include_str!("connect.rs");
+        let call = source.split("pub fn propose(").nth(1).unwrap();
+        let call = &call[..call.find("\n}").unwrap()];
+        assert!(call.contains("\"--propose\"") && !call.contains("--model"));
+    }
+
+    #[test]
+    fn case_26_an_old_kit_or_an_unreadable_answer() {
+        assert!(parse_proposal("Usage: agent-kit setup …").is_err());
+        assert!(
+            parse_proposal(r#"{"items": []}"#).is_err(),
+            "ответ setup без --propose"
+        );
+        let empty = parse_proposal(r#"{"checks": []}"#).unwrap();
+        assert!(empty.checks.is_empty() && empty.struck.is_empty());
+    }
+
+    #[test]
+    fn case_27_only_ids_of_the_proposal_are_passed() {
+        let p = parse_proposal(PROPOSAL).unwrap();
+        let chosen = ["npm:bench", "cargo:test", "make:deploy"].map(String::from);
+        assert_eq!(chosen_checks(&p, &chosen), ["cargo:test", "npm:bench"]);
+        assert!(chosen_checks(&p, &[]).is_empty());
+    }
+
+    fn item(id: &str, action: &str) -> PlanItem {
+        PlanItem {
+            id: id.into(),
+            action: action.into(),
+            path: id.into(),
+            what: String::new(),
+        }
+    }
+
+    fn strings(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn case_28_an_own_verify_file_gets_the_steps_as_text() {
+        let plan = [item("AGENTS.md", "create"), item("pre-push", "keep")];
+        let args = apply_args(&plan, &strings(&["AGENTS.md"]), &strings(&["cargo:test"])).unwrap();
+        assert_eq!(
+            args,
+            strings(&[
+                "setup",
+                "--apply",
+                "--only",
+                "AGENTS.md,verify-checks",
+                "--checks",
+                "cargo:test"
+            ])
+        );
+        // Только проверки, без пунктов плана — тоже применяется.
+        let args = apply_args(&plan, &[], &strings(&["cargo:test", "npm:bench"])).unwrap();
+        assert_eq!(args[3], "verify-checks");
+        assert_eq!(args[5], "cargo:test,npm:bench");
+        // Ничего не отмечено — нечего и запускать.
+        assert!(apply_args(&plan, &strings(&["pre-push"]), &[]).is_none());
+    }
+
+    #[test]
+    fn case_29_ticked_checks_bring_the_verify_file_along() {
+        let plan = [item(VERIFY_FILE, "create"), item("deny-secrets", "add")];
+        let args = apply_args(
+            &plan,
+            &strings(&["deny-secrets"]),
+            &strings(&["cargo:test"]),
+        )
+        .unwrap();
+        assert_eq!(args[3], format!("deny-secrets,{VERIFY_FILE}"));
+        let args = apply_args(&plan, &strings(&[VERIFY_FILE]), &strings(&["cargo:test"])).unwrap();
+        assert_eq!(args[3], VERIFY_FILE, "не дважды");
+        // Без проверок файл создаётся только по своей галочке, с шагами, найденными setup.
+        let args = apply_args(&plan, &strings(&["deny-secrets"]), &[]).unwrap();
+        assert_eq!(
+            args,
+            strings(&["setup", "--apply", "--only", "deny-secrets"])
+        );
+    }
+
     #[test]
     fn every_case_of_the_table_has_a_test() {
         let adr = include_str!("../../../docs/adr/014-connect-project.md");

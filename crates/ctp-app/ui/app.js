@@ -418,7 +418,68 @@ function renderProject() {
     }
     plan.append(li);
   }
-  $("projectApplyBtn").classList.toggle("hidden", !(data.plan ?? []).some((item) => item.action !== "keep"));
+  renderChecks(p, data);
+  $("projectApplyBtn").classList.toggle("hidden", !(data.plan ?? []).some((item) => item.action !== "keep") && !checksOf(data).length);
+}
+
+// Checks the project writes down (ADR-016): the code's pick ticked, the ones its name rule set aside unticked.
+function checksOf(data) {
+  const c = data.checks;
+  return c ? [...c.checks.map((x) => ({ ...x, on: true })), ...c.struck.map((x) => ({ ...x, on: false }))] : [];
+}
+
+function checkTicked(p, check) {
+  return (check.on && !p.checksOff?.includes(check.id)) || (!check.on && !!p.checksOn?.includes(check.id));
+}
+
+function renderChecks(p, data) {
+  const all = checksOf(data);
+  $("projectChecksGroup").classList.toggle("hidden", !data.checks);
+  const list = $("projectChecks");
+  list.replaceChildren();
+  if (!data.checks) return;
+  const own = !(data.plan ?? []).some((item) => item.id === ".claude/verify.json");
+  $("projectChecksNote").textContent = !all.length ? t("project.checksEmpty") : t(own ? "project.checksOwn" : "project.checksHint");
+  // After applying with an own verify.json: the steps to add by hand (agent-kit never edits that file).
+  const byHand = data.applied?.skipped?.find((s) => s.id === "verify-checks");
+  const steps = byHand?.why.match(/\{[^{}]*\}/g);
+  if (steps) {
+    const li = checkItem("human", t("project.checksByHand"));
+    const pre = document.createElement("pre");
+    pre.textContent = steps.join(",\n");
+    li.append(pre);
+    list.append(li);
+  }
+  for (const check of all) {
+    const li = document.createElement("li");
+    const label = document.createElement("label");
+    label.className = "check";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = checkTicked(p, check);
+    box.addEventListener("change", () => {
+      // What the person changed against the default, so a re-render keeps it.
+      const key = check.on ? "checksOff" : "checksOn";
+      const set = new Set(state.project[key] ?? []);
+      if (box.checked === check.on) set.delete(check.id);
+      else set.add(check.id);
+      state.project[key] = [...set];
+    });
+    const span = document.createElement("span");
+    const cmd = document.createElement("span");
+    cmd.className = "mono";
+    cmd.textContent = check.cmd;
+    const meta = document.createElement("span");
+    meta.className = "muted";
+    const where = check.source ? `${check.source.file}:${check.source.line}` : "";
+    const kind = check.kind === "other" ? "" : check.kind;
+    const why = check.on ? "" : t("project.checkStruck", { why: check.ruled ? t("project.checkRuled", { word: check.ruled }) : check.why });
+    meta.textContent = ` — ${[[where, kind].filter(Boolean).join(" · "), why].filter(Boolean).join(" — ")}`;
+    span.append(cmd, meta);
+    label.append(box, span);
+    li.append(label);
+    list.append(li);
+  }
 }
 
 async function projectStep(busy, work) {
@@ -503,14 +564,18 @@ function applyProject() {
   if (!data || state.project.busy) return;
   const dir = state.project.dir;
   const off = new Set(state.project.unticked ?? []);
-  const chosen = data.plan.filter((item) => item.action !== "keep" && !off.has(item.id)).map((item) => item.id);
+  const chosen = (data.plan ?? []).filter((item) => item.action !== "keep" && !off.has(item.id)).map((item) => item.id);
+  const checks = checksOf(data).filter((check) => checkTicked(state.project, check)).map((check) => check.id);
   projectStep("apply", async () => {
-    const next = await invoke("connect_apply", { root: data.root, chosen });
+    const next = await invoke("connect_apply", { root: data.root, chosen, checks });
     if (!projectStillOn(dir)) return;
     state.project.data = next;
     state.project.unticked = [];
+    state.project.checksOff = [];
+    state.project.checksOn = [];
     const applied = next.applied?.applied?.length ?? 0;
-    const skipped = next.applied?.skipped?.length ?? 0;
+    // The steps to add by hand are shown under the checks, not counted as a stale item.
+    const skipped = next.applied?.skipped?.filter((s) => s.id !== "verify-checks").length ?? 0;
     toast(t(skipped ? "project.appliedSkipped" : "project.applied", { count: applied, skipped }), skipped ? "" : "good");
   });
 }

@@ -147,10 +147,27 @@ const STUB = String.raw`
       { id: "gate", status: "missing", what: "no .claude/gates.json", fix: "a gate in observe mode first" },
       { id: "skills", status: "problem", what: "some-plugin: skills/x/: the description says when to use it, not when not to", fix: "add when not to use it" },
     ] },
-    plan: scenario === "kitold" ? null : kitPlan,
+    // "kitown" — the project has its own verify.json, and the steps are shown to add by hand.
+    plan: scenario === "kitold" ? null : scenario === "kitown" ? kitPlan : [{ id: ".claude/verify.json", action: "create", path: ".claude/verify.json", what: "the checks of this project" }, ...kitPlan],
     planError: scenario === "kitold" ? "agent-kit setup: unknown option --json" : null,
-    fresh: true, applied: null,
+    checks: scenario === "kitold" ? null : kitChecks,
+    fresh: true,
+    applied: scenario === "kitown" ? { applied: [], skipped: [{ id: "verify-checks", why: 'advice for a person, nothing to apply: .claude/verify.json is the project\'s own and is never rewritten: add the ticked checks to its steps by hand: {"name":"npm-test","cmd":"npm test"}, {"name":"cargo-clippy","cmd":"cargo clippy --all-targets"}' }] } : null,
   });
+  const src = (file, line) => ({ file, line });
+  const kitChecks = {
+    checks: [
+      { id: "npm:test", cmd: "npm test", kind: "test", source: src("package.json", 7) },
+      { id: "cargo:clippy", cmd: "cargo clippy --all-targets", kind: "lint", source: src("Cargo.toml", 1) },
+      scenario === "kitlong"
+        ? { id: "npm:packages/web-frontend-monorepo-workspace#test:integration", cmd: "npm --prefix packages/web-frontend-monorepo-workspace run test:integration -- --runInBand --coverage", kind: "test", source: src("packages/web-frontend-monorepo-workspace/package.json", 24) }
+        : { id: "ci:e50f3703cb", cmd: "npx tsc --noEmit", kind: "typecheck", source: src(".github/workflows/ci.yml", 31) },
+    ],
+    struck: [
+      { id: "npm:lint:fix", cmd: "npm run lint:fix", kind: "other", source: src("package.json", 9), ruled: "fix", why: "name rule" },
+      { id: "ci:a1b2c3d4e5", cmd: "npm test -- --shard \${{ matrix.n }}", kind: "test", source: src(".github/workflows/ci.yml", 40), why: "a CI step that needs the CI itself (a matrix value)" },
+    ],
+  };
   const vpn = scenario === "vpn" || scenario === "vpnerror" || scenario === "vpnlong";
   const node = (sub, label, kind, delay) => ({ name: sub + "|" + label, label, sub, kind, delay });
   const longName = "🇳🇱 Netherlands · Amsterdam · premium node with an unusually long name 01";
@@ -328,6 +345,7 @@ add("kitsource", "project", [1], ["light", "dark"]);
 add("kitupdate", "projectopen", [1], ["light", "dark"], "ru", { settleMs: 400 });
 add("normal", "projectopen", [0, 1, 2], ["light", "dark"], "ru", { settleMs: 400 });
 add("kitold", "projectopen", [1], ["dark"], "ru", { settleMs: 400 });
+add("kitown", "projectopen", [1], ["light", "dark"], "ru", { settleMs: 400 });
 add("kitlong", "projectopen", [1, 2], ["dark"], "ru", { settleMs: 400 });
 add("error", "projectopen", [1], ["dark"], "ru", { settleMs: 400 });
 add("normal", "projectopen", [1], ["dark"], "en", { settleMs: 400 });

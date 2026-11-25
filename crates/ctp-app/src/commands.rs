@@ -348,6 +348,8 @@ pub struct ConnectState {
     /// План `setup`; `None` — установленная копия плана ещё не отдаёт (`plan_error`).
     pub plan: Option<Vec<crate::connect::PlanItem>>,
     pub plan_error: Option<String>,
+    /// Проверки проекта с галочками (ADR-016); `None` — копия agent-kit их ещё не отдаёт.
+    pub checks: Option<crate::connect::Proposal>,
     /// Плагин только что включён: открытые сессии Claude его не увидят (случай 18).
     pub fresh: bool,
     /// Ответ `setup --apply`: что применено и что пропущено.
@@ -365,6 +367,8 @@ fn connect_state(kit: &std::path::Path, root: &std::path::Path) -> Result<Connec
         inspect,
         plan,
         plan_error,
+        // Старая копия без `--propose` — просто без списка проверок, как раньше.
+        checks: crate::connect::propose(kit, root).ok(),
         fresh: false,
         applied: None,
     })
@@ -439,6 +443,7 @@ pub async fn connect_apply(
     shared: State<'_, AppShared>,
     root: String,
     chosen: Vec<String>,
+    checks: Vec<String>,
 ) -> Result<ConnectState, String> {
     let config = shared.config.lock().unwrap().clone();
     tauri::async_runtime::spawn_blocking(move || {
@@ -456,7 +461,7 @@ pub async fn connect_apply(
             ));
         }
         let kit = crate::connect::installed(&config, &root)?;
-        let applied = crate::connect::apply(&kit, &root, &chosen)?;
+        let applied = crate::connect::apply(&kit, &root, &chosen, &checks)?;
         Ok(ConnectState {
             applied: Some(applied),
             ..connect_state(&kit, &root)?
