@@ -683,6 +683,7 @@ pub fn facts(config: &Config, status: &crate::model::UiStatus, requested: &Path)
     let plugin = plugins
         .as_ref()
         .map_or(Plugin::Absent, |list| plugin_state(list, &work));
+    let plugin = with_local_switch(plugin, root.as_deref());
     let entry = plugins.as_ref().and_then(|list| nearest(list, &work));
     let field = |name: &str| entry.and_then(|e| e[name].as_str()).map(str::to_string);
     let markets = list(&["plugin", "marketplace", "list", "--json"]);
@@ -904,6 +905,23 @@ pub fn installed(config: &Config, root: &Path) -> Result<PathBuf, String> {
     }
 }
 
+/// Личный выключатель человека в этом проекте: `enabledPlugins` в `.claude/settings.local.json`
+/// сильнее общих областей. `claude plugin list` его не учитывает: после «выключить только у
+/// меня» при установке «для всей команды» он по-прежнему пишет `enabled: true` (проверено
+/// вживую), и страница считала бы проект подключённым (случай 41).
+pub fn with_local_switch(plugin: Plugin, root: Option<&Path>) -> Plugin {
+    let off = root
+        .and_then(|root| {
+            std::fs::read_to_string(root.join(".claude").join("settings.local.json")).ok()
+        })
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .is_some_and(|value| value["enabledPlugins"][PLUGIN] == Value::Bool(false));
+    match plugin {
+        Plugin::Enabled { .. } if off => Plugin::Disabled,
+        other => other,
+    }
+}
+
 /// Пункты плагина в плане отключения (ADR-017): их делает сам PGC, а не agent-kit.
 pub const PLUGIN_LOCAL: &str = "plugin-local";
 pub const PLUGIN_TEAM: &str = "plugin-team";
@@ -1025,6 +1043,22 @@ pub fn plugin_off_steps(chosen: &[String], scope: Option<&str>) -> Vec<Vec<Strin
     steps
 }
 
+/// Файлы отмечены, а план отката не прочитался (нет Node, таймаут): пропустить их молча и убрать
+/// плагин — значит оставить их без пути назад (случай 40).
+pub fn undo_blind(plan_read: bool, chosen: &[String]) -> bool {
+    !plan_read
+        && chosen
+            .iter()
+            .any(|id| id != PLUGIN_LOCAL && id != PLUGIN_TEAM)
+}
+
+/// Плагин убирается последним и только когда файлы ушли без сбоев (случай 39).
+pub fn plugin_may_go(result: &Value) -> bool {
+    !result["failed"]
+        .as_array()
+        .is_some_and(|failed| !failed.is_empty())
+}
+
 /// Отключить отмеченное: сначала файлы (agent-kit, пока он ещё включён), потом плагин.
 pub fn undo_apply(
     config: &Config,
@@ -1034,7 +1068,14 @@ pub fn undo_apply(
     scope: Option<&str>,
 ) -> Result<Value, String> {
     let mut result = serde_json::json!({"applied": [], "skipped": []});
-    if let Some(plan) = undo_plan(kit, root) {
+    let plan = undo_plan(kit, root);
+    if undo_blind(plan.is_some(), chosen) {
+        return Err(tr!(
+            "agent-kit не отдал план отката: ничего не тронуто. Нажмите «Отключить…» ещё раз.",
+            "agent-kit gave no undo plan: nothing was touched. Press Disconnect… again."
+        ));
+    }
+    if let Some(plan) = plan {
         let ids = applicable(&plan, chosen);
         if !ids.is_empty() {
             let root_text = root.display().to_string();
@@ -1059,6 +1100,10 @@ pub fn undo_apply(
                 TIMEOUT,
             )?)?;
         }
+    }
+    // Some files did not go: the plugin stays, so the person can retry from the same page.
+    if !plugin_may_go(&result) {
+        return Ok(result);
     }
     let steps = plugin_off_steps(chosen, scope);
     if !steps.is_empty() {
@@ -1604,6 +1649,68 @@ mod tests {
         );
         // The plugin ids are PGC's own: agent-kit never gets them.
         assert!(applicable(&plan, &strings(&[PLUGIN_LOCAL])).is_empty());
+    }
+
+    #[test]
+    fn case_41_the_persons_own_switch_wins_over_the_list() {
+        let dir = std::env::temp_dir().join(format!("pgc-switch-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".claude")).unwrap();
+        let on = || Plugin::Enabled {
+            install_path: PathBuf::from(r"C:\cache"),
+        };
+        // No local settings: the list is right.
+        assert_eq!(with_local_switch(on(), Some(&dir)), on());
+        let local = dir.join(".claude").join("settings.local.json");
+        std::fs::write(
+            &local,
+            r#"{"enabledPlugins": {"agent-kit@agent-kit": false}}"#,
+        )
+        .unwrap();
+        assert_eq!(with_local_switch(on(), Some(&dir)), Plugin::Disabled);
+        // Turned back on, or another plugin off: still on.
+        std::fs::write(
+            &local,
+            r#"{"enabledPlugins": {"agent-kit@agent-kit": true, "x@y": false}}"#,
+        )
+        .unwrap();
+        assert_eq!(with_local_switch(on(), Some(&dir)), on());
+        // A broken file is not a switch.
+        std::fs::write(&local, "{ broken").unwrap();
+        assert_eq!(with_local_switch(on(), Some(&dir)), on());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn case_39_the_plugin_stays_when_some_files_did_not_go() {
+        assert!(!plugin_may_go(
+            &json!({"applied": [], "failed": [{"id": "AGENTS.md", "why": "busy"}]})
+        ));
+        assert!(plugin_may_go(
+            &json!({"applied": ["AGENTS.md"], "failed": []})
+        ));
+        assert!(plugin_may_go(&json!({"applied": ["AGENTS.md"]})));
+        // And undo_apply asks it before the plugin commands.
+        let source = include_str!("connect.rs");
+        let body = source.split("pub fn undo_apply(").nth(1).unwrap();
+        assert!(body.find("plugin_may_go(").unwrap() < body.find("run_claude(").unwrap());
+    }
+
+    #[test]
+    fn case_40_ticked_files_without_an_undo_plan_touch_nothing() {
+        assert!(
+            undo_blind(false, &strings(&["AGENTS.md", PLUGIN_LOCAL])),
+            "files ticked, no plan: stop"
+        );
+        // Only the plugin ticked: an old agent-kit without undo still lets it go.
+        assert!(!undo_blind(false, &strings(&[PLUGIN_LOCAL])));
+        assert!(!undo_blind(true, &strings(&["AGENTS.md"])));
+        // And undo_apply uses it before anything is run.
+        let source = include_str!("connect.rs");
+        let body = source.split("pub fn undo_apply(").nth(1).unwrap();
+        let guard = body.find("undo_blind(").unwrap();
+        assert!(
+            guard < body.find("applied(run(").unwrap() && guard < body.find("run_claude(").unwrap()
+        );
     }
 
     #[test]
