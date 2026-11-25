@@ -135,7 +135,7 @@ const STUB = String.raw`
   const kitPlan = [
     { id: "issues-log", action: "create", path: "docs/knowledge/issues.md", what: "Создать docs/knowledge/issues.md" },
     { id: "deny-secrets", action: "add", path: ".claude/settings.json", what: "deny reading secret files: Read(**/.env*), Read(**/*.pem), Read(**/*.key)" },
-    { id: "gate", action: "create", path: ".claude/gates.json", what: "change gate in observe mode" },
+    { id: "gate", action: "create", path: ".claude/gates.json", what: "change gate in observe mode", about: "Не даёт агенту закончить работу, пока он не прогнал проверки по своим правкам. Сначала только наблюдает и ничего не блокирует." },
     { id: "critic-md", action: "create", path: ".claude/critic.md", default: false, rules: ["Все суммы — только целые копейки.", "День отчёта считается по местному времени, а не по UTC."], what: "Создать .claude/critic.md из правил проекта (черновик кодом, правил — 2); по умолчанию без галочки" },
     { id: "pre-push", action: "keep", path: ".githooks/pre-push", what: "the project's own hook: add the kit's checks to it" },
   ];
@@ -146,7 +146,7 @@ const STUB = String.raw`
       { id: "slow-step", status: "ok", advice: true, step: "e2e", what: "шаг e2e: прогонов — 20, ни разу не падал, около 90 с каждый: можно запускать реже (решает человек)" },
       { id: "decisions", status: "ok", what: "decision log: docs/adr (+13)" },
       { id: "issues", status: "missing", what: "no findings log (docs/knowledge/issues.md or TODO.md)", fix: "findings outside the task go there, not into a quiet fix" },
-      { id: "gate", status: "missing", what: "no .claude/gates.json", fix: "a gate in observe mode first" },
+      { id: "gate", status: "missing", what: "no .claude/gates.json", fix: "a gate in observe mode first", about: "Без него агент может сказать «готово», не запустив ни одной проверки." },
       { id: "skills", status: "problem", what: "some-plugin: skills/x/: the description says when to use it, not when not to", fix: "add when not to use it" },
     ] },
     // "kitown" — the project has its own verify.json, and the steps are shown to add by hand.

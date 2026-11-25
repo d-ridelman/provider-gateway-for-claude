@@ -375,6 +375,9 @@ pub struct PlanItem {
     /// Правила черновика `critic.md`: окно показывает их целиком.
     #[serde(default)]
     pub rules: Vec<String>,
+    /// Зачем этот пункт, простыми словами (agent-kit, на языке окна): окно открывает по «?».
+    #[serde(default)]
+    pub about: String,
 }
 
 fn yes() -> bool {
@@ -1735,6 +1738,14 @@ mod tests {
             "без поля — с галочкой, как раньше"
         );
         assert_eq!(plan[0].rules, ["Все суммы — только целые копейки."]);
+        assert!(
+            plan[0].about.is_empty(),
+            "без пояснения — пусто, «?» не показывается"
+        );
+        let told = parse_plan(
+            r#"{"items": [{"id": "gate", "action": "create", "about": "Не даёт закончить без проверок."}]}"#,
+        );
+        assert_eq!(told.unwrap()[0].about, "Не даёт закончить без проверок.");
         // Применяется, только когда человек его отметил: окно передаёт id лишь тогда.
         assert_eq!(applicable(&plan, &strings(&["issues-log"])), ["issues-log"]);
         assert_eq!(
@@ -1751,6 +1762,7 @@ mod tests {
             what: String::new(),
             default: true,
             rules: Vec::new(),
+            about: String::new(),
         }
     }
 

@@ -392,7 +392,9 @@ function renderProject() {
   shown.replaceChildren();
   // Only what is not fine, and advice (a slow step that never failed): the rest is in the count above.
   for (const f of findings.filter((f) => f.status !== "ok" || f.advice)) {
-    shown.append(checkItem(f.status === "problem" ? "human" : "off", f.what, f.fix));
+    const li = checkItem(f.status === "problem" ? "human" : "off", f.what, f.fix);
+    if (f.about) li.append(helpButton(() => openHelp(f.what, [f.about, f.fix].filter(Boolean).join("\n\n"))));
+    shown.append(li);
   }
   const plan = $("projectPlan");
   plan.replaceChildren();
@@ -409,6 +411,7 @@ function renderProject() {
     if (item.action === "keep") {
       li.className = "off";
       li.textContent = `– ${item.path}: ${item.what}`;
+      if (item.about) li.append(helpButton(() => openHelp(item.path, item.about)));
     } else {
       const label = document.createElement("label");
       label.className = "check";
@@ -428,7 +431,9 @@ function renderProject() {
       // agent-kit's own text may already name the file ("Create docs/x.md"): no second copy of it.
       span.textContent = item.what.includes(item.path) ? item.what : `${t(item.action === "add" ? "project.add" : "project.create")} ${item.path} — ${item.what}`;
       label.append(box, span);
+      // The "?" sits outside the label: a click on it must not tick the box.
       li.append(label);
+      if (item.about) li.append(helpButton(() => openHelp(item.path, item.about)));
       // A draft (critic.md rules) is shown in full: the person reads what would be written.
       if (item.rules?.length) {
         const pre = document.createElement("pre");
