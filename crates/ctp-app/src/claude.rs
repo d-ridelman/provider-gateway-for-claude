@@ -1028,6 +1028,11 @@ fn inference_models(
             // endpoint может отдавать и не-Claude (DeepSeek, GLM).
             let own = ctp_core::alias::strip_1m(&model.model).trim().to_string();
             let real_claude = !model.openai && own.starts_with("claude-");
+            // Claude под чужим ID (`anthropic/claude-…`, `us.anthropic.claude-…`) — тоже Claude.
+            let claude_inside = !model.openai && own.to_ascii_lowercase().contains("claude-");
+            // Окно неизвестно и образца `behavesAs` нет (нет уровней рассуждения) — всё равно
+            // 1M, как у остальных (ADR-005, ADR-011): иначе Desktop взял бы свои 200K.
+            let window_1m = model.supports_1m || (model.max_effort.is_none() && !claude_inside);
             let mut row = json!({
                 "name": model.alias,
                 "labelOverride": format!(
@@ -1035,14 +1040,12 @@ fn inference_models(
                     model.label.as_deref().unwrap_or(&model.model),
                     model.provider
                 ),
-                "supports1m": model.supports_1m
+                "supports1m": window_1m
             });
             // Одна строка вместо двух («обычная» 200K и «1 млн»): у провайдера модель одна,
             // вторая строка лишь сжимала бы разговор раньше. У настоящей Claude вариант 1M —
             // заголовок `context-1m-…` и другая цена, обе строки нужны (ADR-011).
-            // Claude под чужим ID (`anthropic/claude-…`, `us.anthropic.claude-…`) — тоже Claude.
-            let claude_inside = !model.openai && own.to_ascii_lowercase().contains("claude-");
-            if model.supports_1m && !claude_inside {
+            if window_1m && !claude_inside {
                 row["prefer1m"] = json!(true);
             }
             if roles.sonnet.as_deref() == Some(model.alias.as_str()) {
@@ -1680,6 +1683,8 @@ mod tests {
                 with_1m("claude-opus-5-5[1m]", false),
                 info("qwen3", None, true),
                 with_1m("anthropic/Claude-Sonnet-5-5[1m]", false),
+                info("deepseek-x", Some("max"), true),
+                info("claude-sonnet-5-5", None, false),
             ],
             &RoleAliases::default(),
         );
@@ -1692,15 +1697,20 @@ mod tests {
         assert_eq!(rows[2]["prefer1m"], true, "не-Claude за Anthropic API");
         // Настоящая Claude у Anthropic: 1M — отдельный заголовок и цена, обе строки.
         assert!(rows[3].get("prefer1m").is_none());
-        assert!(
-            rows[4].get("prefer1m").is_none(),
-            "без [1m] второй строки и так нет"
-        );
+        // Окно неизвестно, уровней нет (нет образца с 1M) — всё равно 1M, одной строкой.
+        assert_eq!(rows[4]["supports1m"], true);
+        assert_eq!(rows[4]["prefer1m"], true);
         assert!(
             rows[5].get("prefer1m").is_none(),
             "Claude под чужим ID у агрегатора"
         );
         assert!(rows.iter().take(4).all(|r| r["supports1m"] == true));
+        // С уровнями окно 1M даёт образец `behavesAs`; строка одна и без [1m].
+        assert_eq!(rows[6]["supports1m"], false);
+        assert_eq!(rows[6]["behavesAs"], EFFORT_PROFILE);
+        // Настоящая Claude без [1m] — её 200K, без варианта 1M.
+        assert_eq!(rows[7]["supports1m"], false);
+        assert!(rows[7].get("prefer1m").is_none());
     }
 
     fn status_with(models: Vec<ModelInfo>) -> UiStatus {
