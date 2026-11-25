@@ -1,0 +1,13 @@
+{
+  "base": "origin/main",
+  "steps": [
+    { "name": "translations", "cmd": "node tools/check_i18n.js" },
+    { "name": "format", "cmd": "cargo fmt --all --check" },
+    { "name": "clippy", "cmd": "cargo clippy -j 2 --workspace --all-targets --locked -- -D warnings" },
+    { "name": "tests", "cmd": "cargo test -j 2 --workspace --locked" }
+  ],
+  "rules": [
+    { "files": "^(docs|notes)/|[.]md$", "run": [] },
+    { "files": "^crates/ctp-app/ui/", "run": ["translations"] }
+  ]
+}
