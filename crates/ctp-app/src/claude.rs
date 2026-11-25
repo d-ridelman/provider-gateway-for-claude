@@ -1042,10 +1042,10 @@ fn inference_models(
                 ),
                 "supports1m": window_1m
             });
-            // Одна строка вместо двух («обычная» 200K и «1 млн»): у провайдера модель одна,
-            // вторая строка лишь сжимала бы разговор раньше. У настоящей Claude вариант 1M —
-            // заголовок `context-1m-…` и другая цена, обе строки нужны (ADR-011).
-            if window_1m && !claude_inside {
+            // Одна строка вместо двух («обычная» и «1 млн») у всех моделей с окном 1M: у
+            // провайдера модель одна, а у Claude 5.x окно 1M своё и цена одна (ADR-011,
+            // исправление 25.11). Кто пометил модель `[1m]`, тот и хочет 1M.
+            if window_1m {
                 row["prefer1m"] = json!(true);
             }
             if roles.sonnet.as_deref() == Some(model.alias.as_str()) {
@@ -1670,7 +1670,7 @@ mod tests {
     }
 
     #[test]
-    fn a_1m_model_gets_one_menu_row_unless_it_is_real_claude() {
+    fn a_1m_model_gets_one_menu_row() {
         let with_1m = |model: &str, openai: bool| ModelInfo {
             supports_1m: true,
             ..info(model, None, openai)
@@ -1695,13 +1695,13 @@ mod tests {
             "Claude через OpenAI-путь — окно провайдера"
         );
         assert_eq!(rows[2]["prefer1m"], true, "не-Claude за Anthropic API");
-        // Настоящая Claude у Anthropic: 1M — отдельный заголовок и цена, обе строки.
-        assert!(rows[3].get("prefer1m").is_none());
+        // Настоящая Claude у Anthropic тоже одной строкой: у Claude 5.x окно 1M своё и цена одна.
+        assert_eq!(rows[3]["prefer1m"], true);
         // Окно неизвестно, уровней нет (нет образца с 1M) — всё равно 1M, одной строкой.
         assert_eq!(rows[4]["supports1m"], true);
         assert_eq!(rows[4]["prefer1m"], true);
-        assert!(
-            rows[5].get("prefer1m").is_none(),
+        assert_eq!(
+            rows[5]["prefer1m"], true,
             "Claude под чужим ID у агрегатора"
         );
         assert!(rows.iter().take(4).all(|r| r["supports1m"] == true));
