@@ -114,7 +114,7 @@ const STUB = String.raw`
     connect_set_source: () => null,
     // "kitundo" — a connected project and its disconnect plan (ADR-017).
     connect_undo_open: () => kitUndo(),
-    connect_undo_apply: () => ({ ...kitUndo(), applied: { applied: ["AGENTS.md", "plugin-local"], skipped: [] } }),
+    connect_undo_apply: () => { kitConnected = false; return { ...kitUndo(), applied: { applied: ["AGENTS.md", "plugin-local"], skipped: [] } }; },
     connect_update: () => kitData(),
   };
   // Connect turns the plugin on: a check after it says "connected" (the Back button checks again).
@@ -315,6 +315,8 @@ const SCREENS = {
   projectundo: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectUndoBtn').click(); })()",
   // Check, Connect, then Back: the folder is checked again and offers Disconnect.
   projectback: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectConnectBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.getElementById('projectBackBtn').click(); })()",
+  // Disconnect the ticked: back to the folder, which can be connected again.
+  projectundone: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectUndoBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.getElementById('projectUndoApplyBtn').click(); })()",
   // The help window over the project page.
   help: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.querySelector('[data-help=project] .help-btn').click(); })()",
   projectopen: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectConnectBtn').click(); })()",
@@ -388,6 +390,7 @@ add("normal", "help", [1], ["light", "dark"], "ru", { settleMs: 1000 });
 add("kitundo", "projectundo", [1], ["light", "dark"], "ru", { settleMs: 700 });
 add("kitundo", "projectundo", [1], ["dark"], "en", { settleMs: 700 });
 add("normal", "projectback", [1], ["dark"], "ru", { settleMs: 900 });
+add("kitundo", "projectundone", [1], ["dark"], "ru", { settleMs: 1200 });
 add("normal", "help", [1], ["dark"], "en", { settleMs: 1000 });
 add("kitlong", "projectopen", [1, 2], ["dark"], "ru", { settleMs: 400 });
 add("error", "projectopen", [1], ["dark"], "ru", { settleMs: 400 });

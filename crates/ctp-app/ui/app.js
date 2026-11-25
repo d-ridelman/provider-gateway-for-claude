@@ -606,9 +606,12 @@ function applyUndo() {
     const done = next.applied?.applied?.length ?? 0;
     const failed = next.applied?.failed?.length ?? 0;
     toast(t(failed ? "project.undoFailed" : "project.undone", { count: done, failed }), failed ? "error" : "good");
-    // The plugin may be off now: the check above must say so.
+    // The plugin may be off now: the check above must say so. Fully disconnected and nothing
+    // failed — the plan is done: the page is back to the folder, which can be connected again.
     const check = await invoke("connect_check", { dir });
-    if (projectStillOn(dir)) state.project.check = check;
+    if (!projectStillOn(dir)) return;
+    state.project.check = check;
+    if (!check.connected && !failed) state.project.undo = null;
   });
 }
 
