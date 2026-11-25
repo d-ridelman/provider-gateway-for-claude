@@ -1708,7 +1708,7 @@ mod tests {
         // С уровнями окно 1M даёт образец `behavesAs`; строка одна и без [1m].
         assert_eq!(rows[6]["supports1m"], false);
         assert_eq!(rows[6]["behavesAs"], EFFORT_PROFILE);
-        // Настоящая Claude без [1m] — её 200K, без варианта 1M.
+        // Настоящая Claude без [1m]: окно Desktop берёт по её ID (у Sonnet 5.5 — 1M), строка одна.
         assert_eq!(rows[7]["supports1m"], false);
         assert!(rows[7].get("prefer1m").is_none());
     }
