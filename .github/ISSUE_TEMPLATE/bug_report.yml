@@ -11,14 +11,31 @@ body:
     attributes:
       label: App version / Версия приложения
       description: Settings → Updates / Настройки → Обновления
-      placeholder: "0.2.0"
+      placeholder: "0.2.3"
     validations:
       required: true
   - type: input
     id: claude
     attributes:
       label: Claude Desktop / Claude Code version / Версия Claude
-      placeholder: "Claude 6.6395.0, Claude Code 2.x"
+      placeholder: "Claude 6.28899.6, Claude Code 2.1.330"
+  - type: dropdown
+    id: area
+    attributes:
+      label: Where / Где
+      options:
+        - Claude Desktop through the gateway / Claude Desktop через шлюз
+        - Claude Code console / Консоль Claude Code
+        - Connect a project (agent-kit) / Подключить проект (agent-kit)
+        - Proxy and VPN / Прокси и VPN
+        - Settings, updates, the window / Настройки, обновления, окно
+        - Other / Другое
+  - type: input
+    id: kit
+    attributes:
+      label: agent-kit version, for Connect a project / Версия agent-kit, для «Подключить проект»
+      description: The version of agent-kit@agent-kit in `claude plugin list` / Версия agent-kit@agent-kit в `claude plugin list`
+      placeholder: "3f0470a607fc"
   - type: input
     id: provider
     attributes:

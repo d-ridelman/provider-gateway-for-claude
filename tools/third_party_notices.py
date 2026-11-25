@@ -77,6 +77,11 @@ def main() -> None:
         "  code is at the tag of that version in the repository above)",
         "- Claude Desktop and Claude Code — Anthropic's own terms — https://claude.ai",
         "",
+        "Carried inside the installer and the portable exe as a separate program (ADR-015):",
+        "- agent-kit, a Claude Code plugin — MIT — no repository of its own; the pinned commit",
+        "  is in crates/ctp-app/kit.pin, and its LICENSE comes with the unpacked copy in",
+        "  %LOCALAPPDATA%\\ClaudeProviderGateway\\agent-kit",
+        "",
     ]
     # Identical texts (most MIT and Apache-2.0 copies) are printed once, with their crates.
     by_text: dict[str, list[str]] = {}

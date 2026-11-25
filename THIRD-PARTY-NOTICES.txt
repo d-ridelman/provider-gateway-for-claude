@@ -11,6 +11,11 @@ come from their authors' own release servers and run as separate processes.
   code is at the tag of that version in the repository above)
 - Claude Desktop and Claude Code — Anthropic's own terms — https://claude.ai
 
+Carried inside the installer and the portable exe as a separate program (ADR-015):
+- agent-kit, a Claude Code plugin — MIT — no repository of its own; the pinned commit
+  is in crates/ctp-app/kit.pin, and its LICENSE comes with the unpacked copy in
+  %LOCALAPPDATA%\ClaudeProviderGateway\agent-kit
+
 - adler2 2.0.1 — 0BSD OR MIT OR Apache-2.0 — source: https://github.com/oyvindln/adler2
 - aho-corasick 1.1.5 — Unlicense OR MIT — source: https://github.com/BurntSushi/aho-corasick
 - alloc-no-stdlib 3.0.0 — BSD-3-Clause — source: https://github.com/dropbox/rust-alloc-no-stdlib
