@@ -61,6 +61,7 @@
         </div>
         <nav id="providerList" class="provider-list" data-i18n-aria="sidebar.providers"></nav>
         <div class="sidebar-foot">
+          <button type="button" id="projectBtn" class="ghost wide" data-i18n="sidebar.project"></button>
           <button type="button" id="proxyBtn" class="ghost wide" data-i18n="sidebar.proxy"></button>
           <button type="button" id="settingsBtn" class="ghost wide" data-i18n="sidebar.settings"></button>
         </div>
@@ -192,6 +193,59 @@
             <button type="submit" id="saveBtn" class="primary" data-i18n="form.save"></button>
           </div>
         </form>
+
+        <div id="projectPanel" class="card hidden">
+          <div class="card-head">
+            <div class="card-head-text">
+              <h2 data-i18n="project.title"></h2>
+              <p class="muted" data-i18n="project.subtitle"></p>
+            </div>
+            <button type="button" id="closeProject" class="ghost" data-i18n="settings.close"></button>
+          </div>
+
+          <div class="card-body">
+          <section class="group">
+            <h3 class="group-title" data-i18n="project.groupFolder"></h3>
+            <div class="field">
+              <label for="projectDirInput" data-i18n="project.folder"></label>
+              <div class="key-row">
+                <input id="projectDirInput" spellcheck="false" data-i18n-placeholder="project.folderPlaceholder">
+                <button type="button" id="browseProjectBtn" class="ghost" data-i18n="settings.browse"></button>
+              </div>
+              <small data-i18n="project.folderHint"></small>
+            </div>
+            <div><button type="button" id="projectCheckBtn" class="ghost" data-i18n="project.check"></button></div>
+            <ul id="projectCheckList" class="check-list" aria-live="polite"></ul>
+            <div id="projectSourceBox" class="field hidden">
+              <label for="projectSourceInput" data-i18n="project.source"></label>
+              <div class="key-row">
+                <input id="projectSourceInput" spellcheck="false" data-i18n-placeholder="project.sourcePlaceholder">
+                <button type="button" id="projectSourceBtn" class="ghost" data-i18n="project.sourceSave"></button>
+              </div>
+              <small data-i18n="project.sourceHint"></small>
+            </div>
+            <div id="projectConnectBox" class="field hidden">
+              <label class="check"><input type="checkbox" id="projectTeamInput"><span data-i18n="project.team"></span></label>
+              <small data-i18n="project.teamHint"></small>
+              <div><button type="button" id="projectConnectBtn" class="primary" data-i18n="project.connect"></button></div>
+            </div>
+          </section>
+
+          <section id="projectStateGroup" class="group hidden">
+            <h3 class="group-title" data-i18n="project.groupState"></h3>
+            <p id="projectStateLine" class="muted small no-margin"></p>
+            <p id="projectFresh" class="muted small no-margin hidden" data-i18n="project.newSession"></p>
+            <ul id="projectFindings" class="check-list"></ul>
+          </section>
+
+          <section id="projectPlanGroup" class="group hidden">
+            <h3 class="group-title" data-i18n="project.groupPlan"></h3>
+            <p id="projectPlanNote" class="muted small no-margin"></p>
+            <ul id="projectPlan" class="check-list"></ul>
+            <div><button type="button" id="projectApplyBtn" class="primary hidden" data-i18n="project.apply"></button></div>
+          </section>
+          </div>
+        </div>
 
         <div id="proxyPanel" class="card hidden">
           <div class="card-head">

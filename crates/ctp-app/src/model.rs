@@ -43,6 +43,10 @@ pub struct Config {
     /// Прокси (ядро mihomo) и подписки.
     #[serde(default)]
     pub proxy: ProxySettings,
+    /// Откуда «Подключить проект» берёт agent-kit, если его маркетплейс ещё не добавлен в
+    /// Claude Code: `owner/repo`, адрес git или папка (ADR-014).
+    #[serde(default)]
+    pub kit_source: Option<String>,
 }
 
 /// Режимы прокси: что идёт через ядро mihomo.
@@ -123,6 +127,7 @@ impl Default for Config {
             model_roles: ModelRoles::default(),
             code_portable: false,
             proxy: ProxySettings::default(),
+            kit_source: None,
         }
     }
 }

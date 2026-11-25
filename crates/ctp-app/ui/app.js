@@ -289,13 +289,15 @@ function renderProviders() {
 function renderMain() {
   const settings = state.view === "settings";
   const proxy = state.view === "proxy";
-  const page = settings || proxy;
-  for (const [button, on] of [[$("settingsBtn"), settings], [el.proxyBtn, proxy]]) {
+  const project = state.view === "project";
+  const page = settings || proxy || project;
+  for (const [button, on] of [[$("settingsBtn"), settings], [el.proxyBtn, proxy], [$("projectBtn"), project]]) {
     if (on) button.setAttribute("aria-current", "page");
     else button.removeAttribute("aria-current");
   }
   el.settingsPanel.classList.toggle("hidden", !settings);
   el.proxyPanel.classList.toggle("hidden", !proxy);
+  $("projectPanel").classList.toggle("hidden", !project);
   el.form.classList.toggle("hidden", page || !hasSelection());
   el.empty.classList.toggle("hidden", page || hasSelection());
   if (settings) {
@@ -306,7 +308,194 @@ function renderMain() {
     renderProxy();
     return;
   }
+  if (project) {
+    renderProject();
+    return;
+  }
   if (hasSelection()) renderForm();
+}
+
+// ---- connect a project (agent-kit, ADR-014) -------------------------------------------
+// Check (nothing changes) → Connect (the plugin, local to this machine unless "for the team")
+// → the inspection and the plan with ticks → Apply the ticked ones. Every step is the
+// backend's answer drawn as it is; agent-kit's own lines come in its language.
+
+async function openProject() {
+  if (state.view === "project") return;
+  if (!(await leaveForm())) return;
+  state.view = "project";
+  render();
+}
+
+function closeProject() {
+  state.view = "provider";
+  render();
+}
+
+function checkItem(kind, text, title) {
+  const li = document.createElement("li");
+  li.className = kind;
+  li.textContent = `${{ ok: "✓", off: "–", bad: "✕", human: "!" }[kind] ?? "·"} ${text}`;
+  if (title) li.title = title;
+  return li;
+}
+
+function renderProject() {
+  const p = state.project ?? {};
+  const list = $("projectCheckList");
+  list.replaceChildren();
+  if (p.busy === "check") list.append(checkItem("off", t("project.checking")));
+  if (p.error) list.append(checkItem("bad", p.error));
+  const check = p.check;
+  if (check && !p.busy) {
+    // What stops the connection is the person's to fix, not a failure: amber, not red.
+    for (const item of check.blockers) list.append(checkItem("human", item.text));
+    for (const item of check.notes) list.append(checkItem("off", item.text));
+    if (!check.blockers.length) list.append(checkItem("ok", t(check.connected ? "project.alreadyOn" : "project.ready", { root: check.root })));
+  }
+  // The only blocker the page itself can lift: where agent-kit comes from.
+  $("projectSourceBox").classList.toggle("hidden", !check?.blockers.some((b) => b.id === "source"));
+  const canConnect = !!check && !check.blockers.length && !p.data;
+  $("projectConnectBox").classList.toggle("hidden", !canConnect);
+  $("projectConnectBtn").textContent = t(check?.connected ? "project.open" : "project.connect");
+  // While a step runs the folder cannot change under it: the answer is for the folder asked.
+  for (const id of ["projectConnectBtn", "projectCheckBtn", "projectApplyBtn", "projectDirInput", "browseProjectBtn", "projectSourceBtn", "projectTeamInput"]) {
+    $(id).disabled = !!p.busy;
+  }
+  if (p.busy === "connect") list.append(checkItem("off", t("project.connecting")));
+
+  const data = p.data;
+  $("projectStateGroup").classList.toggle("hidden", !data);
+  $("projectPlanGroup").classList.toggle("hidden", !data);
+  if (!data) return;
+  const findings = data.inspect?.findings ?? [];
+  const count = (status) => findings.filter((f) => f.status === status).length;
+  $("projectStateLine").textContent = t("project.stateLine", { root: data.root, ok: count("ok"), missing: count("missing"), problem: count("problem") });
+  $("projectFresh").classList.toggle("hidden", !p.fresh);
+  const shown = $("projectFindings");
+  shown.replaceChildren();
+  // Only what is not fine: the "ok" ones are in the count above.
+  for (const f of findings.filter((f) => f.status !== "ok")) {
+    shown.append(checkItem(f.status === "problem" ? "human" : "off", f.what, f.fix));
+  }
+  const plan = $("projectPlan");
+  plan.replaceChildren();
+  const note = $("projectPlanNote");
+  if (data.planError) {
+    note.textContent = t("project.planOld");
+    note.title = data.planError;
+  } else {
+    note.textContent = data.plan.length ? t("project.planHint") : t("project.planEmpty");
+    note.title = "";
+  }
+  for (const item of data.plan ?? []) {
+    const li = document.createElement("li");
+    if (item.action === "keep") {
+      li.className = "off";
+      li.textContent = `– ${item.path}: ${item.what}`;
+    } else {
+      const label = document.createElement("label");
+      label.className = "check";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = item.id;
+      box.checked = !p.unticked?.includes(item.id);
+      box.addEventListener("change", () => {
+        const off = new Set(state.project.unticked ?? []);
+        if (box.checked) off.delete(item.id);
+        else off.add(item.id);
+        state.project.unticked = [...off];
+      });
+      const span = document.createElement("span");
+      span.textContent = `${t(item.action === "add" ? "project.add" : "project.create")} ${item.path} — ${item.what}`;
+      label.append(box, span);
+      li.append(label);
+    }
+    plan.append(li);
+  }
+  $("projectApplyBtn").classList.toggle("hidden", !(data.plan ?? []).some((item) => item.action !== "keep"));
+}
+
+async function projectStep(busy, work) {
+  state.project = { ...(state.project ?? {}), busy, error: null };
+  renderProject();
+  try {
+    await work();
+  } catch (exc) {
+    state.project.error = formatError(exc);
+  } finally {
+    state.project.busy = null;
+    renderProject();
+  }
+}
+
+// A step's answer is kept only if the page still shows the folder it was asked for: a folder
+// typed or picked meanwhile starts over (the input resets state.project).
+function projectStillOn(dir) {
+  return state.project?.dir === dir;
+}
+
+function checkProject() {
+  if (state.project?.busy) return;
+  const dir = $("projectDirInput").value.trim();
+  if (!dir) {
+    $("projectDirInput").focus();
+    return;
+  }
+  state.project = { dir };
+  projectStep("check", async () => {
+    const check = await invoke("connect_check", { dir });
+    if (projectStillOn(dir)) state.project.check = check;
+  });
+}
+
+function resetProject() {
+  if (state.project?.busy) return;
+  state.project = null;
+  $("projectTeamInput").checked = false;
+  renderProject();
+}
+
+function connectProject() {
+  const { dir, busy } = state.project ?? {};
+  if (!dir || busy) return;
+  projectStep("connect", async () => {
+    const data = await invoke("connect_open", { dir, team: $("projectTeamInput").checked });
+    if (!projectStillOn(dir)) return;
+    state.project.data = data;
+    state.project.fresh = data.fresh;
+  });
+}
+
+async function saveProjectSource() {
+  const source = $("projectSourceInput").value.trim();
+  if (!source) {
+    $("projectSourceInput").focus();
+    return;
+  }
+  try {
+    await invoke("connect_set_source", { source });
+    checkProject();
+  } catch (exc) {
+    toast(formatError(exc), "error");
+  }
+}
+
+function applyProject() {
+  const data = state.project?.data;
+  if (!data || state.project.busy) return;
+  const dir = state.project.dir;
+  const off = new Set(state.project.unticked ?? []);
+  const chosen = data.plan.filter((item) => item.action !== "keep" && !off.has(item.id)).map((item) => item.id);
+  projectStep("apply", async () => {
+    const next = await invoke("connect_apply", { root: data.root, chosen });
+    if (!projectStillOn(dir)) return;
+    state.project.data = next;
+    state.project.unticked = [];
+    const applied = next.applied?.applied?.length ?? 0;
+    const skipped = next.applied?.skipped?.length ?? 0;
+    toast(t(skipped ? "project.appliedSkipped" : "project.applied", { count: applied, skipped }), skipped ? "" : "good");
+  });
 }
 
 function hasSelection() {
@@ -1008,6 +1197,19 @@ function bind() {
   el.checkUpdateBtn.addEventListener("click", checkUpdate);
   $("browseClaudeBtn").addEventListener("click", () => browse(el.claudePathInput));
   $("browseCodeBtn").addEventListener("click", () => browse(el.codeDirInput));
+  $("projectBtn").addEventListener("click", openProject);
+  $("closeProject").addEventListener("click", closeProject);
+  $("browseProjectBtn").addEventListener("click", async () => {
+    if (state.project?.busy) return;
+    await browse($("projectDirInput"));
+    if ($("projectDirInput").value.trim() !== (state.project?.dir ?? "")) resetProject();
+  });
+  $("projectCheckBtn").addEventListener("click", checkProject);
+  $("projectDirInput").addEventListener("keydown", (event) => event.key === "Enter" && checkProject());
+  $("projectDirInput").addEventListener("input", resetProject);
+  $("projectSourceBtn").addEventListener("click", saveProjectSource);
+  $("projectConnectBtn").addEventListener("click", connectProject);
+  $("projectApplyBtn").addEventListener("click", applyProject);
   el.proxyBtn.addEventListener("click", openProxy);
   el.proxyChip.addEventListener("click", openProxy);
   $("closeProxy").addEventListener("click", closeProxy);
@@ -1039,6 +1241,7 @@ function bind() {
       if (el.toast.classList.contains("show")) hideToast();
       else if (state.logsOpen) setLogs(false);
       else if (state.view === "proxy") closeProxy();
+      else if (state.view === "project") closeProject();
       else if (state.view === "settings") {
         // Without this the same Esc would at once close the "discard changes?" dialog.
         event.preventDefault();

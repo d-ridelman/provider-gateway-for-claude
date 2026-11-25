@@ -2,6 +2,7 @@ pub mod catalog;
 pub mod claude;
 pub mod codemodel;
 pub mod commands;
+pub mod connect;
 pub mod download;
 pub mod fetch;
 pub mod i18n;
@@ -150,6 +151,10 @@ pub fn run() {
             commands::set_ui,
             commands::launch_claude,
             commands::launch_claude_code,
+            commands::connect_check,
+            commands::connect_open,
+            commands::connect_apply,
+            commands::connect_set_source,
             commands::tail_log,
             commands::open_logs,
             commands::copy_text,

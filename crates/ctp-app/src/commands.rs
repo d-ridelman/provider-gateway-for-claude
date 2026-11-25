@@ -314,6 +314,137 @@ pub async fn launch_claude_code(shared: State<'_, AppShared>) -> Result<String, 
     .map_err(|exc| exc.to_string())?
 }
 
+/// «Подключить проект», шаг 1: что мешает и что нужно знать. Ничего не меняет (ADR-014).
+#[tauri::command]
+pub async fn connect_check(
+    shared: State<'_, AppShared>,
+    dir: String,
+) -> Result<crate::connect::Check, String> {
+    let config = shared.config.lock().unwrap().clone();
+    let status = runtime::status(&shared);
+    tauri::async_runtime::spawn_blocking(move || {
+        let dir = std::path::PathBuf::from(dir.trim());
+        if !dir.is_dir() {
+            let shown = dir.display();
+            return Err(tr!(
+                "Папка не найдена: {shown}",
+                "Folder not found: {shown}"
+            ));
+        }
+        Ok(crate::connect::decide(&crate::connect::facts(
+            &config, &status, &dir,
+        )))
+    })
+    .await
+    .map_err(|exc| exc.to_string())?
+}
+
+/// Осмотр и план подключённого проекта.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectState {
+    pub root: String,
+    pub inspect: serde_json::Value,
+    /// План `setup`; `None` — установленная копия плана ещё не отдаёт (`plan_error`).
+    pub plan: Option<Vec<crate::connect::PlanItem>>,
+    pub plan_error: Option<String>,
+    /// Плагин только что включён: открытые сессии Claude его не увидят (случай 18).
+    pub fresh: bool,
+    /// Ответ `setup --apply`: что применено и что пропущено.
+    pub applied: Option<serde_json::Value>,
+}
+
+fn connect_state(kit: &std::path::Path, root: &std::path::Path) -> Result<ConnectState, String> {
+    let inspect = crate::connect::inspect(kit, root)?;
+    let (plan, plan_error) = match crate::connect::plan(kit, root) {
+        Ok(plan) => (Some(plan), None),
+        Err(exc) => (None, Some(exc)),
+    };
+    Ok(ConnectState {
+        root: root.display().to_string(),
+        inspect,
+        plan,
+        plan_error,
+        fresh: false,
+        applied: None,
+    })
+}
+
+/// Шаг 2: включить agent-kit (если ещё не включён, с обновлением копии), осмотр и план.
+/// Повторная проверка предусловий: окно могло отстать от того, что на диске.
+#[tauri::command]
+pub async fn connect_open(
+    shared: State<'_, AppShared>,
+    dir: String,
+    team: bool,
+) -> Result<ConnectState, String> {
+    let config = shared.config.lock().unwrap().clone();
+    let status = runtime::status(&shared);
+    tauri::async_runtime::spawn_blocking(move || {
+        let facts = crate::connect::facts(&config, &status, std::path::Path::new(dir.trim()));
+        let check = crate::connect::decide(&facts);
+        if let Some(first) = check.blockers.first() {
+            return Err(first.text.clone());
+        }
+        let (kit, fresh) = crate::connect::open(&config, &facts, team)?;
+        let root = facts.root.clone().unwrap_or_default();
+        Ok(ConnectState {
+            fresh,
+            ..connect_state(&kit, &root)?
+        })
+    })
+    .await
+    .map_err(|exc| exc.to_string())?
+}
+
+/// Откуда брать agent-kit, если его маркетплейс не добавлен (блокер «источник», случай 9).
+#[tauri::command]
+pub async fn connect_set_source(
+    shared: State<'_, AppShared>,
+    source: String,
+) -> Result<(), String> {
+    let source = source.trim().to_string();
+    let mut config = shared.config.lock().unwrap();
+    let mut next = config.clone();
+    next.kit_source = (!source.is_empty()).then_some(source);
+    store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
+    *config = next;
+    Ok(())
+}
+
+/// Шаг 3: применить выбранные пункты плана и показать новое состояние.
+#[tauri::command]
+pub async fn connect_apply(
+    shared: State<'_, AppShared>,
+    root: String,
+    chosen: Vec<String>,
+) -> Result<ConnectState, String> {
+    let config = shared.config.lock().unwrap().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = std::path::PathBuf::from(root);
+        // Корень пришёл из окна: заново убедиться, что это корень репозитория.
+        let real = crate::connect::repo_root(&root);
+        if real
+            .as_deref()
+            .is_none_or(|real| !crate::connect::same_path(real, &root))
+        {
+            let shown = root.display();
+            return Err(tr!(
+                "{shown} — не корень git-репозитория",
+                "{shown} is not the root of a git repository"
+            ));
+        }
+        let kit = crate::connect::installed(&config, &root)?;
+        let applied = crate::connect::apply(&kit, &root, &chosen)?;
+        Ok(ConnectState {
+            applied: Some(applied),
+            ..connect_state(&kit, &root)?
+        })
+    })
+    .await
+    .map_err(|exc| exc.to_string())?
+}
+
 /// Окно и предел вывода основной модели из каталога OpenCode. Каталог не загрузился за
 /// CATALOG_GRACE или модели в нём нет — пусто, Claude Code обойдётся прежними значениями.
 async fn main_model_limits(config: &Config, status: &UiStatus) -> crate::catalog::Hint {

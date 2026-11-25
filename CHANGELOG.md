@@ -18,6 +18,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Added
 
+- **Connect a project.** A new sidebar page connects agent-kit (checks, a critic and secret guarding for agents) to a project without typing commands. **Check** changes nothing and names what is missing: Node 22+, Claude Code, a git repository, where to get agent-kit, no critic chosen, uncommitted edits. **Connect** turns the plugin on only for you (`.claude/settings.local.json`, outside git) unless "for the whole team" is ticked, and updates an old copy. Then it shows the inspection and a plan with ticks; only ticked items are applied, and existing files are never overwritten. Every case has a test, and a test fails when a case of the table has none (ADR-014).
+
 - **A critic model for project scripts.** Settings → Claude Code has a "Critic for project scripts" choice: another gateway model that reviews an agent's work (for example agent-kit's critic), so people without a Claude subscription get a reviewer too. When it is chosen and the gateway runs, Claude Desktop and the console opened from PGC get `AGENT_KIT_PGC_URL`, `AGENT_KIT_PGC_TOKEN`, `AGENT_KIT_PGC_MODEL` and `AGENT_KIT_CRITIC_VIA=pgc`; changing it does not restart the gateway (ADR-012).
 
 ## [0.2.2] - 2026-11-24

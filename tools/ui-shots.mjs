@@ -105,7 +105,50 @@ const STUB = String.raw`
     proxy_add_sub: () => scenario === "error" ? fail("The subscription address must start with https:// or http://") : proxy,
     proxy_remove_sub: () => proxy, proxy_update_sub: () => proxy, proxy_select: (a) => { proxy = { ...proxy, selected: a.name }; return proxy; },
     proxy_measure: () => proxy,
+    // Connect a project (agent-kit): "kitnonode" — no Node; "kitnorepo" — not a git repository;
+    // "kitold" — an installed copy that cannot give a plan; "kitlong" — a long path; "error" — the
+    // install fails; everything else — ready, then the inspection and a plan.
+    connect_check: () => kitCheck(),
+    connect_open: () => scenario === "error" ? fail("claude plugin install: marketplace 'agent-kit' not found (stubbed)") : kitData(),
+    connect_apply: () => ({ ...kitData(), plan: [kitPlan[2]], applied: { applied: ["docs/knowledge/issues.md"], skipped: [] } }),
+    connect_set_source: () => null,
   };
+  const kitRoot = scenario === "kitlong"
+    ? "D:\\Projects\\Очень длинное имя папки клиента с пробелами\\packages\\web-frontend-monorepo-workspace"
+    : "D:\\Projects\\my-project";
+  const kitNote = (id, text) => ({ id, text });
+  const kitCheck = () => ({
+    root: scenario === "kitnorepo" ? null : kitRoot,
+    blockers: scenario === "kitsource"
+      ? [kitNote("source", lang === "ru" ? "Неизвестно, откуда взять agent-kit: его маркетплейс не добавлен в Claude Code, а источник в PGC не задан." : "Where to get agent-kit is unknown: its marketplace is not added to Claude Code and PGC has no source set.")]
+      : scenario === "kitnonode"
+      ? [kitNote("node", lang === "ru" ? "Нет Node.js: agent-kit работает на Node 22 или новее. Поставьте его с nodejs.org и нажмите «Проверить» ещё раз." : "Node.js is missing: agent-kit needs Node 22 or newer. Install it from nodejs.org and press Check again.")]
+      : scenario === "kitnorepo"
+        ? [kitNote("repo", lang === "ru" ? "Эта папка — не git-репозиторий. agent-kit сравнивает изменения через git: откройте папку проекта с git." : "This folder is not a git repository. agent-kit compares changes through git: pick a project folder with git.")]
+        : [],
+    notes: [kitNote("critic", lang === "ru" ? "Критик в PGC не выбран: критик agent-kit пойдёт по подписке Claude, а без неё не сработает. Выбрать — в Настройках." : "No critic is chosen in PGC: agent-kit's critic goes through a Claude subscription and fails without one. Choose one in the settings."),
+      kitNote("dirty", lang === "ru" ? "В проекте есть незакоммиченные правки. Подключение их не тронет, новые файлы лягут рядом." : "The project has uncommitted edits. Connecting leaves them alone; new files go next to them.")],
+    connected: false, disabled: false,
+  });
+  const kitPlan = [
+    { id: "issues-log", action: "create", path: "docs/knowledge/issues.md", what: "findings log: what was noticed outside the task" },
+    { id: "deny-secrets", action: "add", path: ".claude/settings.json", what: "deny reading secret files: Read(**/.env*), Read(**/*.pem), Read(**/*.key)" },
+    { id: "gate", action: "create", path: ".claude/gates.json", what: "change gate in observe mode" },
+    { id: "pre-push", action: "keep", path: ".githooks/pre-push", what: "the project's own hook: add the kit's checks to it" },
+  ];
+  const kitData = () => ({
+    root: kitRoot,
+    inspect: { findings: [
+      { id: "agents-file", status: "ok", what: "AGENTS.md: 82 lines" },
+      { id: "decisions", status: "ok", what: "decision log: docs/adr (+13)" },
+      { id: "issues", status: "missing", what: "no findings log (docs/knowledge/issues.md or TODO.md)", fix: "findings outside the task go there, not into a quiet fix" },
+      { id: "gate", status: "missing", what: "no .claude/gates.json", fix: "a gate in observe mode first" },
+      { id: "skills", status: "problem", what: "some-plugin: skills/x/: the description says when to use it, not when not to", fix: "add when not to use it" },
+    ] },
+    plan: scenario === "kitold" ? null : kitPlan,
+    planError: scenario === "kitold" ? "agent-kit setup: unknown option --json" : null,
+    fresh: true, applied: null,
+  });
   const vpn = scenario === "vpn" || scenario === "vpnerror" || scenario === "vpnlong";
   const node = (sub, label, kind, delay) => ({ name: sub + "|" + label, label, sub, kind, delay });
   const longName = "🇳🇱 Netherlands · Amsterdam · premium node with an unusually long name 01";
@@ -147,6 +190,15 @@ const STUB = String.raw`
   // ?view=settings opens Settings by itself (for scanners that only load the URL).
   if (q.get("view") === "settings") window.addEventListener("load", () => setTimeout(() => document.getElementById("settingsBtn")?.click(), 500));
   if (q.get("view") === "proxy") window.addEventListener("load", () => setTimeout(() => document.getElementById("proxyBtn")?.click(), 500));
+  // ?view=project: the panel with the check done and the inspection open.
+  if (q.get("view") === "project") window.addEventListener("load", () => setTimeout(async () => {
+    document.getElementById("projectBtn")?.click();
+    await new Promise((r) => setTimeout(r, 200));
+    document.getElementById("projectDirInput").value = "D:\\\\Projects\\\\my-project";
+    document.getElementById("projectCheckBtn").click();
+    await new Promise((r) => setTimeout(r, 200));
+    document.getElementById("projectConnectBtn")?.click();
+  }, 500));
 })();
 `;
 
@@ -208,6 +260,10 @@ const SCREENS = {
   proxy: "document.getElementById('proxyBtn').click()",
   // The question before a whole-PC mode.
   proxyask: "(async () => { document.getElementById('proxyBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.querySelector('input[name=proxyMode][value=tun]').click(); })()",
+  // Connect a project: the check, then the inspection and the plan.
+  projectempty: "document.getElementById('projectBtn').click()",
+  project: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); })()",
+  projectopen: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectConnectBtn').click(); })()",
   // Installing over a regular Claude asks first.
   installask: "(async () => { document.getElementById('settingsBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.getElementById('desktopInstallBtn').click(); })()",
 };
@@ -260,6 +316,18 @@ add("vpnlong", "proxy", [1, 2], ["dark"]);
 add("vpn", "proxyask", [1], ["dark"]);
 add("vpn", "main", [1], ["light", "dark"]);
 add("vpnerror", "main", [1], ["dark"]);
+// Connect a project: empty panel, ready, blockers, the inspection with a plan, an old copy,
+// a long path, a failed install, English.
+add("normal", "projectempty", [1], ["light", "dark"]);
+add("normal", "project", [0, 1, 2], ["light", "dark"]);
+add("kitnonode", "project", [1], ["light", "dark"]);
+add("kitnorepo", "project", [1], ["dark"]);
+add("kitsource", "project", [1], ["light", "dark"]);
+add("normal", "projectopen", [0, 1, 2], ["light", "dark"], "ru", { settleMs: 400 });
+add("kitold", "projectopen", [1], ["dark"], "ru", { settleMs: 400 });
+add("kitlong", "projectopen", [1, 2], ["dark"], "ru", { settleMs: 400 });
+add("error", "projectopen", [1], ["dark"], "ru", { settleMs: 400 });
+add("normal", "projectopen", [1], ["dark"], "en", { settleMs: 400 });
 // The README screenshots (docs/images): neutral demo providers; Settings on a taller window so the
 // whole page is in the frame. `node tools/ui-shots.mjs --only docs- --out state/docs-shots`.
 W.push([1280, 1140]);
@@ -410,7 +478,7 @@ await cdp("Page.enable");
 if (args.includes("--audit")) {
   const merged = { buttons: {}, radii: {}, sizes: {} };
   const screens = [["normal", "main"], ["normal", "settings"], ["normal", "new"], ["normal", "dialog"], ["empty", "main"], ["stale", "main"],
-    ["normal", "proxy"], ["vpn", "proxy"], ["vpnerror", "proxy"], ["vpn", "main"], ["portable", "settings"]];
+    ["normal", "proxy"], ["vpn", "proxy"], ["vpnerror", "proxy"], ["vpn", "main"], ["portable", "settings"], ["normal", "projectopen"]];
   await cdp("Emulation.setDeviceMetricsOverride", { width: 1280, height: 800, deviceScaleFactor: 1, mobile: false });
   for (const [scenario, screen] of screens) {
     await cdp("Page.navigate", { url: `${base}/?s=${scenario}&lang=ru` });
@@ -442,7 +510,7 @@ if (args.includes("--detect")) {
   const bin = versions.length && path.join(pluginRoot, versions.at(-1), "skills", "impeccable", "scripts", "impeccable.cmd");
   if (!bin || !fs.existsSync(bin)) throw new Error("the Impeccable plugin is not installed: claude plugin enable impeccable@impeccable --scope local");
   const pages = ["normal", "normal&view=settings", "empty", "stale", "warn", "error", "long&view=settings", "forceddark", "forceddark&view=settings", "forcedlight", "normal&lang=en&view=settings",
-    "normal&view=proxy", "vpn&view=proxy", "vpnerror&view=proxy", "vpnlong&view=proxy", "vpn&lang=en&view=proxy", "forceddark&view=proxy", "portable&view=settings"];
+    "normal&view=proxy", "vpn&view=proxy", "vpnerror&view=proxy", "vpnlong&view=proxy", "vpn&lang=en&view=proxy", "forceddark&view=proxy", "portable&view=settings", "normal&view=project", "kitnonode&view=project", "kitlong&view=project"];
   let failed = 0;
   for (const page of pages) {
     const url = `${base}/?s=${page}`;
