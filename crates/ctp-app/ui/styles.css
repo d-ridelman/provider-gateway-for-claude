@@ -114,7 +114,17 @@ button { cursor: pointer; }
 .check-list pre { margin: 4px 0 0; font-family: var(--mono); font-size: var(--fs-sm); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .check-list .check span { overflow-wrap: anywhere; }
 /* A ticked row with its "?" on the same line; a draft under them takes the whole width. */
-.check-list li:has(> .check) { display: flex; flex-wrap: wrap; align-items: center; }
+.check-list li:has(> .check) { display: flex; flex-wrap: wrap; align-items: flex-start; }
+/* A row that wraps keeps its box and its "?" at the first line, not in the middle. */
+.check-list .check { align-items: flex-start; }
+.check-list .check input { margin-top: 3px; flex: none; }
+.check-list li > .help-btn { margin-top: 3px; }
+.check-list .plan-path { display: block; color: var(--muted); font-size: var(--fs-sm); font-weight: 400; overflow-wrap: anywhere; }
+.check-list .plan-group {
+  margin-top: 10px; font-family: var(--mono); font-size: var(--fs-xs); font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
+}
+.check-list .plan-group:first-child { margin-top: 0; }
 .check-list li > pre { flex-basis: 100%; }
 .no-margin { margin: 0; }
 .mono { font-family: var(--mono); }

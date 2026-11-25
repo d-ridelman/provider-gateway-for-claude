@@ -406,12 +406,29 @@ function renderProject() {
     note.textContent = data.plan.length ? t("project.planHint") : t("project.planEmpty");
     note.title = "";
   }
-  for (const item of data.plan ?? []) {
+  // Blocks by what a person gets (agent-kit's group), advice for the person last; an old
+  // agent-kit gives no groups and its items stay in one block, as before.
+  const order = ["agent", "checks", "safety", "docs", "", "advice"];
+  const groupOf = (item) => (item.action === "keep" ? "advice" : order.includes(item.group) ? item.group : "");
+  const items = [...(data.plan ?? [])].sort((a, b) => order.indexOf(groupOf(a)) - order.indexOf(groupOf(b)));
+  let shownGroup = null;
+  for (const item of items) {
+    const group = groupOf(item);
+    if (group !== shownGroup && (group || shownGroup)) {
+      const head = document.createElement("li");
+      head.className = "plan-group";
+      head.textContent = t(`project.planGroup.${group || "other"}`);
+      plan.append(head);
+    }
+    shownGroup = group;
     const li = document.createElement("li");
+    // Full text (with long permission lists) goes under "?": the row stays one plain line.
+    const help = [item.about, item.title ? item.what : ""].filter(Boolean).join("\n\n");
+    const helpTitle = item.title || item.path;
     if (item.action === "keep") {
       li.className = "off";
-      li.textContent = `– ${item.path}: ${item.what}`;
-      if (item.about) li.append(helpButton(() => openHelp(item.path, item.about)));
+      li.textContent = item.title ? `– ${item.title}` : `– ${item.path}: ${item.what}`;
+      if (help) li.append(helpButton(() => openHelp(helpTitle, help)));
     } else {
       const label = document.createElement("label");
       label.className = "check";
@@ -428,12 +445,20 @@ function renderProject() {
         state.project[key] = [...set];
       });
       const span = document.createElement("span");
-      // agent-kit's own text may already name the file ("Create docs/x.md"): no second copy of it.
-      span.textContent = item.what.includes(item.path) ? item.what : `${t(item.action === "add" ? "project.add" : "project.create")} ${item.path} — ${item.what}`;
+      if (item.title) {
+        // A plain name, and the file it touches in small type under it.
+        const where = document.createElement("small");
+        where.className = "plan-path";
+        where.textContent = `${t(item.action === "add" ? "project.add" : "project.create")} ${item.path}`;
+        span.append(item.title, where);
+      } else {
+        // agent-kit's own text may already name the file ("Create docs/x.md"): no second copy of it.
+        span.textContent = item.what.includes(item.path) ? item.what : `${t(item.action === "add" ? "project.add" : "project.create")} ${item.path} — ${item.what}`;
+      }
       label.append(box, span);
       // The "?" sits outside the label: a click on it must not tick the box.
       li.append(label);
-      if (item.about) li.append(helpButton(() => openHelp(item.path, item.about)));
+      if (help) li.append(helpButton(() => openHelp(helpTitle, help)));
       // A draft (critic.md rules) is shown in full: the person reads what would be written.
       if (item.rules?.length) {
         const pre = document.createElement("pre");

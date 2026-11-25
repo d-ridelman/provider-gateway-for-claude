@@ -132,12 +132,15 @@ const STUB = String.raw`
     connected: scenario === "kitupdate", disabled: false,
     update: scenario === "kitupdate" ? { from: "92b16a29f355", to: "a1b2c3d4e5f6" } : null,
   });
+  // "kitold" — an agent-kit that gives no title/group: the flat list of before.
+  const titled = scenario !== "kitold";
   const kitPlan = [
-    { id: "issues-log", action: "create", path: "docs/knowledge/issues.md", what: "Создать docs/knowledge/issues.md" },
-    { id: "deny-secrets", action: "add", path: ".claude/settings.json", what: "deny reading secret files: Read(**/.env*), Read(**/*.pem), Read(**/*.key)" },
-    { id: "gate", action: "create", path: ".claude/gates.json", what: "change gate in observe mode", about: "Не даёт агенту закончить работу, пока он не прогнал проверки по своим правкам. Сначала только наблюдает и ничего не блокирует." },
-    { id: "critic-md", action: "create", path: ".claude/critic.md", default: false, rules: ["Все суммы — только целые копейки.", "День отчёта считается по местному времени, а не по UTC."], what: "Создать .claude/critic.md из правил проекта (черновик кодом, правил — 2); по умолчанию без галочки" },
-    { id: "pre-push", action: "keep", path: ".githooks/pre-push", what: "the project's own hook: add the kit's checks to it" },
+    { id: "issues-log", action: "create", path: "docs/knowledge/issues.md", what: "Создать docs/knowledge/issues.md", ...(titled && { title: "Журнал находок", group: "docs", about: "Сюда агент записывает то, что заметил вне задачи, вместо того чтобы молча чинить." }) },
+    { id: "deny-secrets", action: "add", path: ".claude/settings.json", what: "deny reading secret files: Read(**/.env*), Read(**/*.pem), Read(**/*.key)", ...(titled && { title: "Не читать пароли и ключи", group: "safety", about: "Агент не сможет открыть файлы, где обычно лежат пароли и ключи." }) },
+    { id: "gate", action: "create", path: ".claude/gates.json", what: "change gate in observe mode", about: "Не даёт агенту закончить работу, пока он не прогнал проверки по своим правкам. Сначала только наблюдает и ничего не блокирует.", ...(titled && { title: "Не закончить без проверок", group: "checks" }) },
+    { id: "critic-md", action: "create", path: ".claude/critic.md", default: false, rules: ["Все суммы — только целые копейки.", "День отчёта считается по местному времени, а не по UTC."], what: "Создать .claude/critic.md из правил проекта (черновик кодом, правил — 2); по умолчанию без галочки", ...(titled && { title: "Правила для критика (черновик, проверьте)", group: "checks" }) },
+    { id: "agents-md", action: "create", path: "AGENTS.md", what: "Создать AGENTS.md", ...(titled && { title: "Инструкция для агентов", group: "agent", about: "Короткая инструкция для любого агента: как здесь собирать, проверять и что нельзя трогать." }) },
+    { id: "pre-push", action: "keep", path: ".githooks/pre-push", what: "the project's own hook: add the kit's checks to it", ...(titled && { title: "Добавьте проверки в свою проверку перед отправкой кода", group: "advice" }) },
   ];
   const kitData = () => ({
     root: kitRoot,

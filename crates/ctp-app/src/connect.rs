@@ -378,6 +378,12 @@ pub struct PlanItem {
     /// Зачем этот пункт, простыми словами (agent-kit, на языке окна): окно открывает по «?».
     #[serde(default)]
     pub about: String,
+    /// Короткое название для человека («Инструкция для агентов») и блок плана
+    /// (`agent`, `checks`, `safety`, `docs`, `advice`); пусто — у старой копии agent-kit.
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub group: String,
 }
 
 fn yes() -> bool {
@@ -1763,6 +1769,8 @@ mod tests {
             default: true,
             rules: Vec::new(),
             about: String::new(),
+            title: String::new(),
+            group: String::new(),
         }
     }
 
