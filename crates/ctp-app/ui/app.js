@@ -478,9 +478,21 @@ function renderProject() {
       li.append(label);
       // A draft (critic.md rules) is shown in full: the person reads what would be written.
       if (item.rules?.length) {
-        const pre = document.createElement("pre");
-        pre.textContent = item.rules.map((rule) => `- ${rule}`).join("\n");
-        li.append(pre);
+        // Each rule with where it was taken from, so a person can check it against the source.
+        const list = document.createElement("ul");
+        list.className = "draft-rules";
+        item.rules.forEach((rule, n) => {
+          const row = document.createElement("li");
+          row.append(Object.assign(document.createElement("span"), { className: "mono", textContent: rule }));
+          const src = item.from?.[n];
+          if (src?.file) {
+            row.append(Object.assign(document.createElement("small"), {
+              textContent: t(src.line ? "project.ruleFrom" : "project.ruleFromFile", { file: src.file, line: src.line }),
+            }));
+          }
+          list.append(row);
+        });
+        li.append(list);
       }
     }
     plan.append(li);

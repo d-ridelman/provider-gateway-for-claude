@@ -384,6 +384,9 @@ pub struct PlanItem {
     pub title: String,
     #[serde(default)]
     pub group: String,
+    /// Откуда взято каждое правило черновика (`rules[i]` ← `from[i]`); пусто — не сказано.
+    #[serde(default)]
+    pub from: Vec<CheckSource>,
 }
 
 fn yes() -> bool {
@@ -1752,6 +1755,13 @@ mod tests {
             r#"{"items": [{"id": "gate", "action": "create", "about": "Не даёт закончить без проверок."}]}"#,
         );
         assert_eq!(told.unwrap()[0].about, "Не даёт закончить без проверок.");
+        // Откуда взято правило: файл и строка, по одному на правило.
+        let sourced = parse_plan(
+            r#"{"items": [{"id": "critic-md", "action": "create", "rules": ["a"], "from": [{"file": "README.md", "line": 12}]}]}"#,
+        );
+        let sourced = sourced.unwrap();
+        assert_eq!(sourced[0].from[0].file, "README.md");
+        assert_eq!(sourced[0].from[0].line, 12);
         // Применяется, только когда человек его отметил: окно передаёт id лишь тогда.
         assert_eq!(applicable(&plan, &strings(&["issues-log"])), ["issues-log"]);
         assert_eq!(
@@ -1771,6 +1781,7 @@ mod tests {
             about: String::new(),
             title: String::new(),
             group: String::new(),
+            from: Vec::new(),
         }
     }
 

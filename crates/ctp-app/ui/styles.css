@@ -125,7 +125,11 @@ button { cursor: pointer; }
   letter-spacing: .06em; text-transform: uppercase; color: var(--muted);
 }
 .check-list .plan-group:first-child { margin-top: 0; }
-.check-list li > pre { flex-basis: 100%; }
+.check-list li > pre, .check-list li > .draft-rules { flex-basis: 100%; }
+.draft-rules { list-style: none; margin: 4px 0 0 27px; padding: 0; display: grid; gap: 6px; }
+.draft-rules li { display: grid; gap: 1px; font-size: var(--fs-sm); overflow-wrap: anywhere; }
+.draft-rules li::before { content: none; }
+.draft-rules small { color: var(--muted); font-size: var(--fs-xs); }
 .no-margin { margin: 0; }
 .mono { font-family: var(--mono); }
 .muted { color: var(--muted); }
