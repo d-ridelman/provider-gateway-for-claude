@@ -32,6 +32,10 @@ if ($Publish) {
     if ((git -C $root rev-parse origin/main).Trim() -ne $head) { throw 'HEAD is not pushed to origin/main' }
 }
 
+# Every shipped PGC carries agent-kit (ADR-015): the snapshot of the pinned commit, fresh.
+& (Join-Path $PSScriptRoot 'kit-snapshot.ps1')
+& (Join-Path $PSScriptRoot 'kit-snapshot.ps1') -Check
+
 $ownKey = -not $env:TAURI_SIGNING_PRIVATE_KEY
 if ($ownKey) {
     $keyDir = Join-Path $env:USERPROFILE '.tauri'

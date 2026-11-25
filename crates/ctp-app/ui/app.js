@@ -372,6 +372,11 @@ function renderProject() {
   const count = (status) => findings.filter((f) => f.status === status).length;
   $("projectStateLine").textContent = t("project.stateLine", { root: data.root, ok: count("ok"), missing: count("missing"), problem: count("problem") });
   $("projectFresh").classList.toggle("hidden", !p.fresh);
+  // A newer agent-kit inside PGC: offered, never applied by itself.
+  const update = p.check?.update;
+  $("projectUpdateBtn").classList.toggle("hidden", !update || !!p.updated);
+  if (update) $("projectUpdateBtn").textContent = t("project.update", { from: update.from, to: update.to });
+  $("projectUpdateBtn").disabled = !!p.busy;
   const shown = $("projectFindings");
   shown.replaceChildren();
   // Only what is not fine: the "ok" ones are in the count above.
@@ -464,6 +469,18 @@ function connectProject() {
     if (!projectStillOn(dir)) return;
     state.project.data = data;
     state.project.fresh = data.fresh;
+  });
+}
+
+function updateProject() {
+  const { dir, busy } = state.project ?? {};
+  if (!dir || busy) return;
+  projectStep("connect", async () => {
+    const data = await invoke("connect_update", { dir });
+    if (!projectStillOn(dir)) return;
+    state.project.data = data;
+    state.project.fresh = data.fresh;
+    state.project.updated = true;
   });
 }
 
@@ -1208,6 +1225,7 @@ function bind() {
   $("projectDirInput").addEventListener("keydown", (event) => event.key === "Enter" && checkProject());
   $("projectDirInput").addEventListener("input", resetProject);
   $("projectSourceBtn").addEventListener("click", saveProjectSource);
+  $("projectUpdateBtn").addEventListener("click", updateProject);
   $("projectConnectBtn").addEventListener("click", connectProject);
   $("projectApplyBtn").addEventListener("click", applyProject);
   el.proxyBtn.addEventListener("click", openProxy);

@@ -59,8 +59,17 @@ pub struct Facts {
     pub plugin: Plugin,
     /// Маркетплейс agent-kit уже добавлен в Claude Code.
     pub marketplace: bool,
+    /// Папка, на которую он зарегистрирован.
+    pub marketplace_path: Option<PathBuf>,
     /// Источник из настроек PGC на случай, когда маркетплейса нет.
     pub source: Option<String>,
+    /// Версия agent-kit, встроенного в эту сборку PGC (ADR-015); `None` — не встроен.
+    pub embedded: Option<String>,
+    /// Куда PGC распаковывает встроенный agent-kit.
+    pub kit_dir: Option<PathBuf>,
+    /// Версия и область установленной в проекте копии.
+    pub installed_version: Option<String>,
+    pub installed_scope: Option<String>,
     /// В рабочей копии есть незакоммиченные правки.
     pub dirty: bool,
     /// Критик выбран в настройках PGC.
@@ -82,6 +91,24 @@ pub struct Check {
     pub connected: bool,
     /// Плагин явно выключен: включать только по согласию.
     pub disabled: bool,
+    /// Встроенный agent-kit новее установленной копии: обновить можно по кнопке (случай 24).
+    pub update: Option<KitUpdate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct KitUpdate {
+    pub from: String,
+    pub to: String,
+}
+
+impl Facts {
+    /// Маркетплейс `agent-kit` зарегистрирован на папку PGC: им управляет PGC.
+    pub fn ours(&self) -> bool {
+        self.marketplace
+            && matches!((&self.marketplace_path, &self.kit_dir),
+                (Some(a), Some(b)) if same_path(a, b))
+    }
 }
 
 /// Решение по фактам — таблица ADR-014.
@@ -157,13 +184,45 @@ pub fn decide(f: &Facts) -> Check {
         }
         Some(_) => {}
     }
-    // 9. Откуда ставить.
-    if !check.connected && !f.marketplace && f.source.is_none() {
+    // 22. Маркетплейс на чужой папке (живая папка разработчика): PGC его не трогает.
+    if f.embedded.is_some() && f.marketplace && !f.ours() {
+        let path = f
+            .marketplace_path
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        check.notes.push(note(
+            "elsewhere",
+            tr!(
+                "agent-kit берётся из уже добавленного в Claude Code маркетплейса ({path}), а не из PGC. PGC его не трогает.",
+                "agent-kit comes from the marketplace already added to Claude Code ({path}), not from PGC. PGC leaves it alone."
+            ),
+        ));
+    }
+    // 24. Встроенный новее установленного — только предложение, обновление по кнопке.
+    if let (true, true, Some(to)) = (check.connected, f.ours(), f.embedded.as_ref())
+        && f.installed_version.as_ref() != Some(to)
+    {
+        let from = f.installed_version.clone().unwrap_or_else(|| "?".into());
+        check.notes.push(note(
+            "update",
+            tr!(
+                "В PGC другая версия agent-kit ({to}), чем в проекте ({from}). Поставить её можно кнопкой ниже.",
+                "PGC carries another agent-kit version ({to}) than the project has ({from}). Install it with the button below."
+            ),
+        ));
+        check.update = Some(KitUpdate {
+            from,
+            to: to.clone(),
+        });
+    }
+    // 9, 20. Откуда ставить: маркетплейс, встроенный в PGC или источник из настроек.
+    if !check.connected && !f.marketplace && f.source.is_none() && f.embedded.is_none() {
         check.blockers.push(note(
             "source",
             tr!(
-                "Неизвестно, откуда взять agent-kit: его маркетплейс не добавлен в Claude Code, а источник в PGC не задан.",
-                "Where to get agent-kit is unknown: its marketplace is not added to Claude Code and PGC has no source set."
+                "Неизвестно, откуда взять agent-kit: в эту сборку PGC он не встроен, его маркетплейс не добавлен в Claude Code, а источник в PGC не задан.",
+                "Where to get agent-kit is unknown: it is not built into this PGC, its marketplace is not added to Claude Code and PGC has no source set."
             ),
         ));
     }
@@ -241,24 +300,7 @@ pub fn node_major(text: &str) -> Option<u32> {
 /// всех проектов; `project`/`local` — только этого проекта. Как в Claude Code, ближняя
 /// область решает: `local` важнее `project`, а та — `user` (выключен локально — выключен).
 pub fn plugin_state(list: &Value, root: &Path) -> Plugin {
-    let rank = |scope: &str| match scope {
-        "local" => 3,
-        "project" => 2,
-        "user" => 1,
-        _ => 0,
-    };
-    let entries = list.as_array().map(Vec::as_slice).unwrap_or_default();
-    let nearest = entries
-        .iter()
-        .filter(|e| e["id"] == PLUGIN)
-        .filter(|e| {
-            e["scope"] == "user"
-                || e["projectPath"]
-                    .as_str()
-                    .is_some_and(|p| same_path(Path::new(p), root))
-        })
-        .max_by_key(|e| rank(e["scope"].as_str().unwrap_or_default()));
-    match nearest {
+    match nearest(list, root) {
         None => Plugin::Absent,
         Some(entry) if entry["enabled"] != true => Plugin::Disabled,
         Some(entry) => entry["installPath"]
@@ -267,6 +309,32 @@ pub fn plugin_state(list: &Value, root: &Path) -> Plugin {
                 install_path: PathBuf::from(path),
             }),
     }
+}
+
+/// Запись плагина, которая решает для этого проекта: ближняя область.
+fn nearest<'a>(list: &'a Value, root: &Path) -> Option<&'a Value> {
+    let rank = |scope: &str| match scope {
+        "local" => 3,
+        "project" => 2,
+        "user" => 1,
+        _ => 0,
+    };
+    list.as_array()?
+        .iter()
+        .filter(|e| e["id"] == PLUGIN)
+        .filter(|e| {
+            e["scope"] == "user"
+                || e["projectPath"]
+                    .as_str()
+                    .is_some_and(|p| same_path(Path::new(p), root))
+        })
+        .max_by_key(|e| rank(e["scope"].as_str().unwrap_or_default()))
+}
+
+/// Путь маркетплейса `agent-kit` из `claude plugin marketplace list --json`; `None` — нет.
+pub fn marketplace_path(list: &Value) -> Option<Option<PathBuf>> {
+    let entry = list.as_array()?.iter().find(|m| m["name"] == MARKETPLACE)?;
+    Some(entry["path"].as_str().map(PathBuf::from))
 }
 
 /// Пункт плана `agent-kit setup --json`.
@@ -486,27 +554,25 @@ pub fn facts(config: &Config, status: &crate::model::UiStatus, requested: &Path)
         .map(|o| o.stderr.lines().next().unwrap_or_default().to_string());
     let cli = crate::claude::code_cli(config).is_ok();
     let work = root.clone().unwrap_or_else(|| requested.to_path_buf());
-    let plugin = claude(config, &work)
-        .ok()
-        .and_then(|mut c| {
-            c.args(["plugin", "list", "--json"]);
-            run(c, TIMEOUT).ok()
-        })
-        .filter(|o| o.code == Some(0))
-        .and_then(|o| serde_json::from_str::<Value>(&o.stdout).ok())
-        .map_or(Plugin::Absent, |list| plugin_state(&list, &work));
-    let marketplace = claude(config, &work)
-        .ok()
-        .and_then(|mut c| {
-            c.args(["plugin", "marketplace", "list", "--json"]);
-            run(c, TIMEOUT).ok()
-        })
-        .filter(|o| o.code == Some(0))
-        .and_then(|o| serde_json::from_str::<Value>(&o.stdout).ok())
-        .is_some_and(|list| {
-            list.as_array()
-                .is_some_and(|all| all.iter().any(|m| m["name"] == MARKETPLACE))
-        });
+    let list = |args: &[&str]| {
+        claude(config, &work)
+            .ok()
+            .and_then(|mut c| {
+                c.args(args);
+                run(c, TIMEOUT).ok()
+            })
+            .filter(|o| o.code == Some(0))
+            .and_then(|o| serde_json::from_str::<Value>(&o.stdout).ok())
+    };
+    let plugins = list(&["plugin", "list", "--json"]);
+    let plugin = plugins
+        .as_ref()
+        .map_or(Plugin::Absent, |list| plugin_state(list, &work));
+    let entry = plugins.as_ref().and_then(|list| nearest(list, &work));
+    let field = |name: &str| entry.and_then(|e| e[name].as_str()).map(str::to_string);
+    let registered = list(&["plugin", "marketplace", "list", "--json"])
+        .as_ref()
+        .and_then(marketplace_path);
     let dirty = root.as_ref().is_some_and(|root| {
         let mut c = program("git");
         c.args(["status", "--porcelain"]).current_dir(root);
@@ -523,8 +589,13 @@ pub fn facts(config: &Config, status: &crate::model::UiStatus, requested: &Path)
         requested: requested.to_path_buf(),
         root,
         plugin,
-        marketplace,
+        marketplace: registered.is_some(),
+        marketplace_path: registered.flatten(),
         source: config.kit_source.clone().filter(|s| !s.trim().is_empty()),
+        embedded: crate::kit::embedded().map(str::to_string),
+        kit_dir: crate::kit::dir(),
+        installed_version: field("version"),
+        installed_scope: field("scope"),
         dirty,
         critic_chosen: config.model_roles.critic.is_some(),
         critic: !crate::claude::critic_env(config, status).is_empty(),
@@ -547,10 +618,27 @@ pub fn step(f: &Facts) -> Step {
     match &f.plugin {
         Plugin::Enabled { install_path } => Step::Nothing(install_path.clone()),
         Plugin::Disabled => Step::Enable,
+        // Маркетплейса нет: встроенный в PGC (случай 23), иначе источник из настроек.
         Plugin::Absent => Step::Install {
-            source: (!f.marketplace).then(|| f.source.clone()).flatten(),
+            source: (!f.marketplace)
+                // Источник, заданный человеком, важнее встроенного: он выбран нарочно.
+                .then(|| match (&f.source, &f.embedded, &f.kit_dir) {
+                    (Some(source), _, _) => Some(source.clone()),
+                    (None, Some(_), Some(dir)) => Some(dir.display().to_string()),
+                    _ => None,
+                })
+                .flatten(),
         },
     }
+}
+
+/// Нужно ли перед установкой распаковать встроенный agent-kit: установка берёт его из папки
+/// PGC или маркетплейс — папка PGC, которая могла пропасть (случаи 21, 23).
+fn needs_unpack(f: &Facts, source: Option<&str>) -> bool {
+    let from_kit = source
+        .zip(f.kit_dir.as_ref())
+        .is_some_and(|(s, dir)| same_path(Path::new(s), dir));
+    from_kit || f.ours()
 }
 
 /// Сделать шаг. Возвращает папку установленной копии и признак «плагин только что включён»:
@@ -565,17 +653,56 @@ pub fn open(config: &Config, f: &Facts, team: bool) -> Result<(PathBuf, bool), S
     let commands = match step(f) {
         Step::Nothing(path) => return Ok((path, false)),
         Step::Enable => vec![enable_args()],
-        Step::Install { source } => install_steps(team, source.as_deref()),
+        Step::Install { source } => {
+            if needs_unpack(f, source.as_deref()) {
+                crate::kit::extracted()?;
+            }
+            install_steps(team, source.as_deref())
+        }
     };
+    run_claude(config, &root, commands)?;
+    Ok((installed(config, &root)?, true))
+}
+
+fn run_claude(config: &Config, root: &Path, commands: Vec<Vec<String>>) -> Result<(), String> {
     for args in commands {
-        let mut command = claude(config, &root)?;
+        let mut command = claude(config, root)?;
         command.args(&args);
         ok(
             run(command, TIMEOUT)?,
             &format!("claude {}", args[..2].join(" ")),
         )?;
     }
+    Ok(())
+}
+
+/// Обновить копию проекта до встроенной в PGC — только по кнопке (случай 24): распаковать,
+/// перечитать маркетплейс PGC, обновить ту область, где плагин стоит.
+pub fn update(config: &Config, f: &Facts) -> Result<(PathBuf, bool), String> {
+    let root = f.root.clone().ok_or_else(|| {
+        tr!(
+            "папка — не git-репозиторий",
+            "the folder is not a git repository"
+        )
+    })?;
+    if decide(f).update.is_none() {
+        return Ok((installed(config, &root)?, false));
+    }
+    crate::kit::extracted()?;
+    run_claude(config, &root, update_steps(f.installed_scope.as_deref()))?;
     Ok((installed(config, &root)?, true))
+}
+
+fn update_steps(scope: Option<&str>) -> Vec<Vec<String>> {
+    let scope = scope.unwrap_or("local");
+    vec![
+        ["plugin", "marketplace", "update", MARKETPLACE]
+            .map(String::from)
+            .to_vec(),
+        ["plugin", "update", PLUGIN, "--scope", scope, "--json"]
+            .map(String::from)
+            .to_vec(),
+    ]
 }
 
 /// Включить обратно только в этом проекте: область `local` ближе всех, перекрывает и
@@ -590,10 +717,17 @@ fn enable_args() -> Vec<String> {
 /// область — уже стоявшая копия могла быть старой (случай 8), а свежую обновлять дёшево.
 fn install_steps(team: bool, source: Option<&str>) -> Vec<Vec<String>> {
     let scope = if team { "project" } else { "local" };
-    let mut install: Vec<String> = ["plugin", "install", PLUGIN, "--scope", scope, "--json"]
+    let source = source.map(str::trim).filter(|s| !s.is_empty());
+    // С `--marketplace` Claude Code требует голое имя: «Name the marketplace once».
+    let name = if source.is_some() {
+        MARKETPLACE
+    } else {
+        PLUGIN
+    };
+    let mut install: Vec<String> = ["plugin", "install", name, "--scope", scope, "--json"]
         .map(String::from)
         .to_vec();
-    if let Some(source) = source.map(str::trim).filter(|s| !s.is_empty()) {
+    if let Some(source) = source {
         install.extend(["--marketplace".to_string(), source.to_string()]);
     }
     let update = ["plugin", "update", PLUGIN, "--scope", scope, "--json"]
@@ -695,7 +829,14 @@ mod tests {
             root: Some(PathBuf::from(r"D:\Проекты\мой проект")),
             plugin: Plugin::Absent,
             marketplace: true,
+            marketplace_path: None,
             source: None,
+            embedded: None,
+            kit_dir: Some(PathBuf::from(
+                r"C:\Users\u\AppData\Local\ClaudeProviderGateway\agent-kit",
+            )),
+            installed_version: None,
+            installed_scope: None,
             dirty: false,
             critic_chosen: true,
             critic: true,
@@ -839,6 +980,8 @@ mod tests {
         // Источник — только установке и только непустой.
         let with = install_steps(false, Some(" owner/agent-kit "));
         assert!(with[0].ends_with(&["--marketplace".into(), "owner/agent-kit".into()]));
+        // С источником — голое имя плагина, иначе Claude Code отказывает.
+        assert_eq!(with[0][2], "agent-kit");
         assert!(!with[1].contains(&"--marketplace".to_string()));
         assert!(!install_steps(false, Some("  "))[0].contains(&"--marketplace".to_string()));
     }
@@ -903,6 +1046,119 @@ mod tests {
             (PathBuf::from(r"C:\kit"), false)
         );
         // Свежее включение проверяет живой тест: там `open` ставит и возвращает true.
+    }
+
+    fn kit_dir() -> PathBuf {
+        base().kit_dir.unwrap()
+    }
+
+    #[test]
+    fn case_20_no_built_in_kit_uses_the_marketplace_or_the_source() {
+        // Встроенного нет (сборка без снимка), маркетплейса и источника нет — блокер.
+        let mut f = base();
+        f.marketplace = false;
+        assert_eq!(ids(&decide(&f).blockers), ["source"]);
+        // Встроенный есть — блокера нет, ставится из папки PGC.
+        f.embedded = Some("92b16a29f355".into());
+        assert!(decide(&f).blockers.is_empty());
+        assert_eq!(
+            step(&f),
+            Step::Install {
+                source: Some(kit_dir().display().to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn case_21_an_unpacked_copy_that_broke_is_unpacked_again() {
+        // Распаковка — `kit::ensure` (её тесты — в kit.rs). Здесь — когда она нужна.
+        let mut f = base();
+        f.embedded = Some("v".into());
+        let kit = kit_dir().display().to_string();
+        // Маркетплейс — папка PGC (могла пропасть): распаковать, даже если ставим без источника.
+        f.marketplace = true;
+        f.marketplace_path = Some(kit_dir());
+        assert!(f.ours() && needs_unpack(&f, None));
+        // Чужой маркетплейс — не трогать.
+        f.marketplace_path = Some(PathBuf::from(r"D:\dev\agent-kit"));
+        assert!(!f.ours() && !needs_unpack(&f, None));
+        // Маркетплейса нет, ставим из папки PGC — распаковать; из своего источника — нет.
+        f.marketplace = false;
+        f.marketplace_path = None;
+        assert!(needs_unpack(&f, Some(&kit)));
+        assert!(!needs_unpack(&f, Some("owner/agent-kit")));
+    }
+
+    #[test]
+    fn case_22_a_marketplace_elsewhere_is_left_alone() {
+        let mut f = base();
+        f.embedded = Some("v2".into());
+        f.marketplace = true;
+        f.marketplace_path = Some(PathBuf::from(r"D:\dev\agent-kit"));
+        let check = decide(&f);
+        assert_eq!(ids(&check.notes), ["elsewhere"]);
+        // Ставится из него, без --marketplace на папку PGC.
+        assert_eq!(step(&f), Step::Install { source: None });
+        // И обновление не предлагается: это не маркетплейс PGC.
+        f.plugin = Plugin::Enabled {
+            install_path: PathBuf::from(r"C:\cache"),
+        };
+        f.installed_version = Some("old".into());
+        assert!(decide(&f).update.is_none());
+    }
+
+    #[test]
+    fn case_23_no_marketplace_registers_the_pgc_folder() {
+        let mut f = base();
+        f.embedded = Some("v2".into());
+        f.marketplace = false;
+        let Step::Install { source } = step(&f) else {
+            panic!("ожидалась установка")
+        };
+        let steps = install_steps(false, source.as_deref());
+        assert!(steps[0].ends_with(&["--marketplace".into(), kit_dir().display().to_string()]));
+        // Источник, заданный человеком, важнее встроенного.
+        f.source = Some("owner/agent-kit".into());
+        assert_eq!(
+            step(&f),
+            Step::Install {
+                source: Some("owner/agent-kit".into())
+            }
+        );
+    }
+
+    #[test]
+    fn case_24_a_newer_built_in_kit_is_offered_not_forced() {
+        let mut f = base();
+        f.embedded = Some("new".into());
+        f.marketplace = true;
+        f.marketplace_path = Some(kit_dir());
+        f.plugin = Plugin::Enabled {
+            install_path: PathBuf::from(r"C:\cache\old"),
+        };
+        f.installed_version = Some("old".into());
+        f.installed_scope = Some("project".into());
+        let check = decide(&f);
+        assert_eq!(
+            check.update,
+            Some(KitUpdate {
+                from: "old".into(),
+                to: "new".into()
+            })
+        );
+        assert!(ids(&check.notes).contains(&"update"));
+        // «Подключить» на подключённом ничего не ставит: обновление — только кнопкой.
+        assert_eq!(step(&f), Step::Nothing(PathBuf::from(r"C:\cache\old")));
+        // Кнопка обновляет ту область, где плагин стоит.
+        let steps = update_steps(f.installed_scope.as_deref());
+        assert_eq!(steps[0], ["plugin", "marketplace", "update", MARKETPLACE]);
+        assert_eq!(
+            steps[1],
+            ["plugin", "update", PLUGIN, "--scope", "project", "--json"]
+        );
+        // Та же версия — предложения нет.
+        f.installed_version = Some("new".into());
+        assert!(decide(&f).update.is_none());
     }
 
     #[test]
@@ -1071,6 +1327,103 @@ mod tests {
         uninstall.args(["plugin", "uninstall", PLUGIN, "--scope", "local"]);
         ok(run(uninstall, TIMEOUT).unwrap(), "uninstall").unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Вживую, как у человека без agent-kit: своя папка настроек Claude Code (маркетплейса нет)
+    /// и свой профиль PGC. agent-kit распаковывается из exe, регистрируется и ставится с
+    /// версией встроенного снимка. Нужен снимок (`tools/kit-snapshot.ps1`) до сборки.
+    /// `cargo test -p ctp-app live_built_in -- --ignored --nocapture`.
+    #[test]
+    #[ignore]
+    fn live_built_in_kit_for_a_new_user() {
+        let Some(version) = crate::kit::embedded() else {
+            panic!("в этой сборке нет снимка: запустите tools/kit-snapshot.ps1 и соберите заново");
+        };
+        let base = std::env::temp_dir()
+            .join("agents")
+            .join(format!("ctp-newuser {}", uuid::Uuid::new_v4().simple()));
+        let (cfg, home, repo) = (base.join("cfg"), base.join("home"), base.join("repo"));
+        for d in [&cfg, &home, &repo] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        // SAFETY: тест запускается один (`--ignored`, по имени), до него потоков с окружением нет.
+        unsafe {
+            std::env::set_var("CLAUDE_CONFIG_DIR", &cfg);
+            std::env::set_var("CLAUDE_GATEWAY_HOME", &home);
+        }
+        let git = |args: &[&str]| {
+            let mut c = Command::new("git");
+            c.args(args).current_dir(&repo);
+            run(c, Duration::from_secs(30)).unwrap()
+        };
+        git(&["init", "-q"]);
+        std::fs::write(repo.join("a.txt"), "x").unwrap();
+        git(&["add", "."]);
+        git(&[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-qm",
+            "i",
+        ]);
+        let config = Config::default();
+        let status = crate::model::UiStatus {
+            running: false,
+            port: 0,
+            token: String::new(),
+            models: Vec::new(),
+            log_path: String::new(),
+            claude: None,
+            update: None,
+        };
+        let f = super::facts(&config, &status, &repo);
+        assert!(
+            !f.marketplace,
+            "в новой папке настроек маркетплейса быть не должно"
+        );
+        assert!(decide(&f).blockers.is_empty(), "{:?}", decide(&f).blockers);
+        let (kit, fresh) = open(&config, &f, false).unwrap();
+        assert!(fresh);
+        let again = super::facts(&config, &status, &repo);
+        println!(
+            "kit {} version {:?}",
+            kit.display(),
+            again.installed_version
+        );
+        assert!(again.ours(), "маркетплейс — папка PGC");
+        assert_eq!(again.installed_version.as_deref(), Some(version));
+        assert!(decide(&again).update.is_none());
+        // Случай 24 целиком: в проекте старая версия (её ставим из подменённой папки PGC),
+        // кнопка «обновить» возвращает встроенную.
+        let dir = crate::kit::dir().unwrap();
+        let manifest = dir.join(".claude-plugin").join("plugin.json");
+        let text = std::fs::read_to_string(&manifest).unwrap();
+        std::fs::write(&manifest, text.replace(version, "old000000000")).unwrap();
+        std::fs::write(dir.join(".pgc-kit"), "old000000000").unwrap();
+        run_claude(
+            &config,
+            &repo,
+            update_steps(again.installed_scope.as_deref()),
+        )
+        .unwrap();
+        let stale = super::facts(&config, &status, &repo);
+        assert_eq!(stale.installed_version.as_deref(), Some("old000000000"));
+        assert!(
+            decide(&stale).update.is_some(),
+            "должна быть кнопка «обновить»"
+        );
+        let (_, fresh) = update(&config, &stale).unwrap();
+        assert!(fresh);
+        let updated = super::facts(&config, &status, &repo);
+        assert_eq!(updated.installed_version.as_deref(), Some(version));
+        assert!(decide(&updated).update.is_none());
+        unsafe {
+            std::env::remove_var("CLAUDE_CONFIG_DIR");
+            std::env::remove_var("CLAUDE_GATEWAY_HOME");
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// Полнота: у каждой строки таблицы ADR-014 есть тест `case_NN_…`.

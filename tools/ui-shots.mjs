@@ -112,6 +112,7 @@ const STUB = String.raw`
     connect_open: () => scenario === "error" ? fail("claude plugin install: marketplace 'agent-kit' not found (stubbed)") : kitData(),
     connect_apply: () => ({ ...kitData(), plan: [kitPlan[2]], applied: { applied: ["docs/knowledge/issues.md"], skipped: [] } }),
     connect_set_source: () => null,
+    connect_update: () => kitData(),
   };
   const kitRoot = scenario === "kitlong"
     ? "D:\\Projects\\Очень длинное имя папки клиента с пробелами\\packages\\web-frontend-monorepo-workspace"
@@ -128,7 +129,8 @@ const STUB = String.raw`
         : [],
     notes: [kitNote("critic", lang === "ru" ? "Критик в PGC не выбран: критик agent-kit пойдёт по подписке Claude, а без неё не сработает. Выбрать — в Настройках." : "No critic is chosen in PGC: agent-kit's critic goes through a Claude subscription and fails without one. Choose one in the settings."),
       kitNote("dirty", lang === "ru" ? "В проекте есть незакоммиченные правки. Подключение их не тронет, новые файлы лягут рядом." : "The project has uncommitted edits. Connecting leaves them alone; new files go next to them.")],
-    connected: false, disabled: false,
+    connected: scenario === "kitupdate", disabled: false,
+    update: scenario === "kitupdate" ? { from: "92b16a29f355", to: "a1b2c3d4e5f6" } : null,
   });
   const kitPlan = [
     { id: "issues-log", action: "create", path: "docs/knowledge/issues.md", what: "findings log: what was noticed outside the task" },
@@ -323,6 +325,7 @@ add("normal", "project", [0, 1, 2], ["light", "dark"]);
 add("kitnonode", "project", [1], ["light", "dark"]);
 add("kitnorepo", "project", [1], ["dark"]);
 add("kitsource", "project", [1], ["light", "dark"]);
+add("kitupdate", "projectopen", [1], ["light", "dark"], "ru", { settleMs: 400 });
 add("normal", "projectopen", [0, 1, 2], ["light", "dark"], "ru", { settleMs: 400 });
 add("kitold", "projectopen", [1], ["dark"], "ru", { settleMs: 400 });
 add("kitlong", "projectopen", [1, 2], ["dark"], "ru", { settleMs: 400 });

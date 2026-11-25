@@ -7,6 +7,7 @@ pub mod download;
 pub mod fetch;
 pub mod i18n;
 pub mod installs;
+pub mod kit;
 pub mod mihomo;
 pub mod model;
 pub mod runtime;
@@ -155,6 +156,7 @@ pub fn run() {
             commands::connect_open,
             commands::connect_apply,
             commands::connect_set_source,
+            commands::connect_update,
             commands::tail_log,
             commands::open_logs,
             commands::copy_text,

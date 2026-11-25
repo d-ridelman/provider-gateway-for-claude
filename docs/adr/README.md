@@ -43,3 +43,4 @@
 | [012](012-critic-model-for-scripts.md) | Модель-критик для скриптов: переменные `AGENT_KIT_PGC_*` | Accepted |
 | [013](013-agent-kit-in-pgc.md) | Проверки и критик PGC через agent-kit | Accepted |
 | [014](014-connect-project.md) | Кнопка «Подключить проект»: agent-kit без ручных команд | Accepted |
+| [015](015-agent-kit-in-the-installer.md) | agent-kit приезжает внутри PGC | Accepted |

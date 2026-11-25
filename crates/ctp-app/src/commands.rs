@@ -397,6 +397,27 @@ pub async fn connect_open(
     .map_err(|exc| exc.to_string())?
 }
 
+/// Обновить agent-kit проекта до встроенного в PGC — по кнопке (случай 24).
+#[tauri::command]
+pub async fn connect_update(
+    shared: State<'_, AppShared>,
+    dir: String,
+) -> Result<ConnectState, String> {
+    let config = shared.config.lock().unwrap().clone();
+    let status = runtime::status(&shared);
+    tauri::async_runtime::spawn_blocking(move || {
+        let facts = crate::connect::facts(&config, &status, std::path::Path::new(dir.trim()));
+        let (kit, fresh) = crate::connect::update(&config, &facts)?;
+        let root = facts.root.clone().unwrap_or_default();
+        Ok(ConnectState {
+            fresh,
+            ..connect_state(&kit, &root)?
+        })
+    })
+    .await
+    .map_err(|exc| exc.to_string())?
+}
+
 /// Откуда брать agent-kit, если его маркетплейс не добавлен (блокер «источник», случай 9).
 #[tauri::command]
 pub async fn connect_set_source(
