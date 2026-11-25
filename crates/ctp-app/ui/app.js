@@ -339,9 +339,7 @@ function checkItem(kind, text, title) {
   li.className = kind;
   if (kind === "busy") {
     // Work under way: the brand's work mark instead of a sign.
-    const mark = document.createElement("span");
-    mark.className = "work-mark";
-    li.append(mark, text);
+    li.append(workMark(), text);
     if (title) li.title = title;
     return li;
   }
@@ -361,7 +359,8 @@ function renderProject() {
     // What stops the connection is the person's to fix, not a failure: amber, not red.
     for (const item of check.blockers) list.append(checkItem("human", item.text));
     for (const item of check.notes) list.append(checkItem("off", item.text));
-    if (!check.blockers.length) list.append(checkItem("ok", t(check.connected ? "project.alreadyOn" : "project.ready", { root: check.root })));
+    // "Ready to connect" is for before connecting: once the inspection is shown it is stale.
+    if (!check.blockers.length && !p.data) list.append(checkItem("ok", t(check.connected ? "project.alreadyOn" : "project.ready", { root: check.root })));
   }
   // The only blocker the page itself can lift: where agent-kit comes from.
   $("projectSourceBox").classList.toggle("hidden", !check?.blockers.some((b) => b.id === "source"));
@@ -373,6 +372,7 @@ function renderProject() {
     $(id).disabled = !!p.busy;
   }
   if (p.busy === "connect") list.append(checkItem("busy", t("project.connecting")));
+  if (p.busy === "update") list.append(checkItem("busy", t("project.updating")));
 
   const data = p.data;
   $("projectStateGroup").classList.toggle("hidden", !data);
@@ -393,7 +393,8 @@ function renderProject() {
   // Only what is not fine, and advice (a slow step that never failed): the rest is in the count above.
   for (const f of findings.filter((f) => f.status !== "ok" || f.advice)) {
     const li = checkItem(f.status === "problem" ? "human" : "off", f.what, f.fix);
-    if (f.about) li.append(helpButton(() => openHelp(f.what, [f.about, f.fix].filter(Boolean).join("\n\n"))));
+    // The fix was only a hover tooltip: under "?" a keyboard user reads it too.
+    if (f.about || f.fix) li.append(helpButton(() => openHelp(f.what, [f.about, f.fix].filter(Boolean).join("\n\n")), f.what));
     shown.append(li);
   }
   const plan = $("projectPlan");
@@ -441,7 +442,7 @@ function renderProject() {
     if (item.action === "keep") {
       li.className = "off";
       li.textContent = item.title ? `– ${item.title}` : `– ${item.path}: ${item.what}`;
-      if (help) li.append(helpButton(() => openHelp(helpTitle, help)));
+      if (help) li.append(helpButton(() => openHelp(helpTitle, help), helpTitle));
     } else {
       const label = document.createElement("label");
       label.className = "check";
@@ -467,12 +468,12 @@ function renderProject() {
         where.className = "plan-path";
         where.textContent = `${verb} ${row.map((i) => i.path).join(", ")}`;
         span.append(item.title);
-        if (help) span.append(helpButton(() => openHelp(helpTitle, help)));
+        if (help) span.append(helpButton(() => openHelp(helpTitle, help), helpTitle));
         span.append(where);
       } else {
         // agent-kit's own text may already name the file ("Create docs/x.md"): no second copy of it.
         span.textContent = item.what.includes(item.path) ? item.what : `${verb} ${item.path} — ${item.what}`;
-        if (help) span.append(helpButton(() => openHelp(helpTitle, help)));
+        if (help) span.append(helpButton(() => openHelp(helpTitle, help), helpTitle));
       }
       label.append(box, span);
       li.append(label);
@@ -499,7 +500,7 @@ function renderProject() {
   }
   renderChecks(p, data);
   const applying = p.busy === "apply";
-  $("projectApplyBtn").textContent = t(applying ? "project.applying" : "project.apply");
+  $("projectApplyBtn").replaceChildren(...(applying ? [workMark(), t("project.applying")] : [t("project.apply")]));
   $("projectApplyBtn").toggleAttribute("aria-busy", applying);
   $("projectApplyBtn").classList.toggle("hidden", !(data.plan ?? []).some((item) => item.action !== "keep") && !checksOf(data).length);
 }
@@ -627,7 +628,7 @@ function connectProject() {
 function updateProject() {
   const { dir, busy } = state.project ?? {};
   if (!dir || busy) return;
-  projectStep("connect", async () => {
+  projectStep("update", async () => {
     const data = await invoke("connect_update", { dir });
     if (!projectStillOn(dir)) return;
     state.project.data = data;
@@ -1277,11 +1278,7 @@ function renderClaudeCheck() {
   el.claudeWarn.classList.toggle("hidden", !items.some((item) => !item.ok && !item.optional));
   el.claudeCheckList.replaceChildren();
   if (!check) {
-    const li = document.createElement("li");
-    li.className = "muted";
-    li.className = "busy";
-  li.replaceChildren(Object.assign(document.createElement("span"), { className: "work-mark" }), t("settings.checking"));
-    el.claudeCheckList.append(li);
+    el.claudeCheckList.append(checkItem("busy", t("settings.checking")));
     return;
   }
   // Everything fine: one line (the list is in the tooltip); a problem opens the whole list.
@@ -1413,7 +1410,7 @@ function bind() {
   $("toastCopy").addEventListener("click", () => copyText(el.toastText.textContent, t("toast.copied")));
 
   document.addEventListener("keydown", (event) => {
-    if (el.dialog.open) return; // the dialog handles its own keys
+    if (el.dialog.open || $("helpDialog").open) return; // a dialog handles its own keys
     if (event.key === "Escape") {
       if (el.toast.classList.contains("show")) hideToast();
       else if (state.logsOpen) setLogs(false);
@@ -1586,11 +1583,16 @@ async function testProvider() {
   });
 }
 
+// The brand book's work mark (see .work-mark in styles.css).
+function workMark() {
+  return Object.assign(document.createElement("span"), { className: "work-mark" });
+}
+
 async function busy(button, label, work) {
   const text = button.textContent;
   button.disabled = true;
   button.setAttribute("aria-busy", "true");
-  button.textContent = label;
+  button.replaceChildren(workMark(), label);
   try {
     await work();
   } finally {
@@ -1894,14 +1896,15 @@ async function closeToTray() {
 // A modal question. Resolves with { value: "ok" | "cancel" | "alt", checked }.
 // "?" next to a heading or a field (data-help="<topic>"): a plain-words explanation in a window.
 // The texts live in i18n.js as help.<topic>.title / help.<topic>.body (paragraphs split by a blank line).
-function helpButton(open) {
+// `name` — what the "?" explains: a screen reader hears "<name>: what is this and why?", not
+// a row of identical buttons. A language switch rebuilds the buttons (addHelpButtons, renders).
+function helpButton(open, name = "") {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "help-btn";
   button.textContent = "?";
-  button.dataset.i18nAria = "help.what";
-  button.dataset.i18nTitle = "help.what";
-  button.setAttribute("aria-label", t("help.what"));
+  const label = name ? `${name}: ${t("help.what")}` : t("help.what");
+  button.setAttribute("aria-label", label);
   button.title = t("help.what");
   button.addEventListener("click", (event) => {
     // Inside a label or a summary the click would also toggle what it belongs to.
@@ -1917,7 +1920,7 @@ function addHelpButtons(root = document) {
     if (node.querySelector(":scope > .help-btn")) continue;
     // A language switch rewrites the heading's text and drops the button: applyLanguage adds it back.
     const topic = node.dataset.help;
-    node.append(helpButton(() => openHelp(t(`help.${topic}.title`), t(`help.${topic}.body`))));
+    node.append(helpButton(() => openHelp(t(`help.${topic}.title`), t(`help.${topic}.body`)), t(`help.${topic}.title`)));
   }
 }
 

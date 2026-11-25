@@ -14,7 +14,12 @@ fn embed_kit() {
     println!("cargo:rerun-if-changed={}", version.display());
     let out = std::env::var("OUT_DIR").expect("OUT_DIR");
     let bytes = std::fs::read(&tar).unwrap_or_default();
-    std::fs::write(Path::new(&out).join("agent-kit.tar"), &bytes).expect("write agent-kit.tar");
+    // Rewritten only when it changes: a fresh mtime would make include_bytes! rebuild the crate
+    // on every cargo run where there is no snapshot (rerun-if-changed on a missing file).
+    let dst = Path::new(&out).join("agent-kit.tar");
+    if std::fs::read(&dst).ok().as_deref() != Some(&bytes[..]) {
+        std::fs::write(&dst, &bytes).expect("write agent-kit.tar");
+    }
     let version = std::fs::read_to_string(&version).unwrap_or_default();
     let version = if bytes.is_empty() { "" } else { version.trim() };
     println!("cargo:rustc-env=PGC_KIT_VERSION={version}");

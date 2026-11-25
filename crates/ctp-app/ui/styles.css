@@ -96,19 +96,21 @@ button { cursor: pointer; }
 .check-list .bad { color: var(--stop-text); overflow-wrap: anywhere; }
 .check-list .off { color: var(--muted); }
 .check-list .human { color: var(--human-text); overflow-wrap: anywhere; }
-/* Waiting: the brand book's work mark — a square plate the accent light runs up through,
-   on a busy button and on a "…ing" line. Reduced motion leaves it still (see the end). */
-.work-mark, button[aria-busy="true"]::before {
-  content: ""; display: inline-block; flex: none; width: 8px; height: 8px; vertical-align: -1px;
-  margin-right: 8px; background: linear-gradient(var(--accent), var(--accent)) no-repeat var(--line-strong);
-  background-size: 100% 0%; background-position: bottom;
+/* Waiting: the brand book's work mark — a square plate the accent light runs up through, as
+   its run keyframes do (clip-path, not a gradient). A real element, so a button keeps its own
+   cut corners (::before/::after). Reduced motion leaves it still (see the end). */
+.work-mark {
+  position: relative; display: inline-block; flex: none; width: 8px; height: 8px; vertical-align: -1px;
+  margin-right: 8px; background: var(--line-strong);
+}
+.work-mark::after {
+  content: ""; position: absolute; inset: 0; background: var(--accent);
   animation: work var(--dur-work) var(--ease-work) infinite;
 }
 @keyframes work {
-  0% { background-size: 100% 0%; background-position: bottom; }
-  45%, 55% { background-size: 100% 100%; background-position: bottom; }
-  56% { background-position: top; }
-  100% { background-size: 100% 0%; background-position: top; }
+  0% { clip-path: inset(100% 0 0 0); }
+  45%, 55% { clip-path: inset(0); }
+  100% { clip-path: inset(0 0 100% 0); }
 }
 .check-list .busy { color: var(--muted); }
 .check-list pre { margin: 4px 0 0; font-family: var(--mono); font-size: var(--fs-sm); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }

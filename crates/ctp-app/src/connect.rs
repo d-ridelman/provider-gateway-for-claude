@@ -76,6 +76,8 @@ pub struct Facts {
     pub installed_scope: Option<String>,
     /// В рабочей копии есть незакоммиченные правки.
     pub dirty: bool,
+    /// Claude Code ответил на оба списка (плагины и маркетплейсы); `false` — сбой или таймаут.
+    pub lists_ok: bool,
     /// Критик выбран в настройках PGC.
     pub critic_chosen: bool,
     /// Критик выбран и шлюз его отдаёт: переменные `AGENT_KIT_*` будут.
@@ -148,6 +150,16 @@ pub fn decide(f: &Facts) -> Check {
             tr!(
                 "Не найден Claude Code: скачайте его в Настройках PGC.",
                 "Claude Code not found: download it in PGC's settings."
+            ),
+        ));
+    }
+    // 32. Claude Code не отдал список плагинов: по пустому списку ничего не ставить.
+    if f.cli && !f.lists_ok {
+        check.blockers.push(note(
+            "lists",
+            tr!(
+                "Claude Code не ответил, какие плагины у вас стоят. Подключать вслепую нельзя: закройте лишние окна Claude Code и нажмите «Проверить» ещё раз.",
+                "Claude Code did not say which plugins you have. Connecting blind is not safe: close extra Claude Code windows and press Check again."
             ),
         ));
     }
@@ -673,9 +685,11 @@ pub fn facts(config: &Config, status: &crate::model::UiStatus, requested: &Path)
         .map_or(Plugin::Absent, |list| plugin_state(list, &work));
     let entry = plugins.as_ref().and_then(|list| nearest(list, &work));
     let field = |name: &str| entry.and_then(|e| e[name].as_str()).map(str::to_string);
-    let registered = list(&["plugin", "marketplace", "list", "--json"])
-        .as_ref()
-        .and_then(marketplace_path);
+    let markets = list(&["plugin", "marketplace", "list", "--json"]);
+    // A failed list is not "nothing installed": acting on it would turn a disabled plugin back
+    // on or point a taken marketplace name at PGC's folder (case 32).
+    let lists_ok = !cli || (plugins.is_some() && markets.is_some());
+    let registered = markets.as_ref().and_then(marketplace_path);
     let marketplace_version = registered
         .clone()
         .flatten()
@@ -706,7 +720,9 @@ pub fn facts(config: &Config, status: &crate::model::UiStatus, requested: &Path)
         installed_version: field("version"),
         installed_scope: field("scope"),
         dirty,
-        critic_chosen: config.model_roles.critic.is_some(),
+        lists_ok,
+        // A critic whose provider was deleted is not chosen any more: "restart the gateway" would not help.
+        critic_chosen: critic_alias.is_some(),
         critic: !crate::claude::critic_env(config, status).is_empty(),
         critic_is_main: critic_alias.is_some() && critic_alias == main,
     }
@@ -1039,6 +1055,7 @@ mod tests {
             installed_version: None,
             installed_scope: None,
             dirty: false,
+            lists_ok: true,
             critic_chosen: true,
             critic: true,
             critic_is_main: false,
@@ -1309,6 +1326,19 @@ mod tests {
         // Версию папки узнать не удалось — тоже не предлагается (случай 31 — только с ней).
         f.marketplace_version = None;
         assert!(decide(&f).update.is_none());
+    }
+
+    #[test]
+    fn case_32_a_failed_plugin_list_blocks_instead_of_looking_empty() {
+        let mut f = base();
+        f.lists_ok = false;
+        // Without the lists the plugin looks absent: installing would be blind.
+        f.plugin = Plugin::Absent;
+        let check = decide(&f);
+        assert_eq!(ids(&check.blockers), ["lists"]);
+        // No Claude Code at all: its own blocker says that, not this one.
+        f.cli = false;
+        assert!(!ids(&decide(&f).blockers).contains(&"lists"));
     }
 
     #[test]

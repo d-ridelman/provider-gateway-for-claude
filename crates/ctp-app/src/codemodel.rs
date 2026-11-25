@@ -99,7 +99,12 @@ fn restore_at(settings: &Path, snapshot: &Path, config: &Config) -> Result<bool,
         let Some((mut map, newline)) = read_settings(settings)? else {
             return Ok(false);
         };
-        if !leaked(config, map.get("model")) {
+        // The person sends plain `claude` to their own endpoint from this file: a model that
+        // happens to share a gateway model's ID is theirs. The PGC console never sets it here.
+        let own_endpoint = map
+            .get("env")
+            .is_some_and(|env| env.get("ANTHROPIC_BASE_URL").is_some());
+        if own_endpoint || !leaked(config, map.get("model")) {
             return Ok(false);
         }
         match before {
@@ -276,6 +281,8 @@ mod tests {
             r#"{"theme":"dark"}"#,
             "{ broken",
             r#"["glm-5.3"]"#,
+            // Their own endpoint in this file: the same ID there is their model, not a leak.
+            r#"{"model":"glm-5.3","env":{"ANTHROPIC_BASE_URL":"http://127.0.0.1:4000"}}"#,
         ] {
             fs::write(&settings, text).unwrap();
             fs::write(&snapshot, r#""sonnet""#).unwrap();
