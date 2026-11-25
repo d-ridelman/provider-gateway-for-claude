@@ -65,6 +65,10 @@ pub struct Facts {
     pub source: Option<String>,
     /// Версия agent-kit, встроенного в эту сборку PGC (ADR-015); `None` — не встроен.
     pub embedded: Option<String>,
+    /// Версия, которую сейчас даёт маркетплейс-папка человека (не PGC): `version` из
+    /// plugin.json, иначе первые 12 знаков коммита — так Claude Code её и называет. `None` —
+    /// узнать нельзя (не папка, нет ни версии, ни git).
+    pub marketplace_version: Option<String>,
     /// Куда PGC распаковывает встроенный agent-kit.
     pub kit_dir: Option<PathBuf>,
     /// Версия и область установленной в проекте копии.
@@ -209,6 +213,24 @@ pub fn decide(f: &Facts) -> Check {
             tr!(
                 "В PGC другая версия agent-kit ({to}), чем в проекте ({from}). Поставить её можно кнопкой ниже.",
                 "PGC carries another agent-kit version ({to}) than the project has ({from}). Install it with the button below."
+            ),
+        ));
+        check.update = Some(KitUpdate {
+            from,
+            to: to.clone(),
+        });
+    }
+    // 31. Маркетплейс-папка человека новее копии в проекте: тоже по кнопке. Саму папку и
+    // регистрацию маркетплейса PGC не трогает, обновляется только копия плагина.
+    if let (true, false, Some(to)) = (check.connected, f.ours(), f.marketplace_version.as_ref())
+        && f.installed_version.as_ref() != Some(to)
+    {
+        let from = f.installed_version.clone().unwrap_or_else(|| "?".into());
+        check.notes.push(note(
+            "update",
+            tr!(
+                "В маркетплейсе agent-kit другая версия ({to}), чем в проекте ({from}). Поставить её можно кнопкой ниже.",
+                "The agent-kit marketplace has another version ({to}) than the project ({from}). Install it with the button below."
             ),
         ));
         check.update = Some(KitUpdate {
@@ -642,6 +664,11 @@ pub fn facts(config: &Config, status: &crate::model::UiStatus, requested: &Path)
     let registered = list(&["plugin", "marketplace", "list", "--json"])
         .as_ref()
         .and_then(marketplace_path);
+    let marketplace_version = registered
+        .clone()
+        .flatten()
+        .as_deref()
+        .and_then(folder_version);
     let dirty = root.as_ref().is_some_and(|root| {
         let mut c = program("git");
         c.args(["status", "--porcelain"]).current_dir(root);
@@ -662,6 +689,7 @@ pub fn facts(config: &Config, status: &crate::model::UiStatus, requested: &Path)
         marketplace_path: registered.flatten(),
         source: config.kit_source.clone().filter(|s| !s.trim().is_empty()),
         embedded: crate::kit::embedded().map(str::to_string),
+        marketplace_version,
         kit_dir: crate::kit::dir(),
         installed_version: field("version"),
         installed_scope: field("scope"),
@@ -757,9 +785,27 @@ pub fn update(config: &Config, f: &Facts) -> Result<(PathBuf, bool), String> {
     if decide(f).update.is_none() {
         return Ok((installed(config, &root)?, false));
     }
-    crate::kit::extracted()?;
+    // Встроенный распаковывается только для маркетплейса PGC (случай 24), не для чужого (31).
+    if f.ours() {
+        crate::kit::extracted()?;
+    }
     run_claude(config, &root, update_steps(f.installed_scope.as_deref()))?;
     Ok((installed(config, &root)?, true))
+}
+
+/// Версия плагина в папке-маркетплейсе, как её называет Claude Code: `version` из
+/// `.claude-plugin/plugin.json`, иначе первые 12 знаков текущего коммита папки.
+fn folder_version(dir: &Path) -> Option<String> {
+    let manifest = std::fs::read_to_string(dir.join(".claude-plugin").join("plugin.json")).ok()?;
+    if let Some(version) = serde_json::from_str::<Value>(&manifest).ok()?["version"].as_str() {
+        return Some(version.to_string());
+    }
+    let mut c = program("git");
+    c.args(["rev-parse", "HEAD"]).current_dir(dir);
+    run(c, Duration::from_secs(20))
+        .ok()
+        .filter(|o| o.code == Some(0))
+        .and_then(|o| o.stdout.trim().get(..12).map(str::to_string))
 }
 
 fn update_steps(scope: Option<&str>) -> Vec<Vec<String>> {
@@ -974,6 +1020,7 @@ mod tests {
             marketplace_path: None,
             source: None,
             embedded: None,
+            marketplace_version: None,
             kit_dir: Some(PathBuf::from(
                 r"C:\Users\u\AppData\Local\ClaudeProviderGateway\agent-kit",
             )),
@@ -1247,6 +1294,62 @@ mod tests {
         };
         f.installed_version = Some("old".into());
         assert!(decide(&f).update.is_none());
+        // Версию папки узнать не удалось — тоже не предлагается (случай 31 — только с ней).
+        f.marketplace_version = None;
+        assert!(decide(&f).update.is_none());
+    }
+
+    #[test]
+    fn case_31_a_newer_kit_in_the_persons_marketplace_is_offered_by_a_button() {
+        let mut f = base();
+        f.embedded = Some("v2".into());
+        f.marketplace = true;
+        f.marketplace_path = Some(PathBuf::from(r"D:\dev\agent-kit"));
+        f.plugin = Plugin::Enabled {
+            install_path: PathBuf::from(r"C:\cache\old"),
+        };
+        f.installed_version = Some("6ac828f6b68f".into());
+        f.marketplace_version = Some("f8cf4cd2cccf".into());
+        let check = decide(&f);
+        assert_eq!(
+            check.update,
+            Some(KitUpdate {
+                from: "6ac828f6b68f".into(),
+                to: "f8cf4cd2cccf".into()
+            }),
+            "берётся версия папки, а не встроенная в PGC"
+        );
+        assert!(ids(&check.notes).contains(&"update"));
+        // Та же версия — предлагать нечего.
+        f.installed_version = Some("f8cf4cd2cccf".into());
+        assert!(decide(&f).update.is_none());
+        // Ещё не подключён — сначала подключение, не обновление.
+        f.plugin = Plugin::Absent;
+        f.installed_version = None;
+        assert!(decide(&f).update.is_none());
+    }
+
+    #[test]
+    fn case_31_the_version_of_a_folder_is_named_as_claude_code_names_it() {
+        let dir = std::env::temp_dir().join(format!("pgc-kitver-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join(".claude-plugin")).unwrap();
+        std::fs::write(
+            dir.join(".claude-plugin").join("plugin.json"),
+            r#"{"name": "agent-kit", "version": "1.2.3"}"#,
+        )
+        .unwrap();
+        assert_eq!(folder_version(&dir).as_deref(), Some("1.2.3"));
+        // Без версии и без git — не узнать.
+        std::fs::write(
+            dir.join(".claude-plugin").join("plugin.json"),
+            r#"{"name": "agent-kit"}"#,
+        )
+        .unwrap();
+        assert_eq!(folder_version(&dir), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+        // Папка этого репозитория: без version в plugin.json её нет, а коммит есть — но здесь
+        // нет и plugin.json, так что `None` (git не спрашивается без манифеста).
+        assert_eq!(folder_version(Path::new(env!("CARGO_MANIFEST_DIR"))), None);
     }
 
     #[test]
