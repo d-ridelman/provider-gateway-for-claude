@@ -469,7 +469,13 @@ pub async fn connect_undo_apply(
             )
         })?;
         let kit = crate::connect::installed(&config, &root)?;
-        let applied = crate::connect::undo_apply(&config, &kit, &root, &chosen)?;
+        let applied = crate::connect::undo_apply(
+            &config,
+            &kit,
+            &root,
+            &chosen,
+            facts.installed_scope.as_deref(),
+        )?;
         // After the plugin is off there is no installed copy to ask: show what was done.
         let state = undo_state(&config, &facts).unwrap_or(UndoState {
             root: root.display().to_string(),

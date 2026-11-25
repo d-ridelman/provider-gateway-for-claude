@@ -988,17 +988,41 @@ pub fn plugin_undo_items(scope: Option<&str>) -> Vec<PlanItem> {
     items
 }
 
-/// Команды `claude` для выключения плагина по отмеченным пунктам.
-pub fn plugin_off_steps(chosen: &[String]) -> Vec<Vec<String>> {
-    [(PLUGIN_LOCAL, "local"), (PLUGIN_TEAM, "project")]
-        .into_iter()
-        .filter(|(id, _)| chosen.iter().any(|c| c == id))
-        .map(|(_, scope)| {
-            ["plugin", "disable", PLUGIN, "--scope", scope, "--json"]
+/// Команды `claude` для выключения плагина по отмеченным пунктам. Подключение ставит плагин в
+/// область `local` (или `project` «для всей команды»): обратное ему — удалить из этой области.
+/// `disable` там только пишет `false`, а Claude Code по-прежнему числит плагин включённым
+/// (проверено вживую). Плагин, поставленный шире (`user`), выключается только в этом проекте.
+pub fn plugin_off_steps(chosen: &[String], scope: Option<&str>) -> Vec<Vec<String>> {
+    let has = |id: &str| chosen.iter().any(|c| c == id);
+    let mut steps = Vec::new();
+    if has(PLUGIN_LOCAL) && scope != Some("project") {
+        let verb = if scope == Some("local") {
+            "uninstall"
+        } else {
+            "disable"
+        };
+        steps.push(
+            ["plugin", verb, PLUGIN, "--scope", "local"]
                 .map(String::from)
-                .to_vec()
-        })
-        .collect()
+                .to_vec(),
+        );
+    }
+    if has(PLUGIN_LOCAL) && scope == Some("project") && !has(PLUGIN_TEAM) {
+        // Team-wide install, off only for this person: false in their own settings.
+        steps.push(
+            ["plugin", "disable", PLUGIN, "--scope", "local"]
+                .map(String::from)
+                .to_vec(),
+        );
+    }
+    if has(PLUGIN_TEAM) && scope == Some("project") {
+        steps.push(
+            ["plugin", "uninstall", PLUGIN, "--scope", "project"]
+                .map(String::from)
+                .to_vec(),
+        );
+    }
+    steps
 }
 
 /// Отключить отмеченное: сначала файлы (agent-kit, пока он ещё включён), потом плагин.
@@ -1007,6 +1031,7 @@ pub fn undo_apply(
     kit: &Path,
     root: &Path,
     chosen: &[String],
+    scope: Option<&str>,
 ) -> Result<Value, String> {
     let mut result = serde_json::json!({"applied": [], "skipped": []});
     if let Some(plan) = undo_plan(kit, root) {
@@ -1035,7 +1060,7 @@ pub fn undo_apply(
             )?)?;
         }
     }
-    let steps = plugin_off_steps(chosen);
+    let steps = plugin_off_steps(chosen, scope);
     if !steps.is_empty() {
         run_claude(config, root, steps)?;
         if let Some(list) = result["applied"].as_array_mut() {
@@ -1506,11 +1531,22 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].id, PLUGIN_LOCAL);
         assert!(items[0].default);
+        // Installed here by Connect: the inverse is uninstall from this scope, not a "false"
+        // that Claude Code still lists as enabled (seen live).
         assert_eq!(
-            plugin_off_steps(&strings(&[PLUGIN_LOCAL])),
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("local")),
             [strings(&[
-                "plugin", "disable", PLUGIN, "--scope", "local", "--json"
+                "plugin",
+                "uninstall",
+                PLUGIN,
+                "--scope",
+                "local"
             ])]
+        );
+        // Installed for the user everywhere: off in this project only.
+        assert_eq!(
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("user")),
+            [strings(&["plugin", "disable", PLUGIN, "--scope", "local"])]
         );
     }
 
@@ -1522,12 +1558,24 @@ mod tests {
             !items[1].default,
             "the shared file changes only when the person ticks it"
         );
+        // Both ticked: the team install goes, which takes it away for the person too.
         assert_eq!(
-            plugin_off_steps(&strings(&[PLUGIN_LOCAL, PLUGIN_TEAM]))[1],
-            strings(&["plugin", "disable", PLUGIN, "--scope", "project", "--json"])
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL, PLUGIN_TEAM]), Some("project")),
+            [strings(&[
+                "plugin",
+                "uninstall",
+                PLUGIN,
+                "--scope",
+                "project"
+            ])]
+        );
+        // Only the person's item: false in their own settings, the shared file stays.
+        assert_eq!(
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("project")),
+            [strings(&["plugin", "disable", PLUGIN, "--scope", "local"])]
         );
         // Not ticked — no command.
-        assert!(plugin_off_steps(&[]).is_empty());
+        assert!(plugin_off_steps(&[], Some("project")).is_empty());
     }
 
     #[test]

@@ -526,7 +526,16 @@ function renderUndo(p) {
   for (const f of undo.applied?.failed ?? []) list.append(checkItem("bad", `${f.id}: ${f.why}`));
   const offered = undo.items.filter((item) => item.action !== "keep");
   $("projectUndoNote").textContent = undo.kitOld ? t("project.undoOld") : offered.some((i) => i.action !== "plugin") ? t("project.undoHint") : t("project.undoEmpty");
+  // Files under one plain title (four step templates) are one row with one tick, as in the plan.
+  const rows = [];
   for (const item of undo.items) {
+    const last = rows.at(-1);
+    const same = last && item.title && item.action === "remove" && last[0].action === "remove" && last[0].title === item.title;
+    if (same) last.push(item);
+    else rows.push([item]);
+  }
+  for (const row of rows) {
+    const item = row[0];
     const li = document.createElement("li");
     const name = item.title || item.path;
     const help = [item.about, item.what].filter(Boolean).join("\n\n");
@@ -538,18 +547,20 @@ function renderUndo(p) {
       label.className = "check";
       const box = document.createElement("input");
       box.type = "checkbox";
-      box.checked = undoTicked(p, item);
+      box.checked = row.every((i) => undoTicked(p, i));
       box.addEventListener("change", () => {
-        const key = item.default === false ? "undoOn" : "undoOff";
-        const set = new Set(state.project[key] ?? []);
-        if (box.checked === (item.default !== false)) set.delete(item.id);
-        else set.add(item.id);
-        state.project[key] = [...set];
+        for (const i of row) {
+          const key = i.default === false ? "undoOn" : "undoOff";
+          const set = new Set(state.project[key] ?? []);
+          if (box.checked === (i.default !== false)) set.delete(i.id);
+          else set.add(i.id);
+          state.project[key] = [...set];
+        }
       });
       const span = document.createElement("span");
       const where = document.createElement("small");
       where.className = "plan-path";
-      where.textContent = item.action === "plugin" ? item.path : `${t(item.action === "unadd" ? "project.undoUnadd" : "project.undoRemove")} ${item.path}`;
+      where.textContent = item.action === "plugin" ? item.path : `${t(item.action === "unadd" ? "project.undoUnadd" : "project.undoRemove")} ${row.map((i) => i.path).join(", ")}`;
       span.append(name);
       if (help) span.append(helpButton(() => openHelp(name, help), name));
       span.append(where);
