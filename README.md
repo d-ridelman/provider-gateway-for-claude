@@ -47,6 +47,9 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 - **Adapts to picky models.** Providers differ in what they accept, and many answer with a bare 400. The gateway prevents the known trouble (repeated tool names, a conversation that no longer fits the window is reported to Claude Code the way Anthropic does, so it compacts by itself), and when a model refuses a request without saying why, it simplifies it step by step: images left out, reasoning effort, sampling parameters and stream options dropped, tool names shortened, consecutive messages merged, tool schemas simplified, tools capped at 128. The reasoning of earlier replies goes back to providers that require it (DeepSeek's thinking mode with tools) and is dropped for those that refuse it. The one step that made the difference, confirmed twice for a model, is remembered in `model-profiles.json` next to the settings (delete it to forget; entries expire after 30 days) and the gateway log says what it did and what the provider answered.
 - **Keeps working after Claude updates**: the app reads Claude's model rules from the installed version, checks its config fields and tells you in Settings if something no longer matches.
 - **Russian interface for Claude Desktop** (optional): a separate patched copy of Claude with claude.ai's own Russian translation. The copy also brings back **No folder** in the Code folder picker, which third-party mode hides. When Claude updates, the app prepares the new copy in the background, so **Open Claude** does not wait. Your installed Claude is not modified. The copy is built without Russian too (no translation): only in it do the processes Claude starts (Code sessions, their npm, uv, git, MCP servers) see the real `AppData\Local` instead of the app's folder. The copy itself does not update Claude; new versions come from the regular Claude.
+- **Connect a project to agent-kit** without typing commands: checks after the agent's edits, a second model that reviews its work, and secret guarding. The project's own checks are listed with ticks and nothing leaves the computer. See [Connect a project](#connect-a-project).
+- **A critic model for project scripts**: pick another gateway model that reviews an agent's work, so a reviewer works without a Claude subscription too.
+- **"?" next to the harder settings** opens a short explanation in plain words: what it is, why it is there and what happens if you leave it alone.
 - **Lives in the tray** while you work; the gateway keeps running when the window is closed.
 - **Updates itself** from GitHub Releases; every update is verified against a signing key built into the app.
 - **Built-in browser switch**: third-party mode turns Claude Desktop's browser pane off; a tick in Settings turns it on at every launch from the gateway.
@@ -58,6 +61,7 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 - [Claude Desktop](https://claude.ai/download) for the desktop chat. Tested with Claude Desktop 6.28899.6.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) for the terminal agent (optional). Tested with Claude Code 2.1.331.
 - An account and API key with at least one provider, or a local model server.
+- For **Connect a project** only: [Node.js](https://nodejs.org) 22 or newer, git and Claude Code.
 
 ## Install
 
@@ -91,6 +95,32 @@ Set **Max reasoning level** on a provider and Claude offers a level picker for i
 ### Main model for Claude Code
 
 Settings → **Model for Claude Code** picks the gateway model for Claude Code. In the **Claude Code** console every role Claude Code asks for goes to it: the session, subagents that inherit the model (Explore, Plan), `model: opus`, `model: haiku` and `model: fable`, and every row of `/model` shows it by name instead of Anthropic's own Opus or Fable. In the Code tab of Claude Desktop (from the next **Open Claude**) it is the main (`sonnet`) model; the other roles there are Desktop's own choice. A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session.
+
+### Critic for project scripts
+
+Settings → **Critic for project scripts** picks a second gateway model that reviews an agent's work (agent-kit's critic answers ACCEPT or REJECT with a reason). Another model than the main one is better: the same model has the same blind spots. When a critic is chosen and the gateway runs, Claude Desktop and the console opened from PGC get `AGENT_KIT_PGC_URL`, `AGENT_KIT_PGC_TOKEN` (the gateway's local token), `AGENT_KIT_PGC_MODEL` and `AGENT_KIT_CRITIC_VIA=pgc`, so project scripts started there can call it. The token works only on `127.0.0.1`; still, every script started from those sessions can read it. Changing the critic does not restart the gateway.
+
+### Connect a project
+
+<p align="center">
+  <img src="docs/images/project-en.png" width="860" alt="Connect a project: the inspection, the project's checks with ticks and the plan in plain words">
+</p>
+
+**Connect a project** (bottom left) sets up [agent-kit](#agent-kit), a Claude Code plugin, in a project folder without commands:
+
+1. **Check** changes nothing. It says what is missing: Node.js 22+, git, Claude Code, a git repository, no critic chosen, uncommitted edits.
+2. **Connect** turns the plugin on only for you (`.claude/settings.local.json`, outside git), unless you tick **For the whole team**. A plugin you turned off is turned back on only in this project.
+3. The page then shows what the project has, the **project checks** and a **plan with ticks**:
+   - checks are the commands the project already writes down (package.json scripts, Cargo, Makefile, pyproject, Go, its CI), each with the file and line it comes from. Commands whose name says they change or ship something (`fix`, `deploy`, `publish`…) are unticked, with the reason. The ticked ones become the steps of a new `.claude/verify.json`; a project's own `verify.json` is not changed, and the steps are shown to add by hand. Nothing is run;
+   - the plan groups what agent-kit offers to add (instructions for the agent, checks and the critic, protection, project documents) under plain names; "?" says what each one is for;
+   - a draft of critic rules made from the project's own README, AGENTS.md and ADRs is offered unticked, with each rule and the file and line it came from.
+4. **Apply the ticked** applies only what is ticked. Existing files are not replaced; `.gitignore` and the Claude settings get lines added. New Claude sessions see the plugin.
+
+No model is asked and no project file is sent anywhere: on 15 open projects a pick by code found as many of their CI checks as a model did.
+
+#### agent-kit
+
+The installer and the portable exe carry a pinned agent-kit (MIT). When Claude Code has no agent-kit marketplace, PGC unpacks it to its own folder and installs it from there. A newer PGC, or a newer agent-kit in a marketplace folder you added yourself, offers **Update agent-kit** on the page; nothing updates by itself.
 
 ### Web search
 
@@ -137,7 +167,8 @@ The app talks to:
 |---|---|
 | The providers you add | When Claude or Claude Code sends a request, and on Load models / Test connection |
 | `models.opencode.ai` | On **Load from provider**, for model names and limits; nothing about you is sent |
-| `claude.ai/i18n/ru.json` | Only with the Russian Claude interface turned on, when Claude updates |
+| `claude.ai/i18n/ru.json`, `claude.ai/i18n/dynamic/ru.json` | Only with the Russian Claude interface turned on, when Claude updates |
+| An agent-kit source you type yourself on **Connect a project** | Only if Claude Code has no agent-kit marketplace and you set one; the built-in agent-kit needs no network |
 | `github.com` (this repository's releases) | Update check at start and once a day; turn it off in Settings |
 | `html.duckduckgo.com`, `lite.duckduckgo.com`, `search.brave.com` | When Claude's built-in web search runs: the gateway answers it itself and sends the words the model chose to search for (no account, no keys). It is always on (there is no switch for it yet) |
 | `github.com/MetaCubeX/mihomo` (releases) | Only on **Download the core** |
@@ -162,6 +193,9 @@ There is no telemetry. Prompts and answers go only between Claude and your provi
 | VPN subscription addresses | Windows Credential Manager, the same service, names `subscription:<id>` |
 | Portable Claude Desktop | `%LOCALAPPDATA%\ClaudeProviderGateway\claude-desktop\app-<version>` |
 | Portable Claude Code and its settings | `%LOCALAPPDATA%\ClaudeProviderGateway\claude-code` (`config` is its `CLAUDE_CONFIG_DIR`) |
+| The built-in agent-kit, unpacked | `%LOCALAPPDATA%\ClaudeProviderGateway\agent-kit` |
+| Effort-menu translation for the installed Claude | `%APPDATA%\app.provider-gateway-for-claude\claude-ru-dynamic.json` |
+| Your own Claude Code model, kept while a PGC console runs | `%LOCALAPPDATA%\ClaudeProviderGateway\code-model-before.json` |
 
 claude.ai sometimes answers programs with a bot check. The app then loads the translation in its built-in browser (WebView2), which passes the check like any visitor; if it does not pass on its own within a few seconds (claude.ai wants a box ticked), that window appears so you can finish it. If it still fails, open `https://claude.ai/i18n/ru.json` in your browser and save it as that `claude-ru.json`: the compatibility check in Settings shows the exact path.
 
@@ -183,7 +217,7 @@ The workspace has three crates:
 - `crates/ctp-gateway` — the Anthropic Messages gateway, also usable on its own (`ctp-gateway --providers-file providers.json`, with the client token in `GATEWAY_TOKEN`);
 - `crates/ctp-app` — the Windows app (Tauri 2).
 
-Without the project's updater key (`TAURI_SIGNING_PRIVATE_KEY`), `-Installer` builds a plain installer with no update signatures. Releases are prepared with `tools/release.ps1` (signed installer, `latest.json`, checksums). `tools/cloudflare-mirror` is an optional update mirror for networks where GitHub is slow or unreachable.
+A build carries agent-kit only after `.\tools\kit-snapshot.ps1` has taken the commit pinned in `crates\ctp-app\kit.pin` from an agent-kit clone in `..\agent-kit`; without it the app works and **Connect a project** installs agent-kit from a marketplace or a source you set. Without the project's updater key (`TAURI_SIGNING_PRIVATE_KEY`), `-Installer` builds a plain installer with no update signatures. Releases are prepared with `tools/release.ps1` (signed installer, `latest.json`, checksums). `tools/cloudflare-mirror` is an optional update mirror for networks where GitHub is slow or unreachable.
 
 ## Contributing
 

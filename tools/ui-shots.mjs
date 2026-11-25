@@ -71,7 +71,7 @@ const STUB = String.raw`
   const cfg = () => ({
     port: 17899, token: "ctp-0000000000000000000000000000000000000", claudePath: null, detectedClaude: home, providers,
     russianUi: false, builtinBrowser: false, russianFile: true, configDir: "C:\\Users\\user\\AppData\\Roaming\\app.provider-gateway-for-claude",
-    codeDir: null, language: lang, languagePref: "auto", themePref, autoUpdate: true, version: "0.2.2",
+    codeDir: null, language: lang, languagePref: "auto", themePref, autoUpdate: true, version: "0.2.3",
     modelRoles: { sonnet: providers.length ? { provider: providers[0].id, model: providers[0].models[0] } : null },
     codePortable: scenario === "portable",
     detectedCode: scenario === "empty" ? null : "C:\\Users\\user\\.local\\bin\\claude.exe",
@@ -134,26 +134,29 @@ const STUB = String.raw`
   });
   // "kitold" — an agent-kit that gives no title/group: the flat list of before.
   const titled = scenario !== "kitold";
+  // agent-kit answers in the window's language (--lang), so the stub does too.
+  const L = (ru, en) => (lang === "ru" ? ru : en);
+  const steps = L("Шаблоны задания, приёмки и отчёта для задач больше одной правки.", "Templates of a task, its acceptance and its report, for work bigger than one edit.");
   const kitPlan = [
-    { id: "issues-log", action: "create", path: "docs/knowledge/issues.md", what: "Создать docs/knowledge/issues.md", ...(titled && { title: "Журнал находок", group: "docs", about: "Сюда агент записывает то, что заметил вне задачи, вместо того чтобы молча чинить." }) },
-    { id: "deny-secrets", action: "add", path: ".claude/settings.json", what: "deny reading secret files: Read(**/.env*), Read(**/*.pem), Read(**/*.key)", ...(titled && { title: "Не читать пароли и ключи", group: "safety", about: "Агент не сможет открыть файлы, где обычно лежат пароли и ключи." }) },
-    { id: "gate", action: "create", path: ".claude/gates.json", what: "change gate in observe mode", about: "Не даёт агенту закончить работу, пока он не прогнал проверки по своим правкам. Сначала только наблюдает и ничего не блокирует.", ...(titled && { title: "Не закончить без проверок", group: "checks" }) },
-    { id: "critic-md", action: "create", path: ".claude/critic.md", default: false, rules: ["Все суммы — только целые копейки.", "День отчёта считается по местному времени, а не по UTC."], from: [{ file: "README.md", line: 12 }, { file: "docs/adr/007-report-day.md", line: 9 }], what: "Создать .claude/critic.md из правил проекта (черновик кодом, правил — 2); по умолчанию без галочки", ...(titled && { title: "Правила для критика (черновик, проверьте)", group: "checks" }) },
-    { id: "agents-md", action: "create", path: "AGENTS.md", what: "Создать AGENTS.md", ...(titled && { title: "Инструкция для агентов", group: "agent", about: "Короткая инструкция для любого агента: как здесь собирать, проверять и что нельзя трогать." }) },
+    { id: "issues-log", action: "create", path: "docs/knowledge/issues.md", what: L("Создать docs/knowledge/issues.md", "create docs/knowledge/issues.md"), ...(titled && { title: L("Журнал находок", "Findings log"), group: "docs", about: L("Сюда агент записывает то, что заметил вне задачи, вместо того чтобы молча чинить.", "The agent writes here what it noticed outside the task, instead of quietly fixing it.") }) },
+    { id: "deny-secrets", action: "add", path: ".claude/settings.json", what: "deny reading secret files: Read(**/.env*), Read(**/*.pem), Read(**/*.key)", ...(titled && { title: L("Не читать пароли и ключи", "Do not read passwords and keys"), group: "safety", about: L("Агент не сможет открыть файлы, где обычно лежат пароли и ключи.", "The agent cannot open the files where passwords and keys usually live.") }) },
+    { id: "gate", action: "create", path: ".claude/gates.json", what: "change gate in observe mode", about: L("Не даёт агенту закончить работу, пока он не прогнал проверки по своим правкам. Сначала только наблюдает и ничего не блокирует.", "Keeps the agent from finishing before it ran the checks on its edits. At first it only watches and blocks nothing."), ...(titled && { title: L("Не закончить без проверок", "No finishing without checks"), group: "checks" }) },
+    { id: "critic-md", action: "create", path: ".claude/critic.md", default: false, rules: L(["Все суммы — только целые копейки.", "День отчёта считается по местному времени, а не по UTC."], ["Money amounts are whole cents only.", "A report day is counted in local time, not UTC."]), from: [{ file: "README.md", line: 12 }, { file: "docs/adr/007-report-day.md", line: 9 }], what: L("Создать .claude/critic.md из правил проекта (черновик кодом, правил — 2); по умолчанию без галочки", "create .claude/critic.md from the project's own rules (a draft by code: 2 rules); not ticked by default"), ...(titled && { title: L("Правила для критика", "Rules for the critic"), group: "checks" }) },
+    { id: "agents-md", action: "create", path: "AGENTS.md", what: L("Создать AGENTS.md", "create AGENTS.md"), ...(titled && { title: L("Инструкция для агентов", "Instructions for agents"), group: "agent", about: L("Короткая инструкция для любого агента: как здесь собирать, проверять и что нельзя трогать.", "A short guide for any agent: how to build and check here, and what not to touch.") }) },
     // Two files under one title: one row, one tick.
-    { id: "docs/steps/_TEMPLATE.md", action: "create", path: "docs/steps/_TEMPLATE.md", what: "Создать docs/steps/_TEMPLATE.md", ...(titled && { title: "Заготовки для больших задач", group: "agent", about: "Шаблоны задания, приёмки и отчёта для задач больше одной правки." }) },
-    { id: "docs/steps/_TEMPLATE_CHECK.md", action: "create", path: "docs/steps/_TEMPLATE_CHECK.md", what: "Создать docs/steps/_TEMPLATE_CHECK.md", ...(titled && { title: "Заготовки для больших задач", group: "agent", about: "Шаблоны задания, приёмки и отчёта для задач больше одной правки." }) },
-    { id: "pre-push", action: "keep", path: ".githooks/pre-push", what: "the project's own hook: add the kit's checks to it", ...(titled && { title: "Добавьте проверки в свою проверку перед отправкой кода", group: "advice" }) },
+    { id: "docs/steps/_TEMPLATE.md", action: "create", path: "docs/steps/_TEMPLATE.md", what: L("Создать docs/steps/_TEMPLATE.md", "create docs/steps/_TEMPLATE.md"), ...(titled && { title: L("Заготовки для больших задач", "Templates for big tasks"), group: "agent", about: steps }) },
+    { id: "docs/steps/_TEMPLATE_CHECK.md", action: "create", path: "docs/steps/_TEMPLATE_CHECK.md", what: L("Создать docs/steps/_TEMPLATE_CHECK.md", "create docs/steps/_TEMPLATE_CHECK.md"), ...(titled && { title: L("Заготовки для больших задач", "Templates for big tasks"), group: "agent", about: steps }) },
+    { id: "pre-push", action: "keep", path: ".githooks/pre-push", what: "the project's own hook: add the kit's checks to it", ...(titled && { title: L("Дополнить свою проверку перед отправкой", "Add to your own pre-push check"), group: "advice" }) },
   ];
   const kitData = () => ({
     root: kitRoot,
     inspect: { findings: [
       { id: "agents-file", status: "ok", what: "AGENTS.md: 82 lines" },
-      { id: "slow-step", status: "ok", advice: true, step: "e2e", what: "шаг e2e: прогонов — 20, ни разу не падал, около 90 с каждый: можно запускать реже (решает человек)" },
+      { id: "slow-step", status: "ok", advice: true, step: "e2e", what: L("шаг e2e: прогонов — 20, ни разу не падал, около 90 с каждый: можно запускать реже (решает человек)", "step e2e: 20 runs, never failed, about 90 s each: it may run less often (a person decides)") },
       { id: "decisions", status: "ok", what: "decision log: docs/adr (+13)" },
-      { id: "issues", status: "missing", what: "no findings log (docs/knowledge/issues.md or TODO.md)", fix: "findings outside the task go there, not into a quiet fix" },
-      { id: "gate", status: "missing", what: "no .claude/gates.json", fix: "a gate in observe mode first", about: "Без него агент может сказать «готово», не запустив ни одной проверки." },
-      { id: "skills", status: "problem", what: "some-plugin: skills/x/: the description says when to use it, not when not to", fix: "add when not to use it" },
+      { id: "issues", status: "missing", what: L("Не хватает журнала находок (docs/knowledge/issues.md или TODO.md)", "no findings log (docs/knowledge/issues.md or TODO.md)"), fix: L("находки вне задачи — туда, а не в тихую правку", "findings outside the task go there, not into a quiet fix") },
+      { id: "gate", status: "missing", what: L("Не хватает .claude/gates.json", "no .claude/gates.json"), fix: L("сначала шлюз в режиме наблюдения", "a gate in observe mode first"), about: L("Без него агент может сказать «готово», не запустив ни одной проверки.", "Without it the agent can say “done” without running a single check.") },
+      { id: "skills", status: "problem", what: L("some-plugin: skills/x/: описание говорит, когда применять, но не когда не применять", "some-plugin: skills/x/: the description says when to use it, not when not to"), fix: L("допишите, когда не применять", "add when not to use it") },
     ] },
     // "kitown" — the project has its own verify.json, and the steps are shown to add by hand.
     plan: scenario === "kitold" ? null : scenario === "kitown" ? kitPlan : [{ id: ".claude/verify.json", action: "create", path: ".claude/verify.json", what: "the checks of this project" }, ...kitPlan],
@@ -173,7 +176,7 @@ const STUB = String.raw`
     ],
     struck: [
       { id: "npm:lint:fix", cmd: "npm run lint:fix", kind: "other", source: src("package.json", 9), ruled: "fix", why: "name rule" },
-      { id: "ci:a1b2c3d4e5", cmd: "npm test -- --shard \${{ matrix.n }}", kind: "test", source: src(".github/workflows/ci.yml", 40), why: "a CI step that needs the CI itself (a matrix value)" },
+      { id: "ci:a1b2c3d4e5", cmd: "npm test -- --shard \${{ matrix.n }}", kind: "test", source: src(".github/workflows/ci.yml", 40), why: L("шаг CI, которому нужен сам CI (значение из matrix)", "a CI step that needs the CI itself (a matrix value)") },
     ],
   };
   const vpn = scenario === "vpn" || scenario === "vpnerror" || scenario === "vpnlong";
@@ -373,6 +376,7 @@ for (const lang of ["en", "ru"]) {
   add("docs", "main", [1], ["dark"], lang);
   add("docs", "new", [1], ["dark"], lang);
   add("docs", "settings", [5], ["dark"], lang);
+  add("docs", "projectopen", [5], ["dark"], lang, { settleMs: 600 });
 }
 // Windows display scaling shrinks the window to fewer CSS pixels (1500 px at 150 % is 1000) and puts
 // edges between device pixels: the widths of 1000 / 1100 px, and fractional device scales (x1.25, x1.5).

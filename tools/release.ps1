@@ -25,7 +25,7 @@ $tag = "v$version"
 # A release is built from what is on GitHub: no uncommitted edits, HEAD already pushed.
 $head = (git -C $root rev-parse HEAD).Trim()
 if ($Publish) {
-    if (git -C $root status --porcelain --untracked-files=no) { throw 'uncommitted changes: commit them before -Publish' }
+    if (git -C $root status --porcelain) { throw 'uncommitted changes: commit them before -Publish' }
     # Свежая ссылка origin/main: без неё сравнение шло бы с тем, что было при последнем fetch.
     git -C $root fetch origin main --quiet
     if ($LASTEXITCODE -ne 0) { throw 'git fetch origin failed' }
