@@ -598,7 +598,18 @@ function applyUndo() {
   const chosen = undo.items.filter((i) => i.action !== "keep" && undoTicked(state.project, i)).map((i) => i.id);
   if (!chosen.length) return;
   projectStep("undo", async () => {
-    const next = await invoke("connect_undo_apply", { dir, chosen });
+    let next;
+    try {
+      next = await invoke("connect_undo_apply", { dir, chosen });
+    } catch (exc) {
+      // Files may have gone before a plugin command failed: show the plan as it is now, not
+      // the one from before, then the error.
+      if (projectStillOn(dir)) {
+        state.project.undo = await invoke("connect_undo_open", { dir }).catch(() => state.project.undo);
+        state.project.check = await invoke("connect_check", { dir }).catch(() => state.project.check);
+      }
+      throw exc;
+    }
     if (!projectStillOn(dir)) return;
     state.project.undo = next;
     state.project.undoOff = [];

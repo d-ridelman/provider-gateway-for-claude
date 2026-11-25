@@ -475,6 +475,7 @@ pub async fn connect_undo_apply(
             &root,
             &chosen,
             facts.installed_scope.as_deref(),
+            facts.user_install,
         )?;
         // After the plugin is off there is no installed copy to ask: show what was done.
         let state = undo_state(&config, &facts).unwrap_or(UndoState {

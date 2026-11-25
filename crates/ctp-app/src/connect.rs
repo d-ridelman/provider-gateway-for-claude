@@ -74,6 +74,9 @@ pub struct Facts {
     /// Версия и область установленной в проекте копии.
     pub installed_version: Option<String>,
     pub installed_scope: Option<String>,
+    /// agent-kit стоит и в области `user` (для всех проектов человека): тогда запись `local`
+    /// в этом проекте — его выключатель здесь, и её нельзя удалять (случай 42).
+    pub user_install: bool,
     /// В рабочей копии есть незакоммиченные правки.
     pub dirty: bool,
     /// Claude Code ответил на оба списка (плагины и маркетплейсы); `false` — сбой или таймаут.
@@ -720,6 +723,13 @@ pub fn facts(config: &Config, status: &crate::model::UiStatus, requested: &Path)
         kit_dir: crate::kit::dir(),
         installed_version: field("version"),
         installed_scope: field("scope"),
+        user_install: plugins
+            .as_ref()
+            .and_then(Value::as_array)
+            .is_some_and(|list| {
+                list.iter()
+                    .any(|e| e["id"] == PLUGIN && e["scope"] == "user")
+            }),
         dirty,
         lists_ok,
         // A critic whose provider was deleted is not chosen any more: "restart the gateway" would not help.
@@ -1010,11 +1020,17 @@ pub fn plugin_undo_items(scope: Option<&str>) -> Vec<PlanItem> {
 /// область `local` (или `project` «для всей команды»): обратное ему — удалить из этой области.
 /// `disable` там только пишет `false`, а Claude Code по-прежнему числит плагин включённым
 /// (проверено вживую). Плагин, поставленный шире (`user`), выключается только в этом проекте.
-pub fn plugin_off_steps(chosen: &[String], scope: Option<&str>) -> Vec<Vec<String>> {
+pub fn plugin_off_steps(
+    chosen: &[String],
+    scope: Option<&str>,
+    user_install: bool,
+) -> Vec<Vec<String>> {
     let has = |id: &str| chosen.iter().any(|c| c == id);
     let mut steps = Vec::new();
     if has(PLUGIN_LOCAL) && scope != Some("project") {
-        let verb = if scope == Some("local") {
+        // With a user-wide install the local entry is this project's switch (case 42): removing
+        // it would turn the plugin back on here, so it is set to off instead.
+        let verb = if scope == Some("local") && !user_install {
             "uninstall"
         } else {
             "disable"
@@ -1066,13 +1082,14 @@ pub fn undo_apply(
     root: &Path,
     chosen: &[String],
     scope: Option<&str>,
+    user_install: bool,
 ) -> Result<Value, String> {
     let mut result = serde_json::json!({"applied": [], "skipped": []});
     let plan = undo_plan(kit, root);
     if undo_blind(plan.is_some(), chosen) {
         return Err(tr!(
-            "agent-kit не отдал план отката: ничего не тронуто. Нажмите «Отключить…» ещё раз.",
-            "agent-kit gave no undo plan: nothing was touched. Press Disconnect… again."
+            "agent-kit не отдал план отката: ничего не тронуто. Нажмите «Отключить отмеченное» ещё раз.",
+            "agent-kit gave no undo plan: nothing was touched. Press Disconnect the ticked again."
         ));
     }
     if let Some(plan) = plan {
@@ -1105,7 +1122,7 @@ pub fn undo_apply(
     if !plugin_may_go(&result) {
         return Ok(result);
     }
-    let steps = plugin_off_steps(chosen, scope);
+    let steps = plugin_off_steps(chosen, scope, user_install);
     if !steps.is_empty() {
         run_claude(config, root, steps)?;
         if let Some(list) = result["applied"].as_array_mut() {
@@ -1279,6 +1296,7 @@ mod tests {
             )),
             installed_version: None,
             installed_scope: None,
+            user_install: false,
             dirty: false,
             lists_ok: true,
             critic_chosen: true,
@@ -1579,7 +1597,7 @@ mod tests {
         // Installed here by Connect: the inverse is uninstall from this scope, not a "false"
         // that Claude Code still lists as enabled (seen live).
         assert_eq!(
-            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("local")),
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("local"), false),
             [strings(&[
                 "plugin",
                 "uninstall",
@@ -1590,7 +1608,7 @@ mod tests {
         );
         // Installed for the user everywhere: off in this project only.
         assert_eq!(
-            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("user")),
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("user"), true),
             [strings(&["plugin", "disable", PLUGIN, "--scope", "local"])]
         );
     }
@@ -1605,7 +1623,11 @@ mod tests {
         );
         // Both ticked: the team install goes, which takes it away for the person too.
         assert_eq!(
-            plugin_off_steps(&strings(&[PLUGIN_LOCAL, PLUGIN_TEAM]), Some("project")),
+            plugin_off_steps(
+                &strings(&[PLUGIN_LOCAL, PLUGIN_TEAM]),
+                Some("project"),
+                false
+            ),
             [strings(&[
                 "plugin",
                 "uninstall",
@@ -1616,11 +1638,11 @@ mod tests {
         );
         // Only the person's item: false in their own settings, the shared file stays.
         assert_eq!(
-            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("project")),
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("project"), false),
             [strings(&["plugin", "disable", PLUGIN, "--scope", "local"])]
         );
         // Not ticked — no command.
-        assert!(plugin_off_steps(&[], Some("project")).is_empty());
+        assert!(plugin_off_steps(&[], Some("project"), false).is_empty());
     }
 
     #[test]
@@ -1649,6 +1671,21 @@ mod tests {
         );
         // The plugin ids are PGC's own: agent-kit never gets them.
         assert!(applicable(&plan, &strings(&[PLUGIN_LOCAL])).is_empty());
+    }
+
+    #[test]
+    fn case_42_a_user_wide_install_keeps_its_local_switch() {
+        // Disconnect, Connect, Disconnect with agent-kit installed for the user: the project has
+        // a local entry now, but it is only this project's switch — it is set off, not removed.
+        assert_eq!(
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("local"), true),
+            [strings(&["plugin", "disable", PLUGIN, "--scope", "local"])]
+        );
+        // No user install: the local entry is the install itself.
+        assert_eq!(
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL]), Some("local"), false)[0][1],
+            "uninstall"
+        );
     }
 
     #[test]
