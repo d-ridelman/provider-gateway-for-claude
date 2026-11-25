@@ -109,7 +109,7 @@ const STUB = String.raw`
     // "kitold" — an installed copy that cannot give a plan; "kitlong" — a long path; "error" — the
     // install fails; everything else — ready, then the inspection and a plan.
     connect_check: () => kitCheck(),
-    connect_open: () => scenario === "error" ? fail("claude plugin install: marketplace 'agent-kit' not found (stubbed)") : kitData(),
+    connect_open: () => { if (scenario === "error") return fail("claude plugin install: marketplace 'agent-kit' not found (stubbed)"); kitConnected = true; return kitData(); },
     connect_apply: () => ({ ...kitData(), plan: [kitPlan[2]], applied: { applied: ["docs/knowledge/issues.md"], skipped: [] } }),
     connect_set_source: () => null,
     // "kitundo" — a connected project and its disconnect plan (ADR-017).
@@ -117,6 +117,8 @@ const STUB = String.raw`
     connect_undo_apply: () => ({ ...kitUndo(), applied: { applied: ["AGENTS.md", "plugin-local"], skipped: [] } }),
     connect_update: () => kitData(),
   };
+  // Connect turns the plugin on: a check after it says "connected" (the Back button checks again).
+  let kitConnected = scenario === "kitupdate" || scenario === "kitundo";
   const kitRoot = scenario === "kitlong"
     ? "D:\\Projects\\Очень длинное имя папки клиента с пробелами\\packages\\web-frontend-monorepo-workspace"
     : "D:\\Projects\\my-project";
@@ -132,7 +134,7 @@ const STUB = String.raw`
         : [],
     notes: [kitNote("critic", lang === "ru" ? "Критик в PGC не выбран: критик agent-kit пойдёт по подписке Claude, а без неё не сработает. Выбрать — в Настройках." : "No critic is chosen in PGC: agent-kit's critic goes through a Claude subscription and fails without one. Choose one in the settings."),
       kitNote("dirty", lang === "ru" ? "В проекте есть незакоммиченные правки. Подключение их не тронет, новые файлы лягут рядом." : "The project has uncommitted edits. Connecting leaves them alone; new files go next to them.")],
-    connected: scenario === "kitupdate" || scenario === "kitundo", disabled: false,
+    connected: kitConnected, disabled: false,
     update: scenario === "kitupdate" ? { from: "92b16a29f355", to: "a1b2c3d4e5f6" } : null,
   });
   // "kitold" — an agent-kit that gives no title/group: the flat list of before.
@@ -311,6 +313,8 @@ const SCREENS = {
   projectreset: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectConnectBtn').click(); await new Promise((r) => setTimeout(r, 1500)); const input = document.getElementById('projectDirInput'); input.value = 'D:\\\\Projects\\\\other'; input.dispatchEvent(new Event('input')); })()",
   // A connected project: Check, then Disconnect… — the plan with ticks and Back.
   projectundo: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectUndoBtn').click(); })()",
+  // Check, Connect, then Back: the folder is checked again and offers Disconnect.
+  projectback: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectConnectBtn').click(); await new Promise((r) => setTimeout(r, 400)); document.getElementById('projectBackBtn').click(); })()",
   // The help window over the project page.
   help: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.querySelector('[data-help=project] .help-btn').click(); })()",
   projectopen: "(async () => { document.getElementById('projectBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectDirInput').value = 'D:\\\\Projects\\\\my-project'; document.getElementById('projectCheckBtn').click(); await new Promise((r) => setTimeout(r, 300)); document.getElementById('projectConnectBtn').click(); })()",
@@ -383,6 +387,7 @@ add("slow", "projectopen", [1], ["light", "dark"], "ru", { settleMs: 400 });
 add("normal", "help", [1], ["light", "dark"], "ru", { settleMs: 1000 });
 add("kitundo", "projectundo", [1], ["light", "dark"], "ru", { settleMs: 700 });
 add("kitundo", "projectundo", [1], ["dark"], "en", { settleMs: 700 });
+add("normal", "projectback", [1], ["dark"], "ru", { settleMs: 900 });
 add("normal", "help", [1], ["dark"], "en", { settleMs: 1000 });
 add("kitlong", "projectopen", [1, 2], ["dark"], "ru", { settleMs: 400 });
 add("error", "projectopen", [1], ["dark"], "ru", { settleMs: 400 });

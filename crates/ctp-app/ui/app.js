@@ -370,6 +370,8 @@ function renderProject() {
   $("projectConnectBox").classList.toggle("hidden", !canConnect);
   $("projectConnectBtn").textContent = t(check?.connected ? "project.open" : "project.connect");
   $("projectUndoBtn").classList.toggle("hidden", !check?.connected);
+  // "For the whole team" is a choice made when connecting; a connected project has made it.
+  for (const id of ["projectTeamRow", "projectTeamHint"]) $(id).classList.toggle("hidden", !!check?.connected);
   // While a step runs the folder cannot change under it: the answer is for the folder asked.
   for (const id of ["projectConnectBtn", "projectCheckBtn", "projectApplyBtn", "projectDirInput", "browseProjectBtn",
     "projectSourceBtn", "projectTeamInput", "projectUndoBtn", "projectUndoApplyBtn", "projectUndoBackBtn", "projectBackBtn"]) {
@@ -599,12 +601,17 @@ function applyUndo() {
   });
 }
 
-// "Back" from the inspection or the disconnect plan: the folder and its check stay.
+// "Back" from the inspection or the disconnect plan: the folder stays and is checked again —
+// the check from before Connect would still say "ready to connect" and hide "Disconnect…".
 function projectBack() {
-  if (!state.project || state.project.busy) return;
+  const dir = state.project?.dir;
+  if (!dir || state.project.busy) return;
   state.project.data = null;
   state.project.undo = null;
-  renderProject();
+  projectStep("check", async () => {
+    const check = await invoke("connect_check", { dir });
+    if (projectStillOn(dir)) state.project.check = check;
+  });
 }
 
 // A plan item is ticked by default unless agent-kit says otherwise (default: false — a draft).
