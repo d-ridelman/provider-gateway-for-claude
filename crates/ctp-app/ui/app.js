@@ -561,6 +561,8 @@ function updateProject() {
     state.project.data = data;
     state.project.fresh = data.fresh;
     state.project.updated = true;
+    // A new agent-kit may give a different draft: a tick given to the old one does not carry over.
+    state.project.planOn = [];
   });
 }
 
