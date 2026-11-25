@@ -297,6 +297,7 @@ button, .card, .dialog form { position: relative; }
   white-space: nowrap;
 }
 .badge.soft { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.badge.beta { margin-left: 8px; vertical-align: 2px; }
 .badge.good { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent-text); }
 .badge.warn { border-color: color-mix(in srgb, var(--human) 55%, transparent); color: var(--human-text); }
 

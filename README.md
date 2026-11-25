@@ -106,7 +106,7 @@ Settings → **Critic for project scripts** picks a second gateway model that re
   <img src="docs/images/project-en.png" width="860" alt="Projects: the inspection, the project's checks with ticks and the plan in plain words">
 </p>
 
-**Projects** (bottom left) sets up [agent-kit](#agent-kit), a Claude Code plugin, in a project folder without commands, and takes it out again:
+**Projects** (bottom left, marked beta: the page is new and its texts and steps may still change) sets up [agent-kit](#agent-kit), a Claude Code plugin, in a project folder without commands, and takes it out again:
 
 1. **Check** changes nothing. It says what is missing: Node.js 22+, git, Claude Code, a git repository, where to get agent-kit, no critic chosen, uncommitted edits.
 2. **Connect** turns the plugin on only for you (`.claude/settings.local.json`, outside git), unless you tick **For the whole team**. A plugin you turned off is turned back on only in this project.
