@@ -142,6 +142,7 @@ const STUB = String.raw`
     root: kitRoot,
     inspect: { findings: [
       { id: "agents-file", status: "ok", what: "AGENTS.md: 82 lines" },
+      { id: "slow-step", status: "ok", advice: true, step: "e2e", what: "шаг e2e: прогонов — 20, ни разу не падал, около 90 с каждый: можно запускать реже (решает человек)" },
       { id: "decisions", status: "ok", what: "decision log: docs/adr (+13)" },
       { id: "issues", status: "missing", what: "no findings log (docs/knowledge/issues.md or TODO.md)", fix: "findings outside the task go there, not into a quiet fix" },
       { id: "gate", status: "missing", what: "no .claude/gates.json", fix: "a gate in observe mode first" },
@@ -157,7 +158,7 @@ const STUB = String.raw`
   const src = (file, line) => ({ file, line });
   const kitChecks = {
     checks: [
-      { id: "npm:test", cmd: "npm test", kind: "test", source: src("package.json", 7), present: scenario === "kitown" },
+      { id: "npm:test", cmd: "npm test", kind: "test", source: src("package.json", 7), present: scenario === "kitown", caught: 3 },
       { id: "cargo:clippy", cmd: "cargo clippy --all-targets", kind: "lint", source: src("Cargo.toml", 1) },
       scenario === "kitlong"
         ? { id: "npm:packages/web-frontend-monorepo-workspace#test:integration", cmd: "npm --prefix packages/web-frontend-monorepo-workspace run test:integration -- --runInBand --coverage", kind: "test", source: src("packages/web-frontend-monorepo-workspace/package.json", 24) }

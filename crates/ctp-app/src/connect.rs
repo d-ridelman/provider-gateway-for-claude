@@ -391,6 +391,9 @@ pub struct CheckItem {
     /// Своя `.claude/verify.json` уже запускает эту команду: окно не ставит галочку.
     #[serde(default)]
     pub present: bool,
+    /// Сколько раз эта проверка в проекте падала, а потом проходила после правки (журнал опыта).
+    #[serde(default)]
+    pub caught: u32,
 }
 
 /// Отбор проверок кодом: `checks` — с галочкой, `struck` — без галочки, с причиной.
@@ -1572,6 +1575,10 @@ mod tests {
             r#"{"checks": [{"id": "npm:test", "cmd": "npm test", "present": true}]}"#,
         );
         assert!(own.unwrap().checks[0].present, "уже в своём verify.json");
+        let seen =
+            parse_proposal(r#"{"checks": [{"id": "npm:test", "cmd": "npm test", "caught": 3}]}"#);
+        assert_eq!(seen.unwrap().checks[0].caught, 3, "журнал опыта");
+        assert_eq!(p.checks[0].caught, 0, "без журнала поля нет");
         // Без `--model` в команде: файлы проекта никуда не уходят.
         let source = include_str!("connect.rs");
         let call = source.split("pub fn propose(").nth(1).unwrap();

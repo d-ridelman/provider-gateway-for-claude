@@ -380,8 +380,8 @@ function renderProject() {
   $("projectUpdateBtn").disabled = !!p.busy;
   const shown = $("projectFindings");
   shown.replaceChildren();
-  // Only what is not fine: the "ok" ones are in the count above.
-  for (const f of findings.filter((f) => f.status !== "ok")) {
+  // Only what is not fine, and advice (a slow step that never failed): the rest is in the count above.
+  for (const f of findings.filter((f) => f.status !== "ok" || f.advice)) {
     shown.append(checkItem(f.status === "problem" ? "human" : "off", f.what, f.fix));
   }
   const plan = $("projectPlan");
@@ -477,7 +477,7 @@ function renderChecks(p, data) {
     const meta = document.createElement("span");
     meta.className = "muted";
     const where = check.source ? `${check.source.file}:${check.source.line}` : "";
-    const kind = check.kind === "other" ? "" : check.kind;
+    const kind = [check.kind === "other" ? "" : check.kind, check.caught ? t("project.checkCaught", { count: check.caught }) : ""].filter(Boolean).join(" · ");
     const why = check.present ? t("project.checkPresent")
       : check.on ? "" : t("project.checkStruck", { why: check.ruled ? t("project.checkRuled", { word: check.ruled }) : check.why });
     meta.textContent = ` — ${[[where, kind].filter(Boolean).join(" · "), why].filter(Boolean).join(" — ")}`;
