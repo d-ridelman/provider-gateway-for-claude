@@ -411,8 +411,20 @@ function renderProject() {
   const order = ["agent", "checks", "safety", "docs", "", "advice"];
   const groupOf = (item) => (item.action === "keep" ? "advice" : order.includes(item.group) ? item.group : "");
   const items = [...(data.plan ?? [])].sort((a, b) => order.indexOf(groupOf(a)) - order.indexOf(groupOf(b)));
-  let shownGroup = null;
+  // Items with one plain title in one block (four step templates, three rule files) are one
+  // row with one tick for all of them: a person decides on "templates for big tasks", not on
+  // each file. Items without a title (an old agent-kit) stay one row each.
+  const rows = [];
   for (const item of items) {
+    const last = rows.at(-1);
+    const same = last && item.title && last[0].title === item.title && groupOf(last[0]) === groupOf(item)
+      && last[0].action === item.action && (last[0].default === false) === (item.default === false);
+    if (same) last.push(item);
+    else rows.push([item]);
+  }
+  let shownGroup = null;
+  for (const row of rows) {
+    const item = row[0];
     const group = groupOf(item);
     if (group !== shownGroup && (group || shownGroup)) {
       const head = document.createElement("li");
@@ -423,8 +435,9 @@ function renderProject() {
     shownGroup = group;
     const li = document.createElement("li");
     // Full text (with long permission lists) goes under "?": the row stays one plain line.
-    const help = [item.about, item.title ? item.what : ""].filter(Boolean).join("\n\n");
+    const help = [item.about, item.title ? row.map((i) => i.what).join("\n") : ""].filter(Boolean).join("\n\n");
     const helpTitle = item.title || item.path;
+    const verb = t(item.action === "add" ? "project.add" : "project.create");
     if (item.action === "keep") {
       li.className = "off";
       li.textContent = item.title ? `– ${item.title}` : `– ${item.path}: ${item.what}`;
@@ -435,30 +448,34 @@ function renderProject() {
       const box = document.createElement("input");
       box.type = "checkbox";
       box.value = item.id;
-      box.checked = planTicked(p, item);
+      box.checked = row.every((i) => planTicked(p, i));
       box.addEventListener("change", () => {
-        // What the person changed against the item's default, so a re-render keeps it.
-        const key = item.default === false ? "planOn" : "unticked";
-        const set = new Set(state.project[key] ?? []);
-        if (box.checked === (item.default !== false)) set.delete(item.id);
-        else set.add(item.id);
-        state.project[key] = [...set];
+        // What the person changed against each item's default, so a re-render keeps it.
+        for (const i of row) {
+          const key = i.default === false ? "planOn" : "unticked";
+          const set = new Set(state.project[key] ?? []);
+          if (box.checked === (i.default !== false)) set.delete(i.id);
+          else set.add(i.id);
+          state.project[key] = [...set];
+        }
       });
       const span = document.createElement("span");
       if (item.title) {
-        // A plain name, and the file it touches in small type under it.
+        // A plain name with its "?" right after it, and the files in small type under it.
+        // In a label a click on "?" would tick the box: helpButton cancels that.
         const where = document.createElement("small");
         where.className = "plan-path";
-        where.textContent = `${t(item.action === "add" ? "project.add" : "project.create")} ${item.path}`;
-        span.append(item.title, where);
+        where.textContent = `${verb} ${row.map((i) => i.path).join(", ")}`;
+        span.append(item.title);
+        if (help) span.append(helpButton(() => openHelp(helpTitle, help)));
+        span.append(where);
       } else {
         // agent-kit's own text may already name the file ("Create docs/x.md"): no second copy of it.
-        span.textContent = item.what.includes(item.path) ? item.what : `${t(item.action === "add" ? "project.add" : "project.create")} ${item.path} — ${item.what}`;
+        span.textContent = item.what.includes(item.path) ? item.what : `${verb} ${item.path} — ${item.what}`;
+        if (help) span.append(helpButton(() => openHelp(helpTitle, help)));
       }
       label.append(box, span);
-      // The "?" sits outside the label: a click on it must not tick the box.
       li.append(label);
-      if (help) li.append(helpButton(() => openHelp(helpTitle, help)));
       // A draft (critic.md rules) is shown in full: the person reads what would be written.
       if (item.rules?.length) {
         const pre = document.createElement("pre");

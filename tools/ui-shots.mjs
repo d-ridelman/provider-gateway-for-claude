@@ -140,6 +140,9 @@ const STUB = String.raw`
     { id: "gate", action: "create", path: ".claude/gates.json", what: "change gate in observe mode", about: "Не даёт агенту закончить работу, пока он не прогнал проверки по своим правкам. Сначала только наблюдает и ничего не блокирует.", ...(titled && { title: "Не закончить без проверок", group: "checks" }) },
     { id: "critic-md", action: "create", path: ".claude/critic.md", default: false, rules: ["Все суммы — только целые копейки.", "День отчёта считается по местному времени, а не по UTC."], what: "Создать .claude/critic.md из правил проекта (черновик кодом, правил — 2); по умолчанию без галочки", ...(titled && { title: "Правила для критика (черновик, проверьте)", group: "checks" }) },
     { id: "agents-md", action: "create", path: "AGENTS.md", what: "Создать AGENTS.md", ...(titled && { title: "Инструкция для агентов", group: "agent", about: "Короткая инструкция для любого агента: как здесь собирать, проверять и что нельзя трогать." }) },
+    // Two files under one title: one row, one tick.
+    { id: "docs/steps/_TEMPLATE.md", action: "create", path: "docs/steps/_TEMPLATE.md", what: "Создать docs/steps/_TEMPLATE.md", ...(titled && { title: "Заготовки для больших задач", group: "agent", about: "Шаблоны задания, приёмки и отчёта для задач больше одной правки." }) },
+    { id: "docs/steps/_TEMPLATE_CHECK.md", action: "create", path: "docs/steps/_TEMPLATE_CHECK.md", what: "Создать docs/steps/_TEMPLATE_CHECK.md", ...(titled && { title: "Заготовки для больших задач", group: "agent", about: "Шаблоны задания, приёмки и отчёта для задач больше одной правки." }) },
     { id: "pre-push", action: "keep", path: ".githooks/pre-push", what: "the project's own hook: add the kit's checks to it", ...(titled && { title: "Добавьте проверки в свою проверку перед отправкой кода", group: "advice" }) },
   ];
   const kitData = () => ({
