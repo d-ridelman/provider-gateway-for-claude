@@ -401,6 +401,91 @@ pub async fn connect_open(
     .map_err(|exc| exc.to_string())?
 }
 
+/// План отключения проекта (ADR-017): что убрать из файлов и как выключить плагин.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoState {
+    pub root: String,
+    pub items: Vec<crate::connect::PlanItem>,
+    /// Копия agent-kit не умеет откат: файлы — руками (случай 37).
+    pub kit_old: bool,
+    /// Ответ последнего «Отключить отмеченное».
+    pub applied: Option<serde_json::Value>,
+}
+
+fn undo_state(config: &Config, facts: &crate::connect::Facts) -> Result<UndoState, String> {
+    let root = facts.root.clone().ok_or_else(|| {
+        tr!(
+            "папка — не git-репозиторий",
+            "the folder is not a git repository"
+        )
+    })?;
+    let kit = crate::connect::installed(config, &root)?;
+    let kit_items = crate::connect::undo_plan(&kit, &root);
+    let kit_old = kit_items.is_none();
+    let mut items = kit_items.unwrap_or_default();
+    items.extend(crate::connect::plugin_undo_items(
+        facts.installed_scope.as_deref(),
+    ));
+    Ok(UndoState {
+        root: root.display().to_string(),
+        items,
+        kit_old,
+        applied: None,
+    })
+}
+
+/// «Отключить…»: показать план отключения, ничего не меняя.
+#[tauri::command]
+pub async fn connect_undo_open(
+    shared: State<'_, AppShared>,
+    dir: String,
+) -> Result<UndoState, String> {
+    let config = shared.config.lock().unwrap().clone();
+    let status = runtime::status(&shared);
+    tauri::async_runtime::spawn_blocking(move || {
+        let facts = crate::connect::facts(&config, &status, std::path::Path::new(dir.trim()));
+        undo_state(&config, &facts)
+    })
+    .await
+    .map_err(|exc| exc.to_string())?
+}
+
+/// «Отключить отмеченное»: только отмеченные пункты; план строится заново на этом шаге.
+#[tauri::command]
+pub async fn connect_undo_apply(
+    shared: State<'_, AppShared>,
+    dir: String,
+    chosen: Vec<String>,
+) -> Result<UndoState, String> {
+    let config = shared.config.lock().unwrap().clone();
+    let status = runtime::status(&shared);
+    tauri::async_runtime::spawn_blocking(move || {
+        let facts = crate::connect::facts(&config, &status, std::path::Path::new(dir.trim()));
+        let root = facts.root.clone().ok_or_else(|| {
+            tr!(
+                "папка — не git-репозиторий",
+                "the folder is not a git repository"
+            )
+        })?;
+        let kit = crate::connect::installed(&config, &root)?;
+        let applied = crate::connect::undo_apply(&config, &kit, &root, &chosen)?;
+        // After the plugin is off there is no installed copy to ask: show what was done.
+        let state = undo_state(&config, &facts).unwrap_or(UndoState {
+            root: root.display().to_string(),
+            items: Vec::new(),
+            kit_old: false,
+            applied: None,
+        });
+        Ok(UndoState {
+            applied: Some(applied),
+            ..state
+        })
+    })
+    .await
+    .map_err(|exc| exc.to_string())?
+}
+
 /// Обновить agent-kit проекта до встроенного в PGC — по кнопке (случай 24).
 #[tauri::command]
 pub async fn connect_update(

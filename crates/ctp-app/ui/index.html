@@ -227,7 +227,20 @@
             <div id="projectConnectBox" class="field hidden">
               <label class="check"><input type="checkbox" id="projectTeamInput"><span data-i18n="project.team"></span></label>
               <small data-i18n="project.teamHint"></small>
-              <div><button type="button" id="projectConnectBtn" class="primary" data-i18n="project.connect"></button></div>
+              <div class="button-row">
+                <button type="button" id="projectConnectBtn" class="primary" data-i18n="project.connect"></button>
+                <button type="button" id="projectUndoBtn" class="ghost hidden" data-i18n="project.undo"></button>
+              </div>
+            </div>
+          </section>
+
+          <section id="projectUndoGroup" class="group hidden">
+            <h3 class="group-title" data-i18n="project.groupUndo" data-help="projectUndo"></h3>
+            <p id="projectUndoNote" class="muted small no-margin"></p>
+            <ul id="projectUndo" class="check-list"></ul>
+            <div class="button-row">
+              <button type="button" id="projectUndoApplyBtn" class="danger" data-i18n="project.undoApply"></button>
+              <button type="button" id="projectUndoBackBtn" class="ghost" data-i18n="project.back"></button>
             </div>
           </section>
 
@@ -249,7 +262,10 @@
             <h3 class="group-title" data-i18n="project.groupPlan" data-help="projectPlan"></h3>
             <p id="projectPlanNote" class="muted small no-margin"></p>
             <ul id="projectPlan" class="check-list"></ul>
-            <div><button type="button" id="projectApplyBtn" class="primary hidden" data-i18n="project.apply"></button></div>
+            <div class="button-row">
+              <button type="button" id="projectApplyBtn" class="primary hidden" data-i18n="project.apply"></button>
+              <button type="button" id="projectBackBtn" class="ghost" data-i18n="project.back"></button>
+            </div>
           </section>
           </div>
         </div>

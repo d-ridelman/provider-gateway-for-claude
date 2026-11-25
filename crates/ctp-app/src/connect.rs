@@ -904,6 +904,152 @@ pub fn installed(config: &Config, root: &Path) -> Result<PathBuf, String> {
     }
 }
 
+/// Пункты плагина в плане отключения (ADR-017): их делает сам PGC, а не agent-kit.
+pub const PLUGIN_LOCAL: &str = "plugin-local";
+pub const PLUGIN_TEAM: &str = "plugin-team";
+
+/// План отключения: что agent-kit предлагает убрать (`setup --undo --json`), и выключение
+/// плагина. `kit_items = None` — копия agent-kit не знает `--undo` (случай 37).
+pub fn undo_plan(kit: &Path, root: &Path) -> Option<Vec<PlanItem>> {
+    let root_text = root.display().to_string();
+    let output = run(
+        node(
+            &cli(kit),
+            &[
+                "setup",
+                "--undo",
+                "--json",
+                "--lang",
+                lang(),
+                "--cwd",
+                &root_text,
+            ],
+            root,
+        ),
+        TIMEOUT,
+    )
+    .ok()?;
+    parse_undo(&ok(output, "agent-kit setup --undo").ok()?)
+}
+
+/// План отката — только с отметкой `"undo": true`. Старая копия agent-kit пропускает
+/// незнакомый `--undo` и отдаёт обычный план подключения: его нельзя принять за откат.
+pub fn parse_undo(text: &str) -> Option<Vec<PlanItem>> {
+    let value: Value = serde_json::from_str(text).ok()?;
+    if value["undo"] != Value::Bool(true) {
+        return None;
+    }
+    parse_plan(text).ok()
+}
+
+/// Пункты плагина: у человека — с галочкой; для всей команды — только когда плагин включён в
+/// области `project`, и без галочки: это меняет общий файл в git (случаи 35, 36).
+pub fn plugin_undo_items(scope: Option<&str>) -> Vec<PlanItem> {
+    let item = |id: &str, default: bool, title: String, about: String| PlanItem {
+        id: id.into(),
+        action: "plugin".into(),
+        path: ".claude/settings.local.json".into(),
+        what: String::new(),
+        default,
+        rules: Vec::new(),
+        about,
+        title,
+        group: "agent".into(),
+        from: Vec::new(),
+    };
+    let mut items = vec![item(
+        PLUGIN_LOCAL,
+        true,
+        tr!(
+            "Выключить agent-kit в этом проекте",
+            "Turn agent-kit off in this project"
+        ),
+        tr!(
+            "Только у вас: Claude в этой папке перестанет загружать agent-kit, git проекта не меняется. Включить обратно — «Подключить».",
+            "For you only: Claude in this folder stops loading agent-kit; the project's git does not change. Turn it back on with Connect."
+        ),
+    )];
+    if scope == Some("project") {
+        let mut team = item(
+            PLUGIN_TEAM,
+            false,
+            tr!(
+                "Выключить для всей команды (в git проекта)",
+                "Turn it off for the whole team (in the project's git)"
+            ),
+            tr!(
+                "Меняет общий .claude/settings.json: agent-kit выключится у всех, кто работает с проектом, после их следующего git pull.",
+                "Changes the shared .claude/settings.json: agent-kit turns off for everyone on the project after their next git pull."
+            ),
+        );
+        team.path = ".claude/settings.json".into();
+        items.push(team);
+    }
+    items
+}
+
+/// Команды `claude` для выключения плагина по отмеченным пунктам.
+pub fn plugin_off_steps(chosen: &[String]) -> Vec<Vec<String>> {
+    [(PLUGIN_LOCAL, "local"), (PLUGIN_TEAM, "project")]
+        .into_iter()
+        .filter(|(id, _)| chosen.iter().any(|c| c == id))
+        .map(|(_, scope)| {
+            ["plugin", "disable", PLUGIN, "--scope", scope, "--json"]
+                .map(String::from)
+                .to_vec()
+        })
+        .collect()
+}
+
+/// Отключить отмеченное: сначала файлы (agent-kit, пока он ещё включён), потом плагин.
+pub fn undo_apply(
+    config: &Config,
+    kit: &Path,
+    root: &Path,
+    chosen: &[String],
+) -> Result<Value, String> {
+    let mut result = serde_json::json!({"applied": [], "skipped": []});
+    if let Some(plan) = undo_plan(kit, root) {
+        let ids = applicable(&plan, chosen);
+        if !ids.is_empty() {
+            let root_text = root.display().to_string();
+            let only = ids.join(",");
+            result = applied(run(
+                node(
+                    &cli(kit),
+                    &[
+                        "setup",
+                        "--undo",
+                        "--apply",
+                        "--only",
+                        &only,
+                        "--json",
+                        "--lang",
+                        lang(),
+                        "--cwd",
+                        &root_text,
+                    ],
+                    root,
+                ),
+                TIMEOUT,
+            )?)?;
+        }
+    }
+    let steps = plugin_off_steps(chosen);
+    if !steps.is_empty() {
+        run_claude(config, root, steps)?;
+        if let Some(list) = result["applied"].as_array_mut() {
+            list.extend(
+                [PLUGIN_LOCAL, PLUGIN_TEAM]
+                    .into_iter()
+                    .filter(|id| chosen.iter().any(|c| c == id))
+                    .map(Value::from),
+            );
+        }
+    }
+    Ok(result)
+}
+
 /// Язык текстов agent-kit для человека — как у окна PGC.
 fn lang() -> &'static str {
     if crate::i18n::is_ru() { "ru" } else { "en" }
@@ -1335,6 +1481,81 @@ mod tests {
         // Версию папки узнать не удалось — тоже не предлагается (случай 31 — только с ней).
         f.marketplace_version = None;
         assert!(decide(&f).update.is_none());
+    }
+
+    #[test]
+    fn case_34_the_undo_plan_is_read_like_the_plan() {
+        let plan = parse_plan(
+            r#"{"items": [
+                {"id": "AGENTS.md", "action": "remove", "path": "AGENTS.md", "title": "Инструкция для агентов"},
+                {"id": ".claude/verify.json", "action": "keep", "path": ".claude/verify.json", "what": "вы меняли файл — не трогаю"},
+                {"id": "ignore-worktrees", "action": "unadd", "path": ".gitignore"}]}"#,
+        )
+        .unwrap();
+        // A file the person changed is not offered: only remove and unadd can be applied.
+        let chosen = strings(&["AGENTS.md", ".claude/verify.json", "ignore-worktrees"]);
+        assert_eq!(
+            applicable(&plan, &chosen),
+            ["AGENTS.md", "ignore-worktrees"]
+        );
+    }
+
+    #[test]
+    fn case_35_the_plugin_goes_off_only_for_the_person_by_default() {
+        let items = plugin_undo_items(Some("local"));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].id, PLUGIN_LOCAL);
+        assert!(items[0].default);
+        assert_eq!(
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL])),
+            [strings(&[
+                "plugin", "disable", PLUGIN, "--scope", "local", "--json"
+            ])]
+        );
+    }
+
+    #[test]
+    fn case_36_for_the_whole_team_only_when_ticked() {
+        let items = plugin_undo_items(Some("project"));
+        assert_eq!(items[1].id, PLUGIN_TEAM);
+        assert!(
+            !items[1].default,
+            "the shared file changes only when the person ticks it"
+        );
+        assert_eq!(
+            plugin_off_steps(&strings(&[PLUGIN_LOCAL, PLUGIN_TEAM]))[1],
+            strings(&["plugin", "disable", PLUGIN, "--scope", "project", "--json"])
+        );
+        // Not ticked — no command.
+        assert!(plugin_off_steps(&[]).is_empty());
+    }
+
+    #[test]
+    fn case_37_an_old_kit_gives_only_the_plugin_item() {
+        // An old agent-kit answers `--undo` with an error, or ignores the flag and gives its
+        // plain connect plan: neither is an undo plan.
+        assert!(parse_undo("unknown argument: --undo").is_none());
+        assert!(
+            parse_undo(r#"{"format": 1, "items": [{"id": "AGENTS.md", "action": "create"}]}"#)
+                .is_none()
+        );
+        assert!(parse_undo(r#"{"format": 1, "undo": true, "items": []}"#).is_some());
+        // The page then has the plugin item only (the state adds it to an empty list).
+        assert_eq!(plugin_undo_items(None).len(), 1);
+    }
+
+    #[test]
+    fn case_38_only_ids_of_the_undo_plan_are_passed() {
+        let plan = parse_plan(
+            r#"{"items": [{"id": "AGENTS.md", "action": "remove", "path": "AGENTS.md"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            applicable(&plan, &strings(&["AGENTS.md", "src/main.rs"])),
+            ["AGENTS.md"]
+        );
+        // The plugin ids are PGC's own: agent-kit never gets them.
+        assert!(applicable(&plan, &strings(&[PLUGIN_LOCAL])).is_empty());
     }
 
     #[test]

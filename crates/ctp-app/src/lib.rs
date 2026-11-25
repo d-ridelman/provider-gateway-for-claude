@@ -157,6 +157,8 @@ pub fn run() {
             commands::connect_apply,
             commands::connect_set_source,
             commands::connect_update,
+            commands::connect_undo_open,
+            commands::connect_undo_apply,
             commands::tail_log,
             commands::open_logs,
             commands::copy_text,

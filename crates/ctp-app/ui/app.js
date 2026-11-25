@@ -364,15 +364,21 @@ function renderProject() {
   }
   // The only blocker the page itself can lift: where agent-kit comes from.
   $("projectSourceBox").classList.toggle("hidden", !check?.blockers.some((b) => b.id === "source"));
-  const canConnect = !!check && !check.blockers.length && !p.data;
+  // One page for a project (ADR-017): connect it, or — when it is connected — open the
+  // inspection or disconnect it. The inspection and the disconnect plan each have "Back".
+  const canConnect = !!check && !check.blockers.length && !p.data && !p.undo;
   $("projectConnectBox").classList.toggle("hidden", !canConnect);
   $("projectConnectBtn").textContent = t(check?.connected ? "project.open" : "project.connect");
+  $("projectUndoBtn").classList.toggle("hidden", !check?.connected);
   // While a step runs the folder cannot change under it: the answer is for the folder asked.
-  for (const id of ["projectConnectBtn", "projectCheckBtn", "projectApplyBtn", "projectDirInput", "browseProjectBtn", "projectSourceBtn", "projectTeamInput"]) {
+  for (const id of ["projectConnectBtn", "projectCheckBtn", "projectApplyBtn", "projectDirInput", "browseProjectBtn",
+    "projectSourceBtn", "projectTeamInput", "projectUndoBtn", "projectUndoApplyBtn", "projectUndoBackBtn", "projectBackBtn"]) {
     $(id).disabled = !!p.busy;
   }
   if (p.busy === "connect") list.append(checkItem("busy", t("project.connecting")));
   if (p.busy === "update") list.append(checkItem("busy", t("project.updating")));
+  if (p.busy === "undo-open") list.append(checkItem("busy", t("project.undoOpening")));
+  renderUndo(p);
 
   const data = p.data;
   $("projectStateGroup").classList.toggle("hidden", !data);
@@ -507,6 +513,100 @@ function renderProject() {
   $("projectApplyBtn").classList.toggle("hidden", !(data.plan ?? []).some((item) => item.action !== "keep") && !checksOf(data).length);
 }
 
+// The disconnect plan (ADR-017): what agent-kit offers to remove, a file the person changed
+// shown but not offered, and turning the plugin off. Ticks work as in the connect plan.
+function renderUndo(p) {
+  const undo = p.undo;
+  $("projectUndoGroup").classList.toggle("hidden", !undo);
+  if (!undo) return;
+  const list = $("projectUndo");
+  list.replaceChildren();
+  for (const f of undo.applied?.failed ?? []) list.append(checkItem("bad", `${f.id}: ${f.why}`));
+  const offered = undo.items.filter((item) => item.action !== "keep");
+  $("projectUndoNote").textContent = undo.kitOld ? t("project.undoOld") : offered.some((i) => i.action !== "plugin") ? t("project.undoHint") : t("project.undoEmpty");
+  for (const item of undo.items) {
+    const li = document.createElement("li");
+    const name = item.title || item.path;
+    const help = [item.about, item.what].filter(Boolean).join("\n\n");
+    if (item.action === "keep") {
+      li.className = "off";
+      li.textContent = `– ${name}: ${item.what || t("project.undoKept")}`;
+    } else {
+      const label = document.createElement("label");
+      label.className = "check";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = undoTicked(p, item);
+      box.addEventListener("change", () => {
+        const key = item.default === false ? "undoOn" : "undoOff";
+        const set = new Set(state.project[key] ?? []);
+        if (box.checked === (item.default !== false)) set.delete(item.id);
+        else set.add(item.id);
+        state.project[key] = [...set];
+      });
+      const span = document.createElement("span");
+      const where = document.createElement("small");
+      where.className = "plan-path";
+      where.textContent = item.action === "plugin" ? item.path : `${t(item.action === "unadd" ? "project.undoUnadd" : "project.undoRemove")} ${item.path}`;
+      span.append(name);
+      if (help) span.append(helpButton(() => openHelp(name, help), name));
+      span.append(where);
+      label.append(box, span);
+      li.append(label);
+    }
+    list.append(li);
+  }
+  const busy = p.busy === "undo";
+  $("projectUndoApplyBtn").replaceChildren(...(busy ? [workMark(), t("project.undoing")] : [t("project.undoApply")]));
+  $("projectUndoApplyBtn").toggleAttribute("aria-busy", busy);
+  $("projectUndoApplyBtn").classList.toggle("hidden", !offered.length);
+}
+
+function undoTicked(p, item) {
+  return item.default === false ? !!p.undoOn?.includes(item.id) : !p.undoOff?.includes(item.id);
+}
+
+function openUndo() {
+  const { dir, busy } = state.project ?? {};
+  if (!dir || busy) return;
+  projectStep("undo-open", async () => {
+    const undo = await invoke("connect_undo_open", { dir });
+    if (!projectStillOn(dir)) return;
+    state.project.undo = undo;
+    state.project.undoOff = [];
+    state.project.undoOn = [];
+  });
+}
+
+function applyUndo() {
+  const undo = state.project?.undo;
+  if (!undo || state.project.busy) return;
+  const dir = state.project.dir;
+  const chosen = undo.items.filter((i) => i.action !== "keep" && undoTicked(state.project, i)).map((i) => i.id);
+  if (!chosen.length) return;
+  projectStep("undo", async () => {
+    const next = await invoke("connect_undo_apply", { dir, chosen });
+    if (!projectStillOn(dir)) return;
+    state.project.undo = next;
+    state.project.undoOff = [];
+    state.project.undoOn = [];
+    const done = next.applied?.applied?.length ?? 0;
+    const failed = next.applied?.failed?.length ?? 0;
+    toast(t(failed ? "project.undoFailed" : "project.undone", { count: done, failed }), failed ? "error" : "good");
+    // The plugin may be off now: the check above must say so.
+    const check = await invoke("connect_check", { dir });
+    if (projectStillOn(dir)) state.project.check = check;
+  });
+}
+
+// "Back" from the inspection or the disconnect plan: the folder and its check stay.
+function projectBack() {
+  if (!state.project || state.project.busy) return;
+  state.project.data = null;
+  state.project.undo = null;
+  renderProject();
+}
+
 // A plan item is ticked by default unless agent-kit says otherwise (default: false — a draft).
 function planTicked(p, item) {
   return item.default === false ? !!p.planOn?.includes(item.id) : !p.unticked?.includes(item.id);
@@ -623,6 +723,7 @@ function connectProject() {
     const data = await invoke("connect_open", { dir, team: $("projectTeamInput").checked });
     if (!projectStillOn(dir)) return;
     state.project.data = data;
+    state.project.undo = null;
     state.project.fresh = data.fresh;
   });
 }
@@ -1375,6 +1476,10 @@ function bind() {
   $("browseClaudeBtn").addEventListener("click", () => browse(el.claudePathInput));
   $("browseCodeBtn").addEventListener("click", () => browse(el.codeDirInput));
   $("projectBtn").addEventListener("click", openProject);
+  $("projectUndoBtn").addEventListener("click", openUndo);
+  $("projectUndoApplyBtn").addEventListener("click", applyUndo);
+  $("projectUndoBackBtn").addEventListener("click", projectBack);
+  $("projectBackBtn").addEventListener("click", projectBack);
   $("closeProject").addEventListener("click", closeProject);
   $("browseProjectBtn").addEventListener("click", async () => {
     if (state.project?.busy) return;

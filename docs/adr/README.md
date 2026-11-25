@@ -45,3 +45,4 @@
 | [014](014-connect-project.md) | Кнопка «Подключить проект»: agent-kit без ручных команд | Accepted |
 | [015](015-agent-kit-in-the-installer.md) | agent-kit приезжает внутри PGC | Accepted |
 | [016](016-smart-setup.md) | Проверки проекта отбирает код; шаг с моделью по замеру не включён | Accepted |
+| [017](017-disconnect-project.md) | Одна страница «Проекты»: подключить, посмотреть, отключить с планом | Accepted |
