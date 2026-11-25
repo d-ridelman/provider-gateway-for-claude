@@ -42,6 +42,9 @@
   --dur-hover: 150ms;
   --dur-fade: 220ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  /* The brand book's "work": light runs through the mark while work goes on. */
+  --dur-work: 2400ms;
+  --ease-work: cubic-bezier(0.65, 0, 0.35, 1);
 }
 
 /* Paper: the brand's light side. */
@@ -93,6 +96,21 @@ button { cursor: pointer; }
 .check-list .bad { color: var(--stop-text); overflow-wrap: anywhere; }
 .check-list .off { color: var(--muted); }
 .check-list .human { color: var(--human-text); overflow-wrap: anywhere; }
+/* Waiting: the brand book's work mark — a square plate the accent light runs up through,
+   on a busy button and on a "…ing" line. Reduced motion leaves it still (see the end). */
+.work-mark, button[aria-busy="true"]::before {
+  content: ""; display: inline-block; flex: none; width: 8px; height: 8px; vertical-align: -1px;
+  margin-right: 8px; background: linear-gradient(var(--accent), var(--accent)) no-repeat var(--line-strong);
+  background-size: 100% 0%; background-position: bottom;
+  animation: work var(--dur-work) var(--ease-work) infinite;
+}
+@keyframes work {
+  0% { background-size: 100% 0%; background-position: bottom; }
+  45%, 55% { background-size: 100% 100%; background-position: bottom; }
+  56% { background-position: top; }
+  100% { background-size: 100% 0%; background-position: top; }
+}
+.check-list .busy { color: var(--muted); }
 .check-list pre { margin: 4px 0 0; font-family: var(--mono); font-size: var(--fs-sm); color: var(--text); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
 .check-list .check span { overflow-wrap: anywhere; }
 .no-margin { margin: 0; }
@@ -603,6 +621,28 @@ button:focus-visible { outline-offset: -4px; }
   filter: var(--window-shadow);
 }
 .dialog::backdrop { background: rgba(0, 0, 0, .5); }
+/* "?" — a small square plate after a heading or a label: opens a plain-words explanation. */
+.help-btn {
+  display: inline-grid; place-items: center; width: 18px; height: 18px; min-height: 0; margin-left: 8px; padding: 0;
+  vertical-align: 1px; --k: 0px; font-family: var(--mono); font-size: var(--fs-xs); font-weight: 700; line-height: 1;
+  color: var(--accent-text); background: transparent; border: 1px solid var(--line-strong);
+  text-transform: none; letter-spacing: 0;
+}
+.help-btn:hover { border-color: var(--accent); background: var(--well); }
+/* The explanation window: it rises like the brand's windows do, and an accent line is drawn
+   across its top (the brand book's "draw"). Reduced motion keeps it still. */
+.help-dialog { width: min(560px, calc(100vw - 40px)); }
+.help-dialog[open] form { animation: help-in var(--dur-fade) var(--ease-out); }
+.help-dialog h2 { padding-top: 10px; position: relative; }
+.help-dialog h2::before {
+  content: ""; position: absolute; left: 0; right: 0; top: 0; height: 2px; background: var(--accent);
+  transform-origin: left; animation: help-draw 800ms var(--ease-out);
+}
+.help-body p { margin: 0 0 12px; line-height: 21px; font-size: var(--fs-md); }
+.help-body p:first-child { color: var(--text); }
+.help-body p + p { color: var(--muted); }
+@keyframes help-in { from { opacity: 0; transform: translateY(6px); } }
+@keyframes help-draw { from { transform: scaleX(0); } }
 :root[data-theme="light"] .dialog::backdrop { background: rgba(22, 24, 27, .25); }
 .dialog form { --k: var(--r-lg); --rim: var(--line-strong); padding: 22px 24px 20px; }
 .dialog h2 { margin: 0 0 8px; font-size: var(--fs-lg); line-height: 22px; font-weight: 650; overflow-wrap: anywhere; }

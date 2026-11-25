@@ -81,6 +81,7 @@ async function boot() {
     return;
   }
   bind();
+  addHelpButtons();
   await refresh();
   autostart();
   pollStatus();
@@ -104,6 +105,7 @@ function fillPresets() {
 function applyLanguage(lang) {
   setLanguage(lang);
   applyI18n();
+  addHelpButtons();
   fillPresets();
   renderUiSwitches();
 }
@@ -335,6 +337,14 @@ function closeProject() {
 function checkItem(kind, text, title) {
   const li = document.createElement("li");
   li.className = kind;
+  if (kind === "busy") {
+    // Work under way: the brand's work mark instead of a sign.
+    const mark = document.createElement("span");
+    mark.className = "work-mark";
+    li.append(mark, text);
+    if (title) li.title = title;
+    return li;
+  }
   li.textContent = `${{ ok: "✓", off: "–", bad: "✕", human: "!" }[kind] ?? "·"} ${text}`;
   if (title) li.title = title;
   return li;
@@ -344,7 +354,7 @@ function renderProject() {
   const p = state.project ?? {};
   const list = $("projectCheckList");
   list.replaceChildren();
-  if (p.busy === "check") list.append(checkItem("off", t("project.checking")));
+  if (p.busy === "check") list.append(checkItem("busy", t("project.checking")));
   if (p.error) list.append(checkItem("bad", p.error));
   const check = p.check;
   if (check && !p.busy) {
@@ -362,7 +372,7 @@ function renderProject() {
   for (const id of ["projectConnectBtn", "projectCheckBtn", "projectApplyBtn", "projectDirInput", "browseProjectBtn", "projectSourceBtn", "projectTeamInput"]) {
     $(id).disabled = !!p.busy;
   }
-  if (p.busy === "connect") list.append(checkItem("off", t("project.connecting")));
+  if (p.busy === "connect") list.append(checkItem("busy", t("project.connecting")));
 
   const data = p.data;
   $("projectStateGroup").classList.toggle("hidden", !data);
@@ -429,6 +439,9 @@ function renderProject() {
     plan.append(li);
   }
   renderChecks(p, data);
+  const applying = p.busy === "apply";
+  $("projectApplyBtn").textContent = t(applying ? "project.applying" : "project.apply");
+  $("projectApplyBtn").toggleAttribute("aria-busy", applying);
   $("projectApplyBtn").classList.toggle("hidden", !(data.plan ?? []).some((item) => item.action !== "keep") && !checksOf(data).length);
 }
 
@@ -1207,7 +1220,8 @@ function renderClaudeCheck() {
   if (!check) {
     const li = document.createElement("li");
     li.className = "muted";
-    li.textContent = t("settings.checking");
+    li.className = "busy";
+  li.replaceChildren(Object.assign(document.createElement("span"), { className: "work-mark" }), t("settings.checking"));
     el.claudeCheckList.append(li);
     return;
   }
@@ -1819,6 +1833,43 @@ async function closeToTray() {
 }
 
 // A modal question. Resolves with { value: "ok" | "cancel" | "alt", checked }.
+// "?" next to a heading or a field (data-help="<topic>"): a plain-words explanation in a window.
+// The texts live in i18n.js as help.<topic>.title / help.<topic>.body (paragraphs split by a blank line).
+function helpButton(open) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "help-btn";
+  button.textContent = "?";
+  button.dataset.i18nAria = "help.what";
+  button.dataset.i18nTitle = "help.what";
+  button.setAttribute("aria-label", t("help.what"));
+  button.title = t("help.what");
+  button.addEventListener("click", (event) => {
+    // Inside a label or a summary the click would also toggle what it belongs to.
+    event.preventDefault();
+    event.stopPropagation();
+    open();
+  });
+  return button;
+}
+
+function addHelpButtons(root = document) {
+  for (const node of root.querySelectorAll("[data-help]")) {
+    if (node.querySelector(":scope > .help-btn")) continue;
+    // A language switch rewrites the heading's text and drops the button: applyLanguage adds it back.
+    const topic = node.dataset.help;
+    node.append(helpButton(() => openHelp(t(`help.${topic}.title`), t(`help.${topic}.body`))));
+  }
+}
+
+function openHelp(title, body) {
+  const dialog = $("helpDialog");
+  $("helpTitle").textContent = title;
+  const box = $("helpBody");
+  box.replaceChildren(...body.split(/\n\s*\n/).map((part) => Object.assign(document.createElement("p"), { textContent: part.trim() })));
+  dialog.showModal();
+}
+
 function ask({ title, text, ok, cancel, alt = null, danger = false, check = null }) {
   el.dialogTitle.textContent = title;
   el.dialogText.textContent = text;
