@@ -989,10 +989,19 @@ pub fn apply(
     let root_text = root.display().to_string();
     let mut args: Vec<&str> = args.iter().map(String::as_str).collect();
     args.extend(["--json", "--lang", lang(), "--cwd", &root_text]);
-    let text = ok(
-        run(node(&cli(kit), &args, root), TIMEOUT)?,
-        "agent-kit setup --apply",
-    )?;
+    applied(run(node(&cli(kit), &args, root), TIMEOUT)?)
+}
+
+/// Ответ `setup --apply`. Код 1 с JSON и `failed` — не сбой: часть пунктов применилась, часть
+/// нет (случай 33); окно показывает `failed`. Иначе ненулевой код — ошибка, как раньше.
+pub fn applied(output: Output) -> Result<Value, String> {
+    if output.code == Some(1)
+        && let Ok(value) = serde_json::from_str::<Value>(&output.stdout)
+        && value.get("failed").is_some_and(Value::is_array)
+    {
+        return Ok(value);
+    }
+    let text = ok(output, "agent-kit setup --apply")?;
     serde_json::from_str(&text).map_err(|exc| exc.to_string())
 }
 
@@ -1326,6 +1335,30 @@ mod tests {
         // Версию папки узнать не удалось — тоже не предлагается (случай 31 — только с ней).
         f.marketplace_version = None;
         assert!(decide(&f).update.is_none());
+    }
+
+    #[test]
+    fn case_33_a_partly_failed_apply_is_an_answer_not_an_error() {
+        let out = |code, stdout: &str, stderr: &str| Output {
+            code: Some(code),
+            stdout: stdout.into(),
+            stderr: stderr.into(),
+        };
+        let partly = applied(out(
+            1,
+            r#"{"applied": ["AGENTS.md"], "failed": [{"id": ".githooks/pre-push", "why": "broken hook"}]}"#,
+            "",
+        ))
+        .unwrap();
+        assert_eq!(partly["failed"][0]["id"], ".githooks/pre-push");
+        // Code 1 without that answer, or another code, is an error as before.
+        assert!(applied(out(1, "not json", "boom")).is_err());
+        assert!(applied(out(1, r#"{"applied": []}"#, "")).is_err());
+        assert!(applied(out(2, r#"{"failed": []}"#, "unknown argument: --x")).is_err());
+        assert_eq!(
+            applied(out(0, r#"{"applied": []}"#, "")).unwrap()["applied"],
+            json!([])
+        );
     }
 
     #[test]

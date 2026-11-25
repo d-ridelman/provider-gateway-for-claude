@@ -407,6 +407,8 @@ function renderProject() {
     note.textContent = data.plan.length ? t("project.planHint") : t("project.planEmpty");
     note.title = "";
   }
+  // What did not apply last time, with agent-kit's reason, on top of the plan (case 33).
+  for (const f of data.applied?.failed ?? []) plan.append(checkItem("bad", `${f.id}: ${f.why}`));
   // Blocks by what a person gets (agent-kit's group), advice for the person last; an old
   // agent-kit gives no groups and its items stay in one block, as before.
   const order = ["agent", "checks", "safety", "docs", "", "advice"];
@@ -670,7 +672,9 @@ function applyProject() {
     const applied = next.applied?.applied?.length ?? 0;
     // The steps to add by hand are shown under the checks, not counted as a stale item.
     const skipped = next.applied?.skipped?.filter((s) => s.id !== "verify-checks").length ?? 0;
-    toast(t(skipped ? "project.appliedSkipped" : "project.applied", { count: applied, skipped }), skipped ? "" : "good");
+    const failed = next.applied?.failed?.length ?? 0;
+    if (failed) toast(t("project.appliedFailed", { count: applied, failed }), "error");
+    else toast(t(skipped ? "project.appliedSkipped" : "project.applied", { count: applied, skipped }), skipped ? "" : "good");
   });
 }
 
