@@ -180,6 +180,48 @@ pub fn main_model<'a>(status: &'a UiStatus, roles: &RoleAliases) -> Option<&'a M
         .or_else(|| status.models.first())
 }
 
+/// Имя модели для Claude Code: настоящий ID, если он в шлюзе у одной модели, иначе псевдоним.
+fn cli_model_name<'a>(status: &'a UiStatus, model: &'a ModelInfo) -> &'a str {
+    let unique = status
+        .models
+        .iter()
+        .filter(|m| m.model == model.model)
+        .count()
+        == 1;
+    if unique { &model.model } else { &model.alias }
+}
+
+/// Переменные модели-критика (ADR-012). Последняя выбирает путь жёстко: иначе критик сам
+/// угадывает подписку по файлу входа, который мог остаться от старого входа в Claude.
+pub const CRITIC_ENV: [&str; 4] = [
+    "AGENT_KIT_PGC_URL",
+    "AGENT_KIT_PGC_TOKEN",
+    "AGENT_KIT_PGC_MODEL",
+    "AGENT_KIT_CRITIC_VIA",
+];
+
+/// Модель-критик для скриптов проекта: адрес шлюза, его токен и модель. Пусто, если она не
+/// выбрана, шлюз стоит или её нет среди запущенных моделей (шлюз не перезапускали).
+pub fn critic_env(config: &Config, status: &UiStatus) -> Vec<(String, String)> {
+    let model = crate::store::role_alias(config, config.model_roles.critic.as_ref())
+        .and_then(|alias| status.models.iter().find(|m| m.alias == alias))
+        .filter(|_| status.running);
+    let Some(model) = model else {
+        return Vec::new();
+    };
+    let values = [
+        format!("http://127.0.0.1:{}", status.port),
+        status.token.clone(),
+        cli_model_name(status, model).to_string(),
+        "pgc".to_string(),
+    ];
+    CRITIC_ENV
+        .iter()
+        .map(|name| name.to_string())
+        .zip(values)
+        .collect()
+}
+
 /// Окружение Claude Code через шлюз: что убрать и что задать. Основная модель — роль
 /// `sonnet` или первая модель шлюза; на неё же все роли Claude Code (opus, haiku, fable).
 /// `limits` — окно и предел вывода основной модели из каталога, если они известны.
@@ -216,13 +258,7 @@ pub fn code_env(
     // `claude-…` нужен только фильтру имён Desktop (ADR-005), а шлюз понимает и настоящий
     // ID — консоль получает его, как у `ollama launch claude`. Тот же ID у двух моделей
     // шлюз развёл бы неоднозначно — тогда псевдоним.
-    let unique = status
-        .models
-        .iter()
-        .filter(|m| m.model == main.model)
-        .count()
-        == 1;
-    let id = if unique { &main.model } else { &main.alias };
+    let id = &cli_model_name(status, main).to_string();
     let mut set: Vec<(String, String)> = vec![
         (
             "ANTHROPIC_BASE_URL".into(),
@@ -408,6 +444,11 @@ pub fn launch_code(
     command.env_remove(crate::fetch::URL_ENV);
     command.envs(set.iter().map(|(k, v)| (k, v)));
     command.envs(extra.iter().map(|(k, v)| (k, v)));
+    // Унаследованные значения критика — от другого запуска; задаём свои или никаких.
+    for name in CRITIC_ENV {
+        command.env_remove(name);
+    }
+    command.envs(critic_env(config, status));
     command.env(CLI_VAR, &cli);
     command.spawn().map_err(|exc| {
         tr!(
@@ -718,6 +759,11 @@ pub fn launch(
     // своё окружение. Окно по модели здесь не задаётся: в Desktop модель переключают, его
     // даёт `behavesAs` каждой записи (`inference_models`).
     command.envs(SESSION_ENV);
+    // Модель-критик для скриптов проектов в сессиях Code (ADR-012).
+    for name in CRITIC_ENV {
+        command.env_remove(name);
+    }
+    command.envs(critic_env(config, status));
     // Прокси приложения: сам Claude (Chromium, loopback он обходит сам) и сессии Code
     // (окружение). shortcut: смену прокси при открытом Claude окно не замечает как «изменились
     // настройки» — переоткрыть Claude подсказывает окно прокси; учесть в run_state, если
@@ -1667,6 +1713,53 @@ mod tests {
             claude: None,
             update: None,
         }
+    }
+
+    #[test]
+    fn the_critic_model_reaches_scripts_only_when_chosen_and_served() {
+        let dir = std::env::temp_dir()
+            .join("agents")
+            .join(format!("ctp-critic-{}", uuid::Uuid::new_v4().simple()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut config = crate::store::load_or_create(&dir).unwrap();
+        config.providers = vec![crate::model::ProviderRow {
+            id: "oc".into(),
+            kind: "openai".into(),
+            base_url: "https://opencode.ai/v1".into(),
+            models: vec!["glm-5.3[1m]".into(), "qwen4-max".into()],
+            ..Default::default()
+        }];
+        let served: Vec<ModelInfo> = crate::store::alias_rows(&config.providers[0])
+            .into_iter()
+            .map(|row| ModelInfo {
+                alias: row.alias,
+                ..info(ctp_core::alias::strip_1m(&row.model), None, true)
+            })
+            .collect();
+        let status = status_with(served);
+        assert!(critic_env(&config, &status).is_empty(), "не выбран");
+
+        config.model_roles.critic = Some(crate::model::ModelRef {
+            provider: "oc".into(),
+            model: "qwen4-max".into(),
+        });
+        let env = critic_env(&config, &status);
+        let names: Vec<&str> = env.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, CRITIC_ENV);
+        assert_eq!(env[0].1, "http://127.0.0.1:17899");
+        assert_eq!(env[1].1, "tok");
+        assert_eq!(env[2].1, "qwen4-max", "ID в шлюзе один — сам ID");
+        assert_eq!(
+            env[3].1, "pgc",
+            "путь выбран, не угадывается по входу в Claude"
+        );
+
+        let mut stopped = status.clone();
+        stopped.running = false;
+        assert!(critic_env(&config, &stopped).is_empty(), "шлюз стоит");
+        // Модель выбрана, но шлюз её ещё не отдаёт (не перезапускали).
+        assert!(critic_env(&config, &status_with(status.models[..1].to_vec())).is_empty());
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

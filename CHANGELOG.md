@@ -16,6 +16,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 - **One row per 1M model in Claude's model menu.** A model marked `[1m]` showed twice: a standard row (Claude counts 200K) and "… 1M" with an English "1M context window" note, though the provider has one model behind both. PGC now asks Claude for the 1M option only (`prefer1m`). Real Claude models from an Anthropic provider keep both rows: there 1M is a separate header and costs more (ADR-011).
 
+### Added
+
+- **A critic model for project scripts.** Settings → Claude Code has a "Critic for project scripts" choice: another gateway model that reviews an agent's work (for example agent-kit's critic), so people without a Claude subscription get a reviewer too. When it is chosen and the gateway runs, Claude Desktop and the console opened from PGC get `AGENT_KIT_PGC_URL`, `AGENT_KIT_PGC_TOKEN`, `AGENT_KIT_PGC_MODEL` and `AGENT_KIT_CRITIC_VIA=pgc`; changing it does not restart the gateway (ADR-012).
+
 ## [0.2.2] - 2026-11-24
 
 ### Added

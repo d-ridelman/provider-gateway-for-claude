@@ -53,7 +53,7 @@ const el = Object.fromEntries(
     "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
     "dialogText", "dialogOk", "dialogCancel", "dialogAlt", "dialogCheckRow", "dialogCheck", "dialogCheckText",
-    "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn", "roleSonnet",
+    "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn", "roleSonnet", "roleCritic",
     "desktopPortableBtn", "desktopInstallBtn", "desktopGetHint", "codeFound",
     "codePortableInput", "codePortableBtn", "codeInstallBtn", "codeGetHint",
     "proxyBtn", "proxyChip", "proxyChipText", "proxyPanel", "proxyError", "proxyCoreLine", "proxyCoreBtn",
@@ -735,9 +735,12 @@ function settingsDirty() {
   );
 }
 
-// The model role of Claude Code: role, select id, text of the "not chosen" option. Only the
-// main one: the strong and fast roles are gone, every role goes to the main model.
-const ROLES = [["sonnet", "roleSonnet", "settings.roleFirst"]];
+// Model roles: role, select id, text of the "not chosen" option. The main one (the strong and
+// fast roles are gone, every role goes to it) and the critic for project scripts (ADR-012).
+const ROLES = [
+  ["sonnet", "roleSonnet", "settings.roleFirst"],
+  ["critic", "roleCritic", "settings.roleCriticNone"],
+];
 
 // A role is stored as provider + model id (no [1m]): the alias changes with the provider.
 function roleKey(ref) {
@@ -1426,10 +1429,10 @@ async function saveSettings() {
     el.portInput.focus();
     return;
   }
-  // A new port or new model roles (the main model is the gateway's default) stop the
-  // gateway; then bring it back if it was running.
+  // A new port or a new main model (the gateway's default) stop the gateway; then bring it
+  // back if it was running. The critic is for scripts only and needs no restart.
   const portChanged = port !== state.config?.port;
-  const rolesChanged = ROLES.some(([role, id]) => el[id].value !== roleKey(state.config?.modelRoles?.[role]));
+  const rolesChanged = el.roleSonnet.value !== roleKey(state.config?.modelRoles?.sonnet);
   const wasRunning = (portChanged || rolesChanged) && (starting > 0 || !!state.status?.running);
   try {
     state.config = await invoke("save_settings", {

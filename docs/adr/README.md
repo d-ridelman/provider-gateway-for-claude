@@ -40,3 +40,4 @@
 | [009](009-catalog-translation-per-version.md) | Перевод меню усилий собирается под каждую версию Claude | Accepted |
 | [010](010-code-model-left-in-user-settings.md) | Модель шлюза не остаётся в настройках Claude Code | Accepted |
 | [011](011-one-menu-row-per-1m-model.md) | Одна строка в меню Claude на модель с окном 1M | Accepted |
+| [012](012-critic-model-for-scripts.md) | Модель-критик для скриптов: переменные `AGENT_KIT_PGC_*` | Accepted |

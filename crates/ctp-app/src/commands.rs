@@ -194,9 +194,11 @@ pub fn save_settings(
     };
     next.model_roles = crate::model::ModelRoles {
         sonnet: keep(input.model_roles.sonnet),
+        critic: keep(input.model_roles.critic),
     };
     // Основная модель — модель шлюза по умолчанию (store::build_file): нужен перезапуск.
-    let port_changed = port_changed || next.model_roles != config.model_roles;
+    // Критик шлюзу не нужен (ADR-012).
+    let port_changed = port_changed || next.model_roles.sonnet != config.model_roles.sonnet;
     store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
     *config = next;
     crate::i18n::apply(config.language.as_deref());

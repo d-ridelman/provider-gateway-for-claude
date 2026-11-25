@@ -265,14 +265,15 @@ pub fn apply_provider(
     }
     let mut next = config.clone();
     // Переименованный провайдер уносит с собой выбранные на его модели роли.
-    if let Some(old) = original.filter(|old| *old != row.id)
-        && let Some(role) = next
-            .model_roles
-            .sonnet
-            .as_mut()
+    if let Some(old) = original.filter(|old| *old != row.id) {
+        let roles = &mut next.model_roles;
+        for role in [roles.sonnet.as_mut(), roles.critic.as_mut()]
+            .into_iter()
+            .flatten()
             .filter(|role| role.provider == old)
-    {
-        role.provider = row.id.clone();
+        {
+            role.provider = row.id.clone();
+        }
     }
     let slot = original.and_then(|o| next.providers.iter_mut().find(|p| p.id == o));
     match slot {
@@ -857,7 +858,16 @@ mod tests {
             provider: "openai".into(),
             model: "gpt-5.2".into(),
         });
+        with_role.model_roles.critic = with_role.model_roles.sonnet.clone();
         let next = apply_provider(&with_role, renamed, Some("openai")).unwrap();
+        assert_eq!(
+            next.model_roles
+                .critic
+                .as_ref()
+                .map(|r| r.provider.as_str()),
+            Some("openai2"),
+            "и критик"
+        );
         assert_eq!(next.providers[0].id, "openai2", "позиция сохраняется");
         assert_eq!(next.providers.len(), 2);
         assert_eq!(

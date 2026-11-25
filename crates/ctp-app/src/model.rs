@@ -98,6 +98,9 @@ pub struct ModelRef {
 pub struct ModelRoles {
     #[serde(default)]
     pub sonnet: Option<ModelRef>,
+    /// Модель-критик для скриптов проекта (ADR-012); шлюзу не нужна.
+    #[serde(default)]
+    pub critic: Option<ModelRef>,
 }
 
 fn default_true() -> bool {
