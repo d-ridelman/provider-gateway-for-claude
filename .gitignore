@@ -13,6 +13,8 @@
 /handoff/
 # The owner's local notes and research: never published.
 /notes/
+/research_notes/
+/reports/
 
 # agent-kit snapshot embedded by build.rs (ADR-015): built from kit.pin, not tracked.
 /crates/ctp-app/kit/

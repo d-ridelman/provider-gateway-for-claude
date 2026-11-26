@@ -18,7 +18,8 @@ Code в окне в профиле оставался `sidebarMode: "epitaxy"`, 
 При этом Chat в 3P не требует ни MSIX, ни VM: `chatIn3p` объявлен supported,
 `keepsSessionCliOnHost()` включается провайдером custom-3p, а проверки `Exi()`/HCS/VMP
 касаются только Cowork и advanced file analysis (документация Anthropic и разбор кода —
-`research_notes/Chat в Claude Desktop при 3P/`, отчёт `reports/Chat в Claude Desktop при 3P.md`).
+`notes/research_notes/Chat в Claude Desktop при 3P/`, отчёт
+`notes/reports/Chat в Claude Desktop при 3P.md`; каталоги в git не попадают).
 Переключатель «Чат / Cowork» в композере появляется, когда Cowork доступен устройству; на
 копии PGC это дают патчи `app.asar` из ADR-018.
 
