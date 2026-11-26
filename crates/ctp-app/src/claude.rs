@@ -629,7 +629,12 @@ fn read_entry(path: &Path) -> Result<Option<serde_json::Value>, String> {
 /// Запись настроек Claude в `configLibrary`: наши ключи поверх существующей записи. Claude
 /// уже открыт (`running`) — файл не трогаем, пока наши ключи те же: он сам зашифровал ключ
 /// шлюза, и лишняя запись ничего не даст. `true` — наши ключи изменились.
-fn sync_entry(library: &Path, entry: &serde_json::Value, running: bool) -> Result<bool, String> {
+fn sync_entry(
+    library: &Path,
+    entry: &serde_json::Value,
+    running: bool,
+    own_profile: bool,
+) -> Result<bool, String> {
     let id = LIBRARY_ID;
     let entry_path = library.join(format!("{id}.json"));
     let (merged, changed) = merge_entry(read_entry(&entry_path)?, entry);
@@ -638,9 +643,18 @@ fn sync_entry(library: &Path, entry: &serde_json::Value, running: bool) -> Resul
     }
     // Профиль наш собственный: старые записи (в них локальный токен) убираем, чтобы не
     // копились по одной на каждый запуск. Своя запись остаётся: в ней уцелеют ключи,
-    // которые человек менял в окне Claude.
-    if let Ok(entries) = fs::read_dir(library) {
-        for other in entries.flatten() {
+    // которые человек менял в окне Claude. В стандартном профиле (`vm`) там живут чужие
+    // записи, их не трогаем, а в списке `_meta.json` оставляем.
+    let meta_path = library.join("_meta.json");
+    let mut entries = if own_profile {
+        Vec::new()
+    } else {
+        read_entry(&meta_path)?
+            .and_then(|meta| meta.get("entries").and_then(|e| e.as_array()).cloned())
+            .unwrap_or_default()
+    };
+    if own_profile && let Ok(found) = fs::read_dir(library) {
+        for other in found.flatten() {
             let path = other.path();
             let ours = path == entry_path || path.file_name().is_some_and(|n| n == "_meta.json");
             if !ours && path.extension().is_some_and(|ext| ext == "json") {
@@ -648,11 +662,10 @@ fn sync_entry(library: &Path, entry: &serde_json::Value, running: bool) -> Resul
             }
         }
     }
+    entries.retain(|e| e.get("id").and_then(|v| v.as_str()) != Some(id));
+    entries.push(json!({"id": id, "name": "Provider Gateway"}));
     write_json(&entry_path, &merged)?;
-    write_json(
-        &library.join("_meta.json"),
-        &json!({"entries": [{"id": id, "name": "Provider Gateway"}], "appliedId": id}),
-    )?;
+    write_json(&meta_path, &json!({"entries": entries, "appliedId": id}))?;
     Ok(changed)
 }
 
@@ -717,12 +730,11 @@ pub fn launch(
             "AppData\\Local folder not found"
         )
     })?;
-    let profile = base.join("Claude-3p");
     // Claude уже открыт в этом профиле: его не перезапускаем, русскую копию не пересобираем
     // (она занята), запись настроек меняем только если изменились наши ключи.
-    let running = profile_in_use(&profile);
-    // VM-режим: служба CoworkVMService принимает только exe из каталога пакета (ADR-018),
-    // поэтому запускается настоящий claude.exe пакета с профилем PGC, без русской копии.
+    // VM-режим: служба CoworkVMService принимает только exe из каталога пакета и хранит образ
+    // по фиксированному пути `%LOCALAPPDATA%\Claude-3p\vm_bundles` (junction отвергает,
+    // ADR-018). Поэтому профилем там служит стандартная папка, а не папка PGC.
     let mut vm_note = String::new();
     let msix = if config.cowork_mode == "vm" {
         let found = crate::msix::detect();
@@ -742,6 +754,25 @@ pub fn launch(
         None
     };
     let vm = msix.is_some();
+    let profile = if vm {
+        real_local_appdata()
+            .ok_or_else(|| {
+                tr!(
+                    "Не найдена папка AppData\\Local",
+                    "AppData\\Local folder not found"
+                )
+            })?
+            .join("Claude-3p")
+    } else {
+        base.join("Claude-3p")
+    };
+    let running = profile_in_use(&profile);
+    if vm && config.russian_ui {
+        vm_note.push_str(&tr!(
+            " Русского перевода в этом режиме нет: пакетный Claude не переводится.",
+            " There is no Russian translation in this mode: the packaged Claude is not translated."
+        ));
+    }
     let copies = base.join("claude-ru");
     let original = exe.clone();
     // Копия и без русского: только в ней процессы Claude (сессии Code, их npm, uv, git,
@@ -783,20 +814,26 @@ pub fn launch(
         set_deployment_mode(&profile.join("claude_desktop_config.json"))?;
     }
 
-    let changed = sync_entry(&library, &desired_entry(config, status), running)?;
+    let changed = sync_entry(&library, &desired_entry(config, status), running, !vm)?;
 
     let mut command = Command::new(&exe);
+    // VM-режим: профиль стандартный, его путь служба вычисляет сама; ни аргумента, ни подмены
+    // `LOCALAPPDATA` там быть не должно (ADR-018).
+    if !vm {
+        command
+            .arg(format!("--user-data-dir={}", profile.display()))
+            .env("LOCALAPPDATA", &base)
+            .env("CLAUDE_USER_DATA_DIR", &profile);
+    }
     command
-        .arg(format!("--user-data-dir={}", profile.display()))
-        .env("LOCALAPPDATA", &base)
-        .env("CLAUDE_USER_DATA_DIR", &profile)
         // Адрес с секретом браузерного эндпоинта нужен только шлюзу, не Claude и его инструментам.
         .env_remove(crate::fetch::URL_ENV)
         .current_dir(exe.parent().unwrap_or_else(|| Path::new(".")));
     // Настоящая AppData\Local для процессов, которые запускает копия (ruui::ENV_PRELUDE).
     // Из системной папки Windows, а не из окружения: приложение могли запустить из сессии
     // Claude, у которой оно само подменено.
-    if let Some(real) = real_local_appdata() {
+    // В VM-режиме подмены нет, и прелюдии копии тоже нет — переменная не нужна.
+    if !vm && let Some(real) = real_local_appdata() {
         command.env(crate::ruui::REAL_LOCALAPPDATA_VAR, real);
     }
     // Сессиям вкладки Code — те же переменные Claude Code, что и консоли: Desktop отдаёт им
@@ -1377,7 +1414,7 @@ mod tests {
 
         // Первый запуск: файла нет — пишем запись и `_meta.json`, чужие json убираем.
         fs::write(dir.join("old-random-id.json"), "{}").unwrap();
-        assert!(sync_entry(&dir, &ours, false).unwrap());
+        assert!(sync_entry(&dir, &ours, false, true).unwrap());
         assert!(dir.join("_meta.json").is_file());
         assert!(!dir.join("old-random-id.json").exists());
         assert_eq!(read(&path)["inferenceModels"], json!([model("a")]));
@@ -1389,7 +1426,7 @@ mod tests {
         fs::write(&path, serde_json::to_string(&sealed).unwrap()).unwrap();
         fs::write(dir.join("other.json"), "{}").unwrap();
         let before = fs::read_to_string(&path).unwrap();
-        assert!(!sync_entry(&dir, &ours, true).unwrap());
+        assert!(!sync_entry(&dir, &ours, true, true).unwrap());
         assert_eq!(fs::read_to_string(&path).unwrap(), before);
         assert!(
             dir.join("other.json").exists(),
@@ -1398,7 +1435,7 @@ mod tests {
 
         // Claude открыт, список моделей стал длиннее: записано целиком, чужой ключ цел.
         let longer = library_entry(&config, &status_with(Vec::new()), &[model("a"), model("b")]);
-        assert!(sync_entry(&dir, &longer, true).unwrap());
+        assert!(sync_entry(&dir, &longer, true, true).unwrap());
         let now = read(&path);
         assert_eq!(now["inferenceModels"], json!([model("a"), model("b")]));
         assert_eq!(now["autoModeEnabled"], true);
@@ -1410,7 +1447,7 @@ mod tests {
 
         // Битая запись: копия рядом, пишем свою.
         fs::write(&path, "{ not json").unwrap();
-        assert!(sync_entry(&dir, &ours, false).unwrap());
+        assert!(sync_entry(&dir, &ours, false, true).unwrap());
         assert!(read(&path).is_object());
         let backups: Vec<_> = fs::read_dir(&dir)
             .unwrap()

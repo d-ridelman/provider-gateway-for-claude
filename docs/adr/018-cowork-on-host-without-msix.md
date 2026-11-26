@@ -60,7 +60,12 @@ was not started from the package directory C:\Program Files\WindowsApps\Claude_�
    - `off` — только Chat, как раньше;
    - `vm` — если найден MSIX и служба `CoworkVMService`, запускается настоящий `claude.exe` из
      каталога пакета через `Invoke-CommandInDesktopPackage` и `cmd.exe` (`set` переменных,
-     `-PreventBreakaway`), с профилем и конфигом PGC; русского перевода в этом режиме нет.
+     `-PreventBreakaway`) со **стандартным** профилем `%LOCALAPPDATA%\Claude-3p`: служба хранит
+     образ по этому пути и junction отвергает, поэтому подмены `LOCALAPPDATA` и `--user-data-dir`
+     в этом режиме нет. Конфиг шлюза PGC пишется в стандартную `configLibrary` поверх чужого:
+     файлы других записей не удаляются, в `_meta.json` они остаются, `appliedId` — наш.
+     Работают ключи, модели, артефакты, поиск и Code; русского перевода нет — служба принимает
+     только exe из каталога пакета, а его asar подписан и только для чтения, переводить нечего.
      Если MSIX или службы нет, PGC откатывается на host и говорит об этом;
    - выбор — в окне настроек, с пояснением к каждому режиму.
 
