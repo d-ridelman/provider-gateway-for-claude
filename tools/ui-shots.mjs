@@ -15,7 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uiDir = path.join(root, "crates", "ctp-app", "ui");
 // The stub's version comes from Cargo.toml: a copy in the stub drifts with every release.
 const VERSION =
-  /^version = "([^"]+)"/m.exec(fs.readFileSync(path.join(root, "crates", "ctp-app", "Cargo.toml"), "utf8"))?.[1] ?? "0.0.0";
+  /^version = "([^"]+)"/m.exec(fs.readFileSync(path.join(root, "Cargo.toml"), "utf8"))?.[1] ?? "0.0.0";
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 const outDir = path.resolve(opt("--out", path.join(root, "state", "shots")));

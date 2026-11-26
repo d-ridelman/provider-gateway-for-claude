@@ -16,10 +16,9 @@ Code в окне в профиле оставался `sidebarMode: "epitaxy"`, 
 открывался в Code. Пользователь видел только Code и считал, что Chat не работает.
 
 При этом Chat в 3P не требует ни MSIX, ни VM: `chatIn3p` объявлен supported,
-`keepsSessionCliOnHost()` включается провайдером custom-3p, а проверки `Exi()`/HCS/VMP
-касаются только Cowork и advanced file analysis (документация Anthropic и разбор кода —
-`notes/research_notes/Chat в Claude Desktop при 3P/`, отчёт
-`notes/reports/Chat в Claude Desktop при 3P.md`; каталоги в git не попадают).
+host-loop включается провайдером custom-3p, а проверки установки/HCS/VMP
+касаются только Cowork и advanced file analysis (документация Anthropic; разбор кода — в
+личных заметках владельца, в git они не входят).
 Переключатель «Чат / Cowork» в композере появляется, когда Cowork доступен устройству; на
 копии PGC это дают патчи `app.asar` из ADR-018.
 
@@ -43,7 +42,7 @@ Code в окне в профиле оставался `sidebarMode: "epitaxy"`, 
 - Проверено вживую 26.11.2026 на изолированном PGC (Claude 6.28899.6, профиль с
   `sidebarMode: "epitaxy"`): PGC записал `chat`, окно открылось на Chat («You're here!»).
   Переключателя «Чат / Cowork» в композере нет: он принадлежит новому интерфейсу, который в 3P
-  выключен флагом `__gb__2436273311` (hub look / web delivery), а в статической карте 3P этого
+  выключен внутренним флагом нового интерфейса (hub look / web delivery), а в статической карте 3P этого
   флага нет. Включение проверено вживую: с пропатченной картой новый интерфейс поднимается, но
   падает — 3P-заглушка `/api/bootstrap` отвечает 503 (`RangeError`), окно показывает «Claude is
   temporarily unavailable». Значит, флага мало: нужна поддержка нового bootstrap в стабе 3P, и
