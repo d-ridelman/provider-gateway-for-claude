@@ -4,6 +4,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-26
+
 ### Added
 
 - **Cowork in Claude Desktop on 3P, without an MSIX install.** In 3P Claude runs Cowork sessions on the host (`keepsSessionCliOnHost()`), yet its `msix_required` check turns Cowork off for any copy not started from MSIX. The Russian copy now carries small `app.asar` patches that skip that check, the VM capability and Windows-feature checks and the VM image download (over 1 GB), so Cowork opens on the portable copy with no administrator rights and no VM; the gateway profile gets `desktopHome: "standard"`. Checked in Windows Sandbox: a message starts a Cowork session that runs Claude Code on the host. File tools, web and MCP work. Cowork's own shell tool lives in the VM, so on the host the session gets Claude Code's PowerShell and Bash instead: not isolated, like the Code tab on Windows, and every call asks for approval (checked: a file-writing command waited, then ran and wrote the file). Advanced file analysis stays unavailable (ADR-018).
