@@ -52,7 +52,11 @@ pub fn detect(config: &Config) -> Option<PathBuf> {
         return Some(stub);
     }
     let programs = local.join("Programs").join("claude").join("claude.exe");
-    programs.is_file().then_some(programs)
+    if programs.is_file() {
+        return Some(programs);
+    }
+    // Установщик Anthropic ставит MSIX и убирает Squirrel-папку (ADR-021).
+    crate::msix::installed_exe()
 }
 
 fn version_key(name: &str) -> Vec<u64> {
@@ -995,15 +999,12 @@ type Before = crate::ruui::registry::Snapshot;
 type Before = ();
 
 fn repair_for(copies: &Path, original_exe: &Path, before: Option<&Before>) {
-    // Только для Claude в папке версии `…\app-X\claude.exe`: иначе «папка установки»
-    // вычисляется неверно (заглушка Squirrel, Programs) и чинить не на что.
+    // Только для Claude в папке версии (`…\app-X\claude.exe` или `<package>\app\claude.exe`):
+    // иначе «папка установки» вычисляется неверно (заглушка Squirrel, Programs).
     #[cfg(windows)]
-    if let Some(app) = original_exe.parent().filter(|app| {
-        app.file_name()
-            .is_some_and(|n| n.to_string_lossy().starts_with("app-"))
-    }) {
-        let installed = app.parent().unwrap_or(app);
-        crate::ruui::registry::repair(copies, installed, app, before);
+    if let Some(app) = crate::upkeep::app_dir(original_exe) {
+        let installed = app.parent().unwrap_or(&app);
+        crate::ruui::registry::repair(copies, installed, &app, before);
     }
     #[cfg(not(windows))]
     let _ = (copies, original_exe, before);

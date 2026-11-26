@@ -72,11 +72,18 @@ impl Check {
     }
 }
 
-/// `…\app-6.6395.0\claude.exe` → папка версии; заглушка или свой путь — `None`.
+/// Папка версии: `…\app-6.6395.0\claude.exe` или `<package>\app\claude.exe` (MSIX);
+/// заглушка или свой путь — `None`.
 pub fn app_dir(exe: &Path) -> Option<PathBuf> {
     let dir = exe.parent()?;
     let name = dir.file_name()?.to_str()?;
-    name.starts_with("app-").then(|| dir.to_path_buf())
+    if name.starts_with("app-") {
+        return Some(dir.to_path_buf());
+    }
+    let package = dir.parent()?.file_name()?.to_str()?;
+    (name == "app"
+        && (package.starts_with("Claude_") || package.starts_with("AnthropicPBC.Claude_")))
+    .then(|| dir.to_path_buf())
 }
 
 /// Правило из `app.asar`: литерал вида `X=/…deepseek…/;function f(e){return X.test(e.toLowerCase())}`.
@@ -1203,6 +1210,15 @@ mod tests {
             Path::new(r"C:\x\AnthropicClaude\app-6.1.0")
         );
         assert!(app_dir(Path::new(r"C:\x\AnthropicClaude\claude.exe")).is_none());
+        // MSIX: <package>\app\claude.exe (ADR-021).
+        let package = Path::new(
+            r"C:\Program Files\WindowsApps\Claude_6.28899.6.0_x64__pzs8sxrjxfjjc\app\claude.exe",
+        );
+        assert_eq!(
+            app_dir(package).unwrap(),
+            Path::new(r"C:\Program Files\WindowsApps\Claude_6.28899.6.0_x64__pzs8sxrjxfjjc\app")
+        );
+        assert!(app_dir(Path::new(r"C:\x\SomeOther\app\claude.exe")).is_none());
     }
 
     /// Вся самопроверка на установленном Claude, папка настроек временная, без сборки

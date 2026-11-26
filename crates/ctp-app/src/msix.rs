@@ -39,6 +39,54 @@ if (-not (Test-Path $exe)) {
 [pscustomobject]@{ family = $p.PackageFamilyName; id = $app.Id; version = [string]$p.Version; exe = $exe } | ConvertTo-Json -Compress
 "#;
 
+/// `claude.exe` из пакета текущего пользователя — без PowerShell: раздел AppModel хранит
+/// корень установки. `detect` зовут часто, а `Get-AppxPackage` стоит 1,3 с.
+#[cfg(windows)]
+pub fn installed_exe() -> Option<PathBuf> {
+    use windows_registry::CURRENT_USER;
+    const REPO: &str = r"Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\Repository\Packages";
+    let repo = CURRENT_USER.open(REPO).ok()?;
+    let mut best: Option<(Vec<u64>, PathBuf)> = None;
+    for name in repo.keys().ok()? {
+        let Some(version) = name
+            .strip_prefix("Claude_")
+            .or_else(|| name.strip_prefix("AnthropicPBC.Claude_"))
+            .and_then(|rest| rest.split('_').next())
+        else {
+            continue;
+        };
+        if !version
+            .split('.')
+            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        {
+            continue;
+        }
+        let key: Vec<u64> = version
+            .split('.')
+            .filter_map(|part| part.parse().ok())
+            .collect();
+        let Ok(root) = repo
+            .open(&name)
+            .and_then(|package| package.get_string("PackageRootFolder"))
+        else {
+            continue;
+        };
+        let exe = PathBuf::from(root).join("app").join("claude.exe");
+        if !exe.is_file() {
+            continue;
+        }
+        if best.as_ref().is_none_or(|(have, _)| key > *have) {
+            best = Some((key, exe));
+        }
+    }
+    best.map(|(_, exe)| exe)
+}
+
+#[cfg(not(windows))]
+pub fn installed_exe() -> Option<PathBuf> {
+    None
+}
+
 /// PowerShell без окна консоли: окно мигало бы при каждом запуске Claude из пакета.
 fn powershell(script: &str) -> Command {
     let mut command = Command::new("powershell.exe");
@@ -200,6 +248,15 @@ mod tests {
     #[test]
     fn powershell_quotes_single_quotes() {
         assert_eq!(quote(r"C:\a'b\claude.exe"), r"'C:\a''b\claude.exe'");
+    }
+
+    #[test]
+    fn registry_finds_the_installed_package() {
+        // На машине без пакета проверять нечего (CI); где он есть — путь должен существовать.
+        if let Some(exe) = installed_exe() {
+            assert!(exe.is_file(), "{}", exe.display());
+            assert!(exe.ends_with("app\\claude.exe") || exe.ends_with("app/claude.exe"));
+        }
     }
 
     #[test]

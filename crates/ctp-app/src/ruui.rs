@@ -739,19 +739,40 @@ pub fn ensure_copy(
 
 static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-/// Версия (`app-…`) и метка копии: исходники, патч и перевод. Совпала метка — копия годна.
-fn copy_marker(app_dir: &Path, ru_json: &[u8], catalog: &[u8]) -> Result<(String, String)> {
-    let version = app_dir
+/// Имя папки версии в кеше копий: `app-X` у портативного и Squirrel, у MSIX папка — `app`
+/// внутри `Claude_X_x64__…` (ADR-021).
+fn version_folder(app_dir: &Path) -> Result<String> {
+    let name = app_dir
         .file_name()
         .and_then(|n| n.to_str())
-        .filter(|n| n.starts_with("app-"))
-        .with_context(|| {
-            tr!(
-                "Claude найден не в папке версии app-…",
-                "Claude is not in an app-… version folder"
-            )
-        })?
-        .to_string();
+        .unwrap_or_default();
+    if name.starts_with("app-") {
+        return Ok(name.to_string());
+    }
+    let package = app_dir
+        .parent()
+        .and_then(|p| p.file_name())
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    let version = package
+        .strip_prefix("Claude_")
+        .or_else(|| package.strip_prefix("AnthropicPBC.Claude_"))
+        .and_then(|rest| rest.split('_').next())
+        .filter(|v| {
+            v.split('.')
+                .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        });
+    version.map(|v| format!("app-{v}")).with_context(|| {
+        tr!(
+            "Claude найден не в папке версии app-…",
+            "Claude is not in an app-… version folder"
+        )
+    })
+}
+
+/// Версия (`app-…`) и метка копии: исходники, патч и перевод. Совпала метка — копия годна.
+fn copy_marker(app_dir: &Path, ru_json: &[u8], catalog: &[u8]) -> Result<(String, String)> {
+    let version = version_folder(app_dir)?;
     let marker = json!({
         "rev": PATCH_REV,
         "exe": stamp(&app_dir.join("claude.exe"))?,
@@ -1408,6 +1429,44 @@ mod tests {
             "{text}"
         );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[ignore = "needs an installed Claude MSIX package and about 1 GB of disk"]
+    fn a_copy_from_the_msix_package_is_built_and_patched() {
+        let Some(exe) = crate::msix::installed_exe() else {
+            return;
+        };
+        let app = crate::upkeep::app_dir(&exe).expect("package app dir");
+        let dir = temp_dir("msix-copy");
+        let cache = dir.join("cache");
+        let ru = big_translation();
+        let built = ensure_copy(&app, &cache, &ru, &[]).unwrap();
+        let version = version_folder(&app).unwrap();
+        assert_eq!(built, cache.join(&version).join("claude.exe"));
+        assert_eq!(
+            copy_state(&app, &cache, &ru, &[]).unwrap(),
+            CopyState::Current
+        );
+        // В копии — патч host Cowork, а не исходный app.asar пакета.
+        assert_ne!(
+            fs::read(app.join("resources").join("app.asar")).unwrap(),
+            fs::read(cache.join(&version).join("resources").join("app.asar")).unwrap()
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn copy_folder_version_comes_from_the_package_name() {
+        let package =
+            Path::new(r"C:\Program Files\WindowsApps\Claude_6.28899.6.0_x64__pzs8sxrjxfjjc\app");
+        assert_eq!(version_folder(package).unwrap(), "app-6.28899.6.0");
+        assert_eq!(
+            version_folder(Path::new(r"C:\x\app-7.37095.0")).unwrap(),
+            "app-7.37095.0"
+        );
+        assert!(version_folder(Path::new(r"C:\x\Claude\app")).is_err());
     }
 
     #[test]

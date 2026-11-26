@@ -49,3 +49,4 @@
 | [018](018-cowork-on-host-without-msix.md) | Cowork в 3p: host-loop без MSIX; VM — отдельным режимом | Accepted |
 | [019](019-compact-window.md) | Окно сжатия: одна настройка PGC для Desktop и консоли | Accepted |
 | [020](020-chat-surface-first.md) | Окно PGC открывается в Chat, а не в Code | Accepted |
+| [021](021-msix-as-claude-source.md) | Копия Claude собирается из MSIX-пакета, когда Squirrel-папки нет | Accepted |

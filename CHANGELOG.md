@@ -4,6 +4,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **The translated copy can be built from the MSIX package.** Anthropic's Windows installer now ships Claude as an MSIX package and removes the Squirrel folder, so `Claude Desktop not found` would appear again once the portable nupkg feed goes away. When no explicit path, Squirrel folder or `Programs\claude` is found, PGC now takes `claude.exe` from the installed package (found through the per-user `AppModel\Repository\Packages` registry key, no PowerShell: 33 ms instead of 1.3 s for `Get-AppxPackage`). The copy folder version comes from the package name (`Claude_6.28899.6.0_x64__…` → `app-6.28899.6.0`); registry repair and the upkeep checks accept `<package>\app` as a version folder. Priority is unchanged, so a configured portable Claude is not displaced by an older package. Checked live on the real package: a copy was built and patched in 25 s (ADR-021). Not checked: launching that copy.
+
 ### Fixed
 
 - **"Update the installed Claude" no longer fails with 403.** `claude.ai` now serves the Desktop setup link only to a browser User-Agent and answers `provider-gateway-for-claude/…` with `403 Forbidden`. That one request uses a browser User-Agent; the portable download from `downloads.claude.ai` is unchanged.
