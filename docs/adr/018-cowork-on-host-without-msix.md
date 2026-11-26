@@ -6,15 +6,15 @@
 
 ## Context
 
-Claude Desktop в 3p (`inferenceProvider: gateway`) принудительно включает host loop:
-`keepsSessionCliOnHost() { return !0 }` в `index.chunk-*.js` провайдера custom-3p. Сессия
+Claude Desktop в 3p (`inferenceProvider: gateway`) принудительно включает host loop: код
+провайдера custom-3p в `index.chunk-*.js` всегда выбирает сессию на хосте. Сессия
 Cowork в 3p выполняется на хосте, а не в VM; попытка продолжить старую VM-сессию отклоняется
 («created to run inside the VM sandbox, which this deployment no longer uses»).
 
-Тем не менее проверка `Exi()` отключает Cowork на любой копии, запущенной не из MSIX:
-`if (e === "win32" && !Qi()) return { unsupportedCode: "msix_required" }`, затем проверяются
-Windows 10 19041+, службы HCS и `connectNamedPipeSystemOwned`. `Qi()` смотрит только на
-`process.windowsStore` или сегмент `WindowsApps` в пути `claude.exe`.
+Тем не менее проверка установки отключает Cowork на любой копии, запущенной не из MSIX
+(код `msix_required`), затем проверяются Windows 10 19041+, службы HCS и
+`connectNamedPipeSystemOwned`. Признак MSIX — `process.windowsStore` или сегмент `WindowsApps`
+в пути `claude.exe`.
 
 Штатный MSIX на Windows требует администратора: пакет регистрирует службу
 `CoworkVMService` (LocalSystem), без неё установка идёт «без Cowork» (`0x80073D28`).
@@ -31,28 +31,31 @@ was not started from the package directory C:\Program Files\WindowsApps\Claude_�
 
 ## Decision
 
-1. В `app.asar` копии PGC применяются восемь патчей:
-   - в ветке `msix_required` условие `!Qi()` заменяется на `!1`;
-   - E2E-проверка `<fn>("CLAUDE_E2E_ASSUME_VM_SUPPORTED") ? <ok> : <bad>()` заменяется на
-     `!0 ? <ok> : <bad>()`, то есть поддержка VM считается подтверждённой (иначе на машине
-     без HCS/VMP остаётся `hcs_not_available`);
+1. В `app.asar` копии PGC применяются девять патчей:
+   - в ветке `msix_required` проверка установки заменяется на «всегда да»;
+   - E2E-проверка переменной окружения заменяется на «поддержка VM подтверждена» (иначе на
+     машине без HCS/VMP остаётся `hcs_not_available`);
    - проверка VirtualMachinePlatform (`isVirtualMachinePlatformEnabledOrUnneeded`) всегда
      отвечает «да»: при «VM поддерживается» окно Claude иначе требует включить компонент
      Windows (права администратора) и не стартует сессию (`VMP_NOT_ENABLED`);
    - `downloadVM` (образ VM, больше 1 ГБ) и `prepareForVM` (Linux-версия Claude Code) выполняются
-     только если копия запущена из MSIX (`process.windowsStore` или сегмент `WindowsApps`, как у
-     `Qi()`); иначе при «VM поддерживается» они качались впустую на первом сообщении;
+     только если копия запущена из MSIX (`process.windowsStore` или сегмент `WindowsApps`);
+     иначе при «VM поддерживается» они качались впустую на первом сообщении;
    - IPC `startVM`, который окно зовёт при старте сессии, вне MSIX сразу отвечает «успех»: иначе
      окно показывает красный баннер «Не удалось запустить рабочее пространство (prepare: no_vm)»;
+   - внутренний запуск VM, который главный процесс делает сам при старте сессии, вне MSIX
+     выходит по ветке «не поддерживается»: без этого он доходит до `prepareForVM`, получает
+     `no_vm` и тот же баннер появляется вопреки патчу IPC;
    - shell: вне MSIX `Bash` и `PowerShell` не запрещаются, псевдоним `Bash` → VM-инструмент
      снимается, сам VM-инструмент закрывается, а фильтр белого списка `tools` добавляет `Bash` и
      `PowerShell`. В `allowedTools` они не попадают (их вычищает список запретов), поэтому
      вызовы идут через подтверждение, как и во вкладке Code.
-   Патчи ищутся по строке сообщения `EmeqFY8DA1`, литералу `CLAUDE_E2E_ASSUME_VM_SUPPORTED` и
-   форме функции проверки VMP, а не по именам минифицированных функций. Если якорь не найден
+   Патчи ищутся по тексту сообщения, имени E2E-переменной и форме функции проверки VMP, а не
+   по именам минифицированных функций. Если якорь не найден
    или найден не один раз, копия собирается без патча, PGC пишет предупреждение, а
    самопроверка (`upkeep::check`) показывает, что патч не ложится на эту версию.
-2. `Qi()` не трогаем: VM-клиент не загружается, Cowork идёт host-loop, VM не скачивается.
+2. Признак MSIX не подделываем: VM-клиент не загружается, Cowork идёт host-loop, VM не
+   скачивается.
 3. В 3p-запись пишутся `desktopHome: "standard"` (Cowork разрешён), `projectsEnabled: true`;
    режим `off` пишет `desktopHome: "no-vm"`.
 4. Настройка `coworkMode`:
@@ -77,11 +80,11 @@ was not started from the package directory C:\Program Files\WindowsApps\Claude_�
 - **Закрыто 1 (проверено в песочнице).** Образ VM и Linux-версия Claude Code качались на первом
   сообщении, потому что при «VM поддерживается» их запускают `downloadVM` и `prepareForVM`. Два
   патча пропускают их, если копия запущена не из MSIX (`process.windowsStore` или сегмент
-  `WindowsApps`, как у `Qi()`). Результат: скачан только хостовый Claude Code, ни `rootfs`, ни
+  `WindowsApps`). Результат: скачан только хостовый Claude Code, ни `rootfs`, ни
   `claude-code-vm`, ни `vm_bundles`.
 - **Закрыто 2 (проверено в песочнице).** Штатный shell Cowork — `mcp__workspace__bash` — живёт
-  только в VM: без неё он отвечал «Workspace unavailable … (VM is not used here)». Седьмой патч
-  (shell) оставляет модели штатные `Bash` и `PowerShell` Claude Code. Проверено: модель получает
+  только в VM: без неё он отвечал «Workspace unavailable … (VM is not used here)». Патч shell
+  оставляет модели штатные `Bash` и `PowerShell` Claude Code. Проверено: модель получает
   `PowerShell`, вызов ждёт подтверждения («Claude хочет использовать инструмент PowerShell»,
   «Отклонить» / «Разрешить один раз»), после «Разрешить» команда выполняется на хосте и
   возвращает вывод (`echo` безобидная read-only команда и проходит без вопроса, запись файла —

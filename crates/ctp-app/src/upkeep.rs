@@ -657,21 +657,24 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
         ),
     }
 
-    match ruui::host_cowork_available(&app) {
-        Ok(()) => check.push(
-            true,
-            tr!(
-                "Патч Cowork (host-loop) ложится на эту версию",
-                "Host-loop Cowork patch applies to this version"
+    // Патч нужен только host-режиму: `off` не включает Cowork, `vm` запускает exe пакета.
+    if config.cowork_mode == "host" {
+        match ruui::host_cowork_available(&app) {
+            Ok(()) => check.push(
+                true,
+                tr!(
+                    "Патч Cowork (host-loop) ложится на эту версию",
+                    "Host-loop Cowork patch applies to this version"
+                ),
             ),
-        ),
-        Err(exc) => check.push(
-            false,
-            tr!(
-                "Патч Cowork (host-loop) не ложится: {exc:#}",
-                "Host-loop Cowork patch does not apply: {exc:#}"
+            Err(exc) => check.push(
+                false,
+                tr!(
+                    "Патч Cowork (host-loop) не ложится: {exc:#}",
+                    "Host-loop Cowork patch does not apply: {exc:#}"
+                ),
             ),
-        ),
+        }
     }
 
     if config.russian_ui {

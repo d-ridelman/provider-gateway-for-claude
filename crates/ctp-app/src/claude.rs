@@ -520,11 +520,15 @@ fn library_entry(
         "standard"
     });
     entry["projectsEnabled"] = json!(true);
-    if config.artifacts {
-        entry["artifactsEnabled"] = json!(true);
-        entry["artifactsDesignEnabled"] = json!(true);
-        entry["artifactsSlidesEnabled"] = json!(true);
-    }
+    // `null` — «убрать ключ»: снятая галочка возвращает выбор Claude, а не залипает включённой.
+    let artifacts = if config.artifacts {
+        json!(true)
+    } else {
+        serde_json::Value::Null
+    };
+    entry["artifactsEnabled"] = artifacts.clone();
+    entry["artifactsDesignEnabled"] = artifacts.clone();
+    entry["artifactsSlidesEnabled"] = artifacts;
     entry
 }
 
@@ -594,11 +598,18 @@ fn merge_entry(
 ) -> (serde_json::Value, bool) {
     let ours = entry.as_object().cloned().unwrap_or_default();
     let Some(mut merged) = existing.filter(serde_json::Value::is_object) else {
-        return (entry.clone(), true);
+        let fresh = ours
+            .into_iter()
+            .filter(|(_, value)| !value.is_null())
+            .collect();
+        return (serde_json::Value::Object(fresh), true);
     };
     let changed = ours.iter().any(|(key, value)| {
         if key == API_KEY_FIELD {
             merged.get(key).is_none()
+        } else if value.is_null() {
+            // `null` — «ключа быть не должно»: снятая галочка в окне PGC.
+            merged.get(key).is_some()
         } else {
             // Claude сам убирает из записи ключи со значением по умолчанию, поэтому
             // `false` в нашу запись не кладётся (см. `library_entry`).
@@ -606,7 +617,13 @@ fn merge_entry(
         }
     });
     if let Some(object) = merged.as_object_mut() {
-        object.extend(ours);
+        for (key, value) in ours {
+            if value.is_null() {
+                object.remove(&key);
+            } else {
+                object.insert(key, value);
+            }
+        }
     }
     (merged, changed)
 }
@@ -665,12 +682,20 @@ fn sync_entry(
     // которые человек менял в окне Claude. В стандартном профиле (`vm`) там живут чужие
     // записи, их не трогаем, а в списке `_meta.json` оставляем.
     let meta_path = library.join("_meta.json");
-    let mut entries = if own_profile {
-        Vec::new()
+    let (mut entries, meta_readable) = if own_profile {
+        (Vec::new(), true)
     } else {
-        read_entry(&meta_path)?
-            .and_then(|meta| meta.get("entries").and_then(|e| e.as_array()).cloned())
-            .unwrap_or_default()
+        match read_entry(&meta_path)? {
+            Some(meta) => (
+                meta.get("entries")
+                    .and_then(|e| e.as_array())
+                    .cloned()
+                    .unwrap_or_default(),
+                true,
+            ),
+            // Не разобрали (read_entry уже сделал копию): список чужих записей не перезаписываем.
+            None => (Vec::new(), !meta_path.exists()),
+        }
     };
     if own_profile && let Ok(found) = fs::read_dir(library) {
         for other in found.flatten() {
@@ -684,7 +709,9 @@ fn sync_entry(
     entries.retain(|e| e.get("id").and_then(|v| v.as_str()) != Some(id));
     entries.push(json!({"id": id, "name": "Provider Gateway"}));
     write_json(&entry_path, &merged)?;
-    write_json(&meta_path, &json!({"entries": entries, "appliedId": id}))?;
+    if meta_readable {
+        write_json(&meta_path, &json!({"entries": entries, "appliedId": id}))?;
+    }
     Ok(changed)
 }
 
@@ -1372,13 +1399,15 @@ mod tests {
         let status = status_with(Vec::new());
         let config = Config::default();
         let ours = library_entry(&config, &status, &[]);
-        // Нет записи (или она не объект) — пишем свою, это «изменилось».
-        assert_eq!(merge_entry(None, &ours), (ours.clone(), true));
+        // Нет записи (или она не объект) — пишем свою, это «изменилось»; `null` в файл не идёт.
+        let (fresh, changed) = merge_entry(None, &ours);
+        assert!(changed);
+        assert_eq!(fresh.get("artifactsEnabled"), None);
         assert!(merge_entry(Some(json!([1])), &ours).1);
 
         // Claude зашифровал ключ и добавил свою настройку: наши ключи те же — не изменилось,
         // чужое осталось, ключ шлюза снова открытый (Claude зашифрует его сам).
-        let mut seen = ours.clone();
+        let mut seen = fresh;
         seen["inferenceGatewayApiKey"] = json!("__sealed__:v1:xxx");
         seen["autoModeEnabled"] = json!(true);
         let (merged, changed) = merge_entry(Some(seen), &ours);
@@ -1390,22 +1419,25 @@ mod tests {
         );
 
         // Изменился порт, флажок браузера или список моделей — изменилось.
-        let mut moved = ours.clone();
+        let written = merge_entry(None, &ours).0;
+        let mut moved = written.clone();
         moved["inferenceGatewayBaseUrl"] = json!("http://127.0.0.1:1");
         assert!(merge_entry(Some(moved), &ours).1);
         // Браузер: без нашей галочки ключа в `ours` нет — чужое значение не «изменение».
-        let mut chosen_in_claude = ours.clone();
+        let mut chosen_in_claude = written.clone();
         chosen_in_claude["builtinBrowserEnabled"] = json!(true);
         let (merged, changed) = merge_entry(Some(chosen_in_claude), &ours);
         assert!(!changed && merged["builtinBrowserEnabled"] == true);
         // С галочкой: нет ключа или он выключен — изменилось, уже включён — нет.
         let mut on = ours.clone();
         on["builtinBrowserEnabled"] = json!(true);
-        assert!(merge_entry(Some(ours.clone()), &on).1);
+        assert!(merge_entry(Some(written.clone()), &on).1);
         let mut off = ours.clone();
         off["builtinBrowserEnabled"] = json!(false);
         assert!(merge_entry(Some(off), &on).1);
-        assert!(!merge_entry(Some(on.clone()), &on).1);
+        let mut already = written;
+        already["builtinBrowserEnabled"] = json!(true);
+        assert!(!merge_entry(Some(already), &on).1);
         // Записи без ключа шлюза — тоже изменилось.
         let mut keyless = ours.clone();
         keyless
@@ -1413,6 +1445,27 @@ mod tests {
             .unwrap()
             .remove("inferenceGatewayApiKey");
         assert!(merge_entry(Some(keyless), &ours).1);
+    }
+
+    #[test]
+    fn turning_artifacts_off_removes_our_keys() {
+        let mut config = Config::default();
+        let models = [json!({"name": "a", "supports1m": false})];
+        config.artifacts = true;
+        let on = library_entry(&config, &status_with(Vec::new()), &models);
+        let (merged, changed) = merge_entry(None, &on);
+        assert!(changed);
+        assert_eq!(merged["artifactsEnabled"], json!(true));
+
+        // Галочку сняли: наши ключи убираются, выбор Claude возвращается.
+        config.artifacts = false;
+        let off = library_entry(&config, &status_with(Vec::new()), &models);
+        let (merged, changed) = merge_entry(Some(merged), &off);
+        assert!(changed);
+        assert!(merged.get("artifactsEnabled").is_none(), "{merged}");
+        assert!(merged.get("artifactsDesignEnabled").is_none(), "{merged}");
+        assert!(merged.get("artifactsSlidesEnabled").is_none(), "{merged}");
+        assert!(!merge_entry(Some(merged), &off).1);
     }
 
     #[test]
@@ -1474,6 +1527,32 @@ mod tests {
         assert_eq!(backups.len(), 1);
         // В копии — прежнее содержимое: ничего не потеряно.
         assert_eq!(fs::read_to_string(backups[0].path()).unwrap(), "{ not json");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_broken_meta_in_a_shared_profile_is_left_alone() {
+        let dir = std::env::temp_dir()
+            .join("agents")
+            .join(format!("ctp-meta-{}", uuid::Uuid::new_v4().simple()));
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("someone-else.json"), "{}").unwrap();
+        fs::write(dir.join("_meta.json"), "{ not json").unwrap();
+        let config = Config::default();
+        let ours = library_entry(
+            &config,
+            &status_with(Vec::new()),
+            &[json!({"name": "a", "supports1m": false})],
+        );
+
+        assert!(sync_entry(&dir, &ours, false, false).unwrap());
+        // Наша запись есть, чужие файлы и битые метаданные не тронуты: их список не теряется.
+        assert!(dir.join(format!("{LIBRARY_ID}.json")).is_file());
+        assert_eq!(
+            fs::read_to_string(dir.join("_meta.json")).unwrap(),
+            "{ not json"
+        );
+        assert!(dir.join("someone-else.json").is_file());
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -1628,7 +1707,11 @@ mod tests {
         // Cowork по умолчанию на хосте (ADR-018): Chat и Cowork вместе.
         assert_eq!(entry["desktopHome"], "standard");
         assert_eq!(entry["projectsEnabled"], true);
-        assert_eq!(entry.get("artifactsEnabled"), None);
+        // Снятая галочка — `null`: ключ убирается из записи, действует выбор Claude.
+        assert_eq!(
+            entry.get("artifactsEnabled"),
+            Some(&serde_json::Value::Null)
+        );
         config.artifacts = true;
         let entry = library_entry(&config, &status, &[]);
         assert_eq!(entry["artifactsEnabled"], true);

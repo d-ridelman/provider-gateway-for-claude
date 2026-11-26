@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 /// Файл перевода в папке настроек приложения.
 pub const TRANSLATION_FILE: &str = "claude-ru.json";
 /// Меняется, когда меняется сам патч: старые копии пересобираются.
-const PATCH_REV: u32 = 18;
+const PATCH_REV: u32 = 19;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
 
@@ -60,7 +60,7 @@ const VM_START_ON: &str = "${1}if(!FROM)return{success:!0};${2}";
 /// поддержку и качает образ. Вне MSIX выходим по той же ветке «не поддерживается», иначе
 /// `prepareForVM` отвечает ошибкой и окно показывает «Claude Code setup failed (prepare: no_vm)».
 const VM_START_INNER: &str = r#"if\(([A-Za-z0-9_$]+)\.status!=="supported"\)\{let ([A-Za-z0-9_$]+)=([A-Za-z0-9_$]+)\.status==="unsupported"\?([A-Za-z0-9_$]+)\.unsupportedCode:([A-Za-z0-9_$]+)\.status;([A-Za-z0-9_$]+)\.warn\(`\[startVM] VM not supported"#;
-const VM_START_INNER_ON: &str = r#"if(FROM||${1}.status!=="supported"){let ${2}=${3}.status==="unsupported"?${4}.unsupportedCode:${5}.status;${6}.warn(`[startVM] VM not supported"#;
+const VM_START_INNER_ON: &str = r#"if(!FROM||${1}.status!=="supported"){let ${2}=${3}.status==="unsupported"?${4}.unsupportedCode:${5}.status;${6}.warn(`[startVM] VM not supported"#;
 /// Белый список `tools` сессии Cowork в host-loop: только MCP-инструменты и встроенные из списка
 /// (`Bash` в нём нет, его заменяет VM-инструмент). Группа 1 — начало функции, 2 — список.
 const TOOLS_FILTER: &str = r#"(function [A-Za-z0-9_$]+\(e\)\{return )e\.filter\(\(e=>e\.startsWith\("mcp__"\)\|\|([A-Za-z0-9_$]+\.[A-Za-z0-9_$]+)\.includes\(e\)\)\)\}"#;
@@ -235,8 +235,8 @@ fn host_cowork_changes(app_asar: &Path) -> Result<Vec<(String, Vec<u8>)>> {
             *count == 1,
             "{}",
             tr!(
-                "патч «{what}» не нашёл места в app.asar (нашёл {count} раз)",
-                "patch \"{what}\" found no place in app.asar (found {count})"
+                "патч «{what}» в app.asar должен найтись ровно один раз, а нашёлся {count}",
+                "patch \"{what}\" must match app.asar exactly once, found {count}"
             )
         );
     }
@@ -1419,7 +1419,7 @@ mod tests {
         // «no_vm» и окно показывает «Claude Code setup failed».
         assert!(
             text.contains(
-                r#"||o.status!=="supported"){let e=o.status==="unsupported"?o.unsupportedCode:o.status;"#
+                r#"if(!(process.windowsStore||process.execPath.split(/[\\/]/).some(e=>e.toLowerCase()==="windowsapps"))||o.status!=="supported"){let e=o.status==="unsupported"?o.unsupportedCode:o.status;"#
             ),
             "{text}"
         );

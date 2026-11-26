@@ -535,6 +535,8 @@ pub fn run(mut command: Command, timeout: Duration) -> Result<Output, String> {
         .map_err(|exc| format!("{shown}: {exc}"))?;
     // Читатель складывает прочитанное сразу: по дедлайну `collect` забирает то, что успело
     // прийти, даже если потомок держит пайп и конца файла не будет.
+    // shortcut: потомок, держащий пайп, держит и этот поток чтения до своего выхода (не дольше
+    // 8 МБ) — ждать и убивать чужие процессы не наше дело; окно при этом не ждёт.
     let drain = |stream: Option<Box<dyn Read + Send>>| {
         let text = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         let (done, finished) = std::sync::mpsc::channel();
