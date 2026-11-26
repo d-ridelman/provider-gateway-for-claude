@@ -21,3 +21,6 @@
 
 # agent-kit critic run state (local)
 /agent-kit-critic/
+
+# Impeccable detector cache; its shared rule waiver (.impeccable/config.json) stays tracked.
+/.impeccable/hook.cache.json
