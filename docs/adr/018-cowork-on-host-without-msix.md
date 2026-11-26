@@ -97,7 +97,13 @@ was not started from the package directory C:\Program Files\WindowsApps\Claude_�
 - В host-режиме нет advanced file analysis (нужна VM).
 - Патч привязан к тексту минифицированного чанка. Новая версия Claude может его сломать;
   PGC проверяет якорь, пишет предупреждение и не выдаёт копию за рабочую.
-- **VM-режим проверен на машине с MSIX (26.11.2026) и в нынешнем виде не работает.** Работает:
+- **VM-режим проверен на машине с MSIX (26.11.2026, вечер) и работает со стандартным профилем.**
+  Сообщение в Chat запустило Cowork: `[VM:start] Configuring Windows VM service...`,
+  `Windows VM service configured`, `Startup complete, total time: 13877ms`, а команда
+  `echo VM_OK`, вызванная моделью через `mcp__workspace__bash`, вернула `VM_OK` из гостя.
+  Профиль — `%LOCALAPPDATA%\Claude-3p`, без `--user-data-dir` и подмены `LOCALAPPDATA`.
+  Пакетный exe на этой машине стоит (MSIX 6.28899.6, служба Running).
+- Ранее (тот же день, до перехода на стандартный профиль) VM-режим не работал. Работает:
   пакет ставится (подпись «Anthropic, PBC» валидна), `CoworkVMService` запускается, PGC находит
   пакет и запускает настоящий `claude.exe` пакета с профилем PGC (`managedConfig type: 'local'`),
   служба принимает этого клиента (вместо «signature verification failed» — «not configured:
