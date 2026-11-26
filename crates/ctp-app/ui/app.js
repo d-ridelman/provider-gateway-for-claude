@@ -47,7 +47,7 @@ const el = Object.fromEntries(
     "formSubtitle", "formKindBadge", "formKeyBadge", "idInput", "nameInput", "kindInput", "baseInput",
     "keyInput", "keyHint", "clearKeyBtn", "modelsInput", "maxEffortInput", "defaultEffortInput",
     "aliasBox", "aliasList", "deleteBtn", "formNotice", "settingsPanel", "portInput", "languageInput",
-    "claudePathInput", "codeDirInput", "launchCodeBtn", "detectedClaude", "tokenInput", "russianInput",
+    "claudePathInput", "codeDirInput", "compactWindowInput", "launchCodeBtn", "detectedClaude", "tokenInput", "russianInput",
     "builtinBrowserInput", "claudeState", "claudeStateText", "langBtn", "themeBtn", "themeInput",
     "russianFileHint", "claudeWarn", "claudeCheckList", "startBtn", "stopBtn", "launchBtn", "modelCount",
     "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
@@ -1229,6 +1229,7 @@ function settingsDirty() {
     Number(el.portInput.value) !== c.port ||
     el.claudePathInput.value.trim() !== (c.claudePath ?? "") ||
     el.codeDirInput.value.trim() !== (c.codeDir ?? "") ||
+    el.compactWindowInput.value.trim() !== (c.compactWindow ?? "") ||
     el.russianInput.checked !== !!c.russianUi ||
     el.builtinBrowserInput.checked !== !!c.builtinBrowser ||
     el.autoUpdateInput.checked !== (c.autoUpdate !== false) ||
@@ -1300,6 +1301,7 @@ function renderSettings() {
   el.portInput.value = state.config.port;
   el.claudePathInput.value = state.config.claudePath ?? "";
   el.codeDirInput.value = state.config.codeDir ?? "";
+  el.compactWindowInput.value = state.config.compactWindow ?? "";
   for (const [role, id, emptyText] of ROLES) fillRole(el[id], state.config.modelRoles?.[role], emptyText);
   el.tokenInput.value = state.config.token;
   el.detectedClaude.textContent = state.config.detectedClaude
@@ -1963,6 +1965,7 @@ async function saveSettings() {
         port,
         claudePath: el.claudePathInput.value.trim() || null,
         codeDir: el.codeDirInput.value.trim() || null,
+        compactWindow: el.compactWindowInput.value.trim() || null,
         modelRoles: Object.fromEntries(ROLES.map(([role, id]) => [role, readRole(el[id])])),
         russianUi: el.russianInput.checked,
         builtinBrowser: el.builtinBrowserInput.checked,

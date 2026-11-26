@@ -4,6 +4,10 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **A compaction window setting that works for models marked `[1m]`.** The new `Conversation compaction window` field (Claude Code group of the settings) takes `400k`, `400000` or `40%` of the model's window, at least 100k. Claude Code 2.1.330 reads the window of a `[1m]` model from the settings key with `[1m]` but `/autocompact` writes the key without it, so the value was ignored ("a higher-priority override is active (1m tokens)"). PGC writes both keys under `modelSettings` in `~/.claude/settings.json` for every gateway model (touching only what it wrote when the field is cleared) and gives its console `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, which wins over the file. ADR-019. Not verified: the actual compaction in a Desktop session at the set threshold, only what `/autocompact` reports.
+
 ## [0.2.3] - 2026-11-25
 
 ### Fixed

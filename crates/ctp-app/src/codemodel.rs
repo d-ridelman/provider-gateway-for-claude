@@ -13,8 +13,12 @@ const SNAPSHOT: &str = "code-model-before.json";
 
 /// Где запомнена модель: одно место для всех сборок PGC (release и dev), ведь `settings.json`
 /// у них общий. Изолированный запуск (`CLAUDE_GATEWAY_HOME`) настоящие настройки не трогает.
+pub(crate) fn isolated() -> bool {
+    std::env::var_os("CLAUDE_GATEWAY_HOME").is_some_and(|home| !home.is_empty())
+}
+
 fn snapshot_path() -> Option<PathBuf> {
-    if std::env::var_os("CLAUDE_GATEWAY_HOME").is_some_and(|home| !home.is_empty()) {
+    if isolated() {
         return None;
     }
     Some(
@@ -25,11 +29,11 @@ fn snapshot_path() -> Option<PathBuf> {
 }
 
 /// Настройки Claude Code как объект и был ли перевод строки в конце файла.
-type Settings = (Map<String, Value>, bool);
+pub(crate) type Settings = (Map<String, Value>, bool);
 
 /// Общие настройки, которые читает установленный `claude`, запущенный из PGC
 /// (`CLAUDE_CONFIG_DIR` консоль наследует).
-fn user_settings() -> Option<PathBuf> {
+pub(crate) fn user_settings() -> Option<PathBuf> {
     let dir = std::env::var_os("CLAUDE_CONFIG_DIR")
         .filter(|dir| !dir.is_empty())
         .map(PathBuf::from)
@@ -57,7 +61,7 @@ pub fn is_gateway_model(config: &Config, model: &str) -> bool {
 
 /// Настройки как объект и признак перевода строки в конце; `Ok(None)` — файла нет.
 /// Файл, который не читается или не объект, — `Err`: такой не трогаем.
-fn read_settings(path: &Path) -> Result<Option<Settings>, String> {
+pub(crate) fn read_settings(path: &Path) -> Result<Option<Settings>, String> {
     let text = match fs::read_to_string(path) {
         Ok(text) => text,
         Err(exc) if exc.kind() == std::io::ErrorKind::NotFound => return Ok(None),

@@ -77,6 +77,8 @@ fn save_provider_in(shared: &AppShared, input: SaveProviderInput) -> Result<UiCo
         store::delete_key(old);
     }
     *config = next;
+    // У новой модели появился псевдоним: окно сжатия пишется и ему (ADR-019).
+    crate::compact::sync(&config, None);
     let ui = store::ui_config(&config, &shared.config_dir);
     drop(config);
     runtime::stop(shared);
@@ -168,6 +170,21 @@ pub fn save_settings(
     } else {
         input.port
     };
+    let compact_window = match input
+        .compact_window
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        None => None,
+        Some(text) if crate::compact::parse(text).is_some() => Some(text.to_string()),
+        Some(_) => {
+            return Err(tr!(
+                "Окно сжатия: 400k, 400000 или 40% (не меньше 100k)",
+                "Compaction window: 400k, 400000 or 40% (at least 100k)"
+            ));
+        }
+    };
     let mut config = shared.config.lock().unwrap();
     // Шлюз останавливают только порт и роли моделей (основная — модель по умолчанию).
     let port_changed = config.port != port;
@@ -184,6 +201,8 @@ pub fn save_settings(
         .code_dir
         .map(|dir| dir.trim().to_string())
         .filter(|dir| !dir.is_empty());
+    let previous_compact = config.compact_window.clone();
+    next.compact_window = compact_window;
     next.language = pick(input.language, LANGUAGES);
     next.theme = pick(input.theme, THEMES);
     next.auto_update = input.auto_update;
@@ -201,6 +220,7 @@ pub fn save_settings(
     let port_changed = port_changed || next.model_roles.sonnet != config.model_roles.sonnet;
     store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
     *config = next;
+    crate::compact::sync(&config, previous_compact.as_deref());
     crate::i18n::apply(config.language.as_deref());
     crate::tray::relabel(&app);
     let ui = store::ui_config(&config, &shared.config_dir);

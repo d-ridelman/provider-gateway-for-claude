@@ -222,6 +222,13 @@ pub fn critic_env(config: &Config, status: &UiStatus) -> Vec<(String, String)> {
         .collect()
 }
 
+/// Окно, которое PGC задаёт консоли: из каталога, нет его — 1M (см. `code_env`).
+fn console_window(limits: &crate::catalog::Hint) -> u64 {
+    limits
+        .context
+        .map_or(MAX_WINDOW, |context| context.clamp(MIN_WINDOW, MAX_WINDOW))
+}
+
 /// Окружение Claude Code через шлюз: что убрать и что задать. Основная модель — роль
 /// `sonnet` или первая модель шлюза; на неё же все роли Claude Code (opus, haiku, fable).
 /// `limits` — окно и предел вывода основной модели из каталога, если они известны.
@@ -245,9 +252,7 @@ pub fn code_env(
     // безопасно: переполнение провайдера шлюз отдаёт как «prompt is too long», и Claude Code
     // сжимает разговор. Заниженное — нет: если его почти целиком занимают инструменты MCP,
     // сжимать нечего, и сессия сжимается по кругу (видели вживую на 200K и 626 инструментах).
-    let window = limits
-        .context
-        .map_or(MAX_WINDOW, |context| context.clamp(MIN_WINDOW, MAX_WINDOW));
+    let window = console_window(limits);
     let remove = inherited
         .filter(|name| {
             let upper = name.to_ascii_uppercase();
@@ -396,12 +401,17 @@ pub fn launch_code(
         return Err(tr!("Сначала запустите шлюз", "Start the gateway first"));
     }
     // vars_os: значение не в Unicode не должно ронять запуск — нужны только имена.
-    let (remove, set) = code_env(
+    let (remove, mut set) = code_env(
         status,
         &role_aliases(config),
         std::env::vars_os().map(|(k, _)| k.to_string_lossy().into_owned()),
         limits,
     )?;
+    // Окно сжатия из настроек PGC (ADR-019). Переменная приоритетнее `settings.json`,
+    // так что работает и там, где ключ модели Claude Code читает неверно.
+    if let Some(tokens) = crate::compact::console_tokens(config, console_window(limits)) {
+        set.push(("CLAUDE_CODE_AUTO_COMPACT_WINDOW".into(), tokens.to_string()));
+    }
     let (cli, extra) = code_cli(config)?;
     let dir = config
         .code_dir

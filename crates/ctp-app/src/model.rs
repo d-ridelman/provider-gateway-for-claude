@@ -47,6 +47,9 @@ pub struct Config {
     /// Claude Code: `owner/repo`, адрес git или папка (ADR-014).
     #[serde(default)]
     pub kit_source: Option<String>,
+    /// Окно сжатия разговора: `400k`, `400000` или `40%`; нет — решает Claude Code (ADR-019).
+    #[serde(default)]
+    pub compact_window: Option<String>,
 }
 
 /// Режимы прокси: что идёт через ядро mihomo.
@@ -128,6 +131,7 @@ impl Default for Config {
             code_portable: false,
             proxy: ProxySettings::default(),
             kit_source: None,
+            compact_window: None,
         }
     }
 }
@@ -178,6 +182,8 @@ pub struct UiConfig {
     pub russian_file: bool,
     pub config_dir: String,
     pub code_dir: Option<String>,
+    /// Окно сжатия разговора (ADR-019); `None` — не задано.
+    pub compact_window: Option<String>,
     /// Язык окна сейчас: `ru` или `en`.
     pub language: String,
     /// Выбор пользователя: `auto`, `ru` или `en`.
@@ -294,6 +300,8 @@ pub struct SettingsInput {
     pub builtin_browser: bool,
     #[serde(default)]
     pub code_dir: Option<String>,
+    #[serde(default)]
+    pub compact_window: Option<String>,
     #[serde(default)]
     pub language: Option<String>,
     #[serde(default)]
