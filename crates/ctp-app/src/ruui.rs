@@ -30,7 +30,7 @@ const MARKER: &str = ".ctp-ru.json";
 /// Проверка установки: без MSIX Cowork недоступен. В 3p сессия всё равно идёт на
 /// хосте, поэтому проверку снимаем — иначе Cowork не включится на портативной копии.
 const MSIX_CHECK: &str = r#"if\(e==="win32"&&!([A-Za-z0-9_$]+)\(\)\)return\{status:"unsupported",reason:([A-Za-z0-9_$]+)\(\)\.formatMessage\(\{defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"\}\)"#;
-/// Имя функции перед `.formatMessage` меняется от версии к версии (6.28899.6 — `H`, 7.37095.0 — `G`).
+/// Имя функции перед `.formatMessage` меняется от версии к версии, поэтому оно — группа.
 const MSIX_CHECK_OFF: &str = r#"if(e==="win32"&&!1)return{status:"unsupported",reason:${2}().formatMessage({defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"})"#;
 /// E2E-флаг подменяет всю проверку VM на «supported». Включаем его всегда,
 /// потому что host-loop не нуждается ни в MSIX, ни в HCS.
