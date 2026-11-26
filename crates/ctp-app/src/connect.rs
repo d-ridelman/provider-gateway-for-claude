@@ -492,7 +492,8 @@ pub fn applicable(plan: &[PlanItem], chosen: &[String]) -> Vec<String> {
 }
 
 /// Потолок одного потока вывода: болтливая программа не должна съесть память.
-const MAX_DRAIN: u64 = 8 << 20;
+/// shortcut: вывод больше 8 МБ обрезается; поднять, если у вызывающего он таким станет.
+const MAX_DRAIN: usize = 8 << 20;
 /// Сколько ждать конца вывода после выхода программы: потомок может держать пайп.
 const DRAIN_AFTER_EXIT: Duration = Duration::from_secs(2);
 
@@ -517,16 +518,34 @@ pub fn run(mut command: Command, timeout: Duration) -> Result<Output, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|exc| format!("{shown}: {exc}"))?;
+    // Читатель складывает прочитанное сразу: по дедлайну `collect` забирает то, что успело
+    // прийти, даже если потомок держит пайп и конца файла не будет.
     let drain = |stream: Option<Box<dyn Read + Send>>| {
-        let (done, text) = std::sync::mpsc::channel();
+        let text = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (done, finished) = std::sync::mpsc::channel();
+        let shared = std::sync::Arc::clone(&text);
         std::thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(stream) = stream {
-                let _ = stream.take(MAX_DRAIN).read_to_end(&mut bytes);
+            let mut chunk = [0u8; 8192];
+            let mut kept = 0usize;
+            if let Some(mut stream) = stream {
+                while let Ok(size) = stream.read(&mut chunk) {
+                    if size == 0 {
+                        break;
+                    }
+                    // После потолка дочитываем в никуда: иначе программа получила бы
+                    // broken pipe и не дошла до конца.
+                    if kept < MAX_DRAIN {
+                        let part = size.min(MAX_DRAIN - kept);
+                        if let Ok(mut text) = shared.lock() {
+                            text.extend_from_slice(&chunk[..part]);
+                        }
+                        kept += part;
+                    }
+                }
             }
-            let _ = done.send(String::from_utf8_lossy(&bytes).into_owned());
+            let _ = done.send(());
         });
-        text
+        (text, finished)
     };
     let out = drain(
         child
@@ -560,8 +579,16 @@ pub fn run(mut command: Command, timeout: Duration) -> Result<Output, String> {
         std::thread::sleep(Duration::from_millis(100));
     };
     // Потомок может держать пайп после выхода программы: ждать его вечно нельзя.
-    let collect = |text: std::sync::mpsc::Receiver<String>| {
-        text.recv_timeout(DRAIN_AFTER_EXIT).unwrap_or_default()
+    let collect = |(text, finished): (
+        std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+        std::sync::mpsc::Receiver<()>,
+    )| {
+        let _ = finished.recv_timeout(DRAIN_AFTER_EXIT);
+        let bytes = text
+            .lock()
+            .map(|mut text| std::mem::take(&mut *text))
+            .unwrap_or_default();
+        String::from_utf8_lossy(&bytes).into_owned()
     };
     Ok(Output {
         code: status.code(),
@@ -1106,10 +1133,8 @@ pub fn undo_apply(
     if let Some(plan) = plan {
         let ids = applicable(&plan, chosen);
         if !ids.is_empty() {
-            let root_text = root.display().to_string();
-            let undo = undo_args(&ids);
-            let mut args: Vec<&str> = undo.iter().map(String::as_str).collect();
-            args.extend(["--json", "--lang", lang(), "--cwd", &root_text]);
+            let undo = undo_args(&ids, root);
+            let args: Vec<&str> = undo.iter().map(String::as_str).collect();
             result = applied(run(node(&cli(kit), &args, root), TIMEOUT)?)?;
         }
     }
@@ -1265,14 +1290,19 @@ pub fn apply_args(plan: &[PlanItem], chosen: &[String], checks: &[String]) -> Op
 }
 
 /// Аргументы `setup --undo --apply`: единственный необратимый шаг, поэтому собираются здесь
-/// и проверяются точным сравнением, как `apply_args`.
-pub fn undo_args(ids: &[String]) -> Vec<String> {
+/// целиком и проверяются точным сравнением, как `apply_args`.
+pub fn undo_args(ids: &[String], root: &Path) -> Vec<String> {
     vec![
         "setup".into(),
         "--undo".into(),
         "--apply".into(),
         "--only".into(),
         ids.join(","),
+        "--json".into(),
+        "--lang".into(),
+        lang().to_string(),
+        "--cwd".into(),
+        root.display().to_string(),
     ]
 }
 
@@ -1759,15 +1789,24 @@ mod tests {
 
     #[test]
     fn the_undo_command_carries_undo_and_the_ticked_ids() {
-        // Необратимый шаг: без `--undo` agent-kit создал бы файлы вместо удаления.
+        // Необратимый шаг: без `--undo` agent-kit создал бы файлы вместо удаления, без
+        // `--json` ответ не разобрать.
         assert_eq!(
-            undo_args(&strings(&["AGENTS.md", VERIFY_FILE])),
+            undo_args(
+                &strings(&["AGENTS.md", VERIFY_FILE]),
+                Path::new(r"D:\Проекты\мой проект")
+            ),
             strings(&[
                 "setup",
                 "--undo",
                 "--apply",
                 "--only",
-                "AGENTS.md,.claude/verify.json"
+                "AGENTS.md,.claude/verify.json",
+                "--json",
+                "--lang",
+                lang(),
+                "--cwd",
+                r"D:\Проекты\мой проект",
             ])
         );
     }
@@ -2335,17 +2374,24 @@ mod tests {
     fn a_descendant_holding_the_pipe_does_not_hang_run() {
         // PowerShell оставляет ping держать наш stdout и выходит: без дедлайна run() ждал бы
         // конца ping.
-        let mut command = Command::new("powershell.exe");
+        let powershell = std::env::var("SystemRoot")
+            .map(|root| PathBuf::from(root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe"))
+            .ok()
+            .filter(|exe| exe.is_file())
+            .unwrap_or_else(|| PathBuf::from("powershell.exe"));
+        let mut command = Command::new(powershell);
         command.args([
             "-NoProfile",
             "-Command",
-            "Start-Process -NoNewWindow ping -ArgumentList '-n','20','127.0.0.1'",
+            "Write-Output hello; Start-Process -NoNewWindow ping -ArgumentList '-n','20','127.0.0.1'",
         ]);
         let started = Instant::now();
         let output = run(command, Duration::from_secs(15)).expect("run");
         assert_eq!(output.code, Some(0));
         let took = started.elapsed();
         assert!(took < Duration::from_secs(10), "ждал потомка {took:?}");
+        // Вывод, пришедший до дедлайна, не теряется.
+        assert!(output.stdout.contains("hello"), "{:?}", output.stdout);
     }
 
     #[test]

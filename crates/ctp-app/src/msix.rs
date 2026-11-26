@@ -275,7 +275,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "нужен установленный пакет Claude: CI его не имеет"]
     fn registry_finds_the_installed_package() {
         // На машине без пакета проверять нечего (CI); где он есть — путь должен существовать.
         if let Some(exe) = installed_exe() {

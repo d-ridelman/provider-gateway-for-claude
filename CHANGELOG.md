@@ -7,7 +7,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 ### Fixed
 
 - **The project checks can no longer pass silently.** `ci.ps1 -Changed` took a failed `git diff` for "only docs changed" and skipped fmt, clippy and the tests; `ui-shots.mjs` printed `CLIPPED`/`HSCROLL` findings and always exited 0; `check_i18n.js` did not look at `data-help` topics or at keys picked by a ternary. All three now fail, and the i18n check covers the `help.*` texts and both sides of `t(…)` ternaries.
-- **"Connect project" can no longer hang forever.** A grandchild (`node` under `claude.cmd`) that keeps the pipe open after the command exits left the window waiting for EOF; the output is now capped at 8 MB per stream and the wait after exit is 2 s.
+- **"Connect project" can no longer hang forever.** A grandchild (`node` under `claude.cmd`) that keeps the pipe open after the command exits left the window waiting for EOF; the output is now read as it comes, capped at 8 MB per stream, and the wait after exit is 2 s, keeping what already arrived.
 
 ### Added
 
