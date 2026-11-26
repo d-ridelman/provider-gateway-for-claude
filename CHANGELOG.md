@@ -4,11 +4,6 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
-### Fixed
-
-- **The built-in agent-kit unpacks when the profile path has Cyrillic letters.** The archive was unpacked by the system `tar.exe`, which on an English-locale Windows cannot open a path under `C:\Users\<кириллица>\…`, so "Connect project" failed for a Windows account with a Russian name. The archive is now unpacked in Rust, with no external program.
-- **The release script states that it needs PowerShell 7** instead of failing after the build on an encoding that Windows PowerShell 5.1 does not have.
-
 ## [0.2.4] - 2026-11-26
 
 ### Fixed
@@ -29,6 +24,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 - **Cowork on the host no longer shows "Claude Code setup failed (prepare: no_vm)".** At session start the main process starts the VM itself, and the earlier patch covered only the window's call, so outside MSIX that path answered the error while the session went on in the host loop. The internal start now leaves through the same "not supported" branch as a machine without the VM feature; the copy is rebuilt once.
 - **The Artifacts tick now really turns artifacts off.** Clearing the checkbox removed nothing from the gateway entry, so `artifactsEnabled` and its two companions stayed `true` for good; the keys PGC wrote are now taken out again and Claude's own choice applies.
 - **The "Through MSIX, with VM" hint no longer says the mode does not work.** It described the state before the standard-profile fix; it now says the real Claude from the package runs with the standard `Claude-3p` profile, as it does.
+- **The built-in agent-kit unpacks when the profile path has Cyrillic letters.** The archive was unpacked by the system `tar.exe`, which on an English-locale Windows cannot open a path under `C:\Users\<кириллица>\…`, so "Connect project" failed for a Windows account with a Russian name. The archive is now unpacked in Rust, with no external program.
+- **The release script states that it needs PowerShell 7** instead of failing after the build on an encoding that Windows PowerShell 5.1 does not have.
 
 ### Added
 
