@@ -8,6 +8,8 @@
 #   %USERPROFILE%\.tauri\provider-gateway-for-claude.key   (minisign private key)
 #   %USERPROFILE%\.tauri\provider-gateway-for-claude.pass  (its password, Windows DPAPI)
 # Override with TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD.
+# Needs PowerShell 7: Windows PowerShell 5.1 has no `utf8NoBOM` encoding and fails late.
+#Requires -Version 7
 param(
     [Parameter(Mandatory = $true)][string]$Notes,
     [string]$Repo = 'd-ridelman/provider-gateway-for-claude',
