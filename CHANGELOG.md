@@ -4,6 +4,11 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+
+- **The project checks can no longer pass silently.** `ci.ps1 -Changed` took a failed `git diff` for "only docs changed" and skipped fmt, clippy and the tests; `ui-shots.mjs` printed `CLIPPED`/`HSCROLL` findings and always exited 0; `check_i18n.js` did not look at `data-help` topics or at keys picked by a ternary. All three now fail, and the i18n check covers the `help.*` texts and both sides of `t(…)` ternaries.
+- **"Connect project" can no longer hang forever.** A grandchild (`node` under `claude.cmd`) that keeps the pipe open after the command exits left the window waiting for EOF; the output is now capped at 8 MB per stream and the wait after exit is 2 s.
+
 ### Added
 
 - **The translated copy can be built from the MSIX package.** Anthropic's Windows installer now ships Claude as an MSIX package and removes the Squirrel folder, so `Claude Desktop not found` would appear again once the portable nupkg feed goes away. When no explicit path, Squirrel folder or `Programs\claude` is found, PGC now takes `claude.exe` from the installed package (found through the per-user `AppModel\Repository\Packages` registry key, no PowerShell: 33 ms instead of 1.3 s for `Get-AppxPackage`). The copy folder version comes from the package name (`Claude_6.28899.6.0_x64__…` → `app-6.28899.6.0`); registry repair and the upkeep checks accept `<package>\app` as a version folder. Priority is unchanged, so a configured portable Claude is not displaced by an older package. Checked live on the real package: a copy was built and patched in 25 s (ADR-021). Not checked: launching that copy.

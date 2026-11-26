@@ -39,6 +39,20 @@ if (-not (Test-Path $exe)) {
 [pscustomobject]@{ family = $p.PackageFamilyName; id = $app.Id; version = [string]$p.Version; exe = $exe } | ConvertTo-Json -Compress
 "#;
 
+/// Версия из имени пакета: `Claude_6.28899.6.0_x64__pzs8…` → `6.28899.6.0`. Один разбор
+/// на всех: запуск из пакета, папка копии и upkeep (ADR-021).
+pub(crate) fn package_version(name: &str) -> Option<&str> {
+    name.strip_prefix("Claude_")
+        .or_else(|| name.strip_prefix("AnthropicPBC.Claude_"))
+        .and_then(|rest| rest.split('_').next())
+        .filter(|version| {
+            !version.is_empty()
+                && version
+                    .split('.')
+                    .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+        })
+}
+
 /// `claude.exe` из пакета текущего пользователя — без PowerShell: раздел AppModel хранит
 /// корень установки. `detect` зовут часто, а `Get-AppxPackage` стоит 1,3 с.
 #[cfg(windows)]
@@ -48,19 +62,9 @@ pub fn installed_exe() -> Option<PathBuf> {
     let repo = CURRENT_USER.open(REPO).ok()?;
     let mut best: Option<(Vec<u64>, PathBuf)> = None;
     for name in repo.keys().ok()? {
-        let Some(version) = name
-            .strip_prefix("Claude_")
-            .or_else(|| name.strip_prefix("AnthropicPBC.Claude_"))
-            .and_then(|rest| rest.split('_').next())
-        else {
+        let Some(version) = package_version(&name) else {
             continue;
         };
-        if !version
-            .split('.')
-            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
-        {
-            continue;
-        }
         let key: Vec<u64> = version
             .split('.')
             .filter_map(|part| part.parse().ok())
@@ -251,6 +255,27 @@ mod tests {
     }
 
     #[test]
+    fn the_package_version_is_read_from_the_name() {
+        assert_eq!(
+            package_version("Claude_6.28899.6.0_x64__pzs8sxrjxfjjc"),
+            Some("6.28899.6.0")
+        );
+        assert_eq!(
+            package_version("AnthropicPBC.Claude_7.1.2.3_x64__abc"),
+            Some("7.1.2.3")
+        );
+        assert_eq!(package_version("Claude_2_x64__abc"), Some("2"));
+        assert_eq!(
+            package_version("Microsoft.WindowsAppRuntime.1.5_5001.311.2039.0_x64__8wekyb3d8bbwe"),
+            None
+        );
+        assert_eq!(package_version("Claude_Dev_x64__abc"), None);
+        assert_eq!(package_version("Claude__x64__abc"), None);
+        assert_eq!(package_version("Claude"), None);
+    }
+
+    #[test]
+    #[ignore = "нужен установленный пакет Claude: CI его не имеет"]
     fn registry_finds_the_installed_package() {
         // На машине без пакета проверять нечего (CI); где он есть — путь должен существовать.
         if let Some(exe) = installed_exe() {

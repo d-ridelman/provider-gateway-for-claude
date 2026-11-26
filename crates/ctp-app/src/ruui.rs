@@ -756,14 +756,7 @@ pub(crate) fn version_folder(app_dir: &Path) -> Result<String> {
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
         .unwrap_or_default();
-    let version = package
-        .strip_prefix("Claude_")
-        .or_else(|| package.strip_prefix("AnthropicPBC.Claude_"))
-        .and_then(|rest| rest.split('_').next())
-        .filter(|v| {
-            v.split('.')
-                .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
-        });
+    let version = crate::msix::package_version(package).filter(|_| name == "app");
     version.map(|v| format!("app-{v}")).with_context(|| {
         tr!(
             "Claude найден не в папке версии app-…",
@@ -1469,6 +1462,8 @@ mod tests {
             "app-7.37095.0"
         );
         assert!(version_folder(Path::new(r"C:\x\Claude\app")).is_err());
+        // Переименованный пакет — не версия: иначе копия называлась бы «app» (дефект 9d77556).
+        assert!(version_folder(Path::new(r"C:\x\Claude_old\app")).is_err());
     }
 
     #[test]

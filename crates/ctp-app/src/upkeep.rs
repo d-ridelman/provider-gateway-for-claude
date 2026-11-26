@@ -87,14 +87,9 @@ fn copy_version(app: &Path) -> String {
 /// заглушка или свой путь — `None`.
 pub fn app_dir(exe: &Path) -> Option<PathBuf> {
     let dir = exe.parent()?;
-    let name = dir.file_name()?.to_str()?;
-    if name.starts_with("app-") {
-        return Some(dir.to_path_buf());
-    }
-    let package = dir.parent()?.file_name()?.to_str()?;
-    (name == "app"
-        && (package.starts_with("Claude_") || package.starts_with("AnthropicPBC.Claude_")))
-    .then(|| dir.to_path_buf())
+    crate::ruui::version_folder(dir)
+        .is_ok()
+        .then(|| dir.to_path_buf())
 }
 
 /// Правило из `app.asar`: литерал вида `X=/…deepseek…/;function f(e){return X.test(e.toLowerCase())}`.
@@ -1229,6 +1224,8 @@ mod tests {
             Path::new(r"C:\Program Files\WindowsApps\Claude_6.28899.6.0_x64__pzs8sxrjxfjjc\app")
         );
         assert!(app_dir(Path::new(r"C:\x\SomeOther\app\claude.exe")).is_none());
+        // Та же папка, что версия копии, иначе «app» вместо «app-<версия>» (дефект 9d77556).
+        assert!(app_dir(Path::new(r"C:\x\Claude_old\app\claude.exe")).is_none());
     }
 
     /// Вся самопроверка на установленном Claude, папка настроек временная, без сборки

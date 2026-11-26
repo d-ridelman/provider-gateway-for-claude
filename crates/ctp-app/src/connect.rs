@@ -491,6 +491,11 @@ pub fn applicable(plan: &[PlanItem], chosen: &[String]) -> Vec<String> {
         .collect()
 }
 
+/// Потолок одного потока вывода: болтливая программа не должна съесть память.
+const MAX_DRAIN: u64 = 8 << 20;
+/// Сколько ждать конца вывода после выхода программы: потомок может держать пайп.
+const DRAIN_AFTER_EXIT: Duration = Duration::from_secs(2);
+
 /// Вывод программы: код выхода, stdout и stderr. Окно консоли не мелькает, а зависшая
 /// программа снимается по таймауту вместе со своими детьми.
 pub struct Output {
@@ -513,13 +518,15 @@ pub fn run(mut command: Command, timeout: Duration) -> Result<Output, String> {
         .spawn()
         .map_err(|exc| format!("{shown}: {exc}"))?;
     let drain = |stream: Option<Box<dyn Read + Send>>| {
+        let (done, text) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let mut text = Vec::new();
-            if let Some(mut stream) = stream {
-                let _ = stream.read_to_end(&mut text);
+            let mut bytes = Vec::new();
+            if let Some(stream) = stream {
+                let _ = stream.take(MAX_DRAIN).read_to_end(&mut bytes);
             }
-            String::from_utf8_lossy(&text).into_owned()
-        })
+            let _ = done.send(String::from_utf8_lossy(&bytes).into_owned());
+        });
+        text
     };
     let out = drain(
         child
@@ -552,10 +559,14 @@ pub fn run(mut command: Command, timeout: Duration) -> Result<Output, String> {
         }
         std::thread::sleep(Duration::from_millis(100));
     };
+    // Потомок может держать пайп после выхода программы: ждать его вечно нельзя.
+    let collect = |text: std::sync::mpsc::Receiver<String>| {
+        text.recv_timeout(DRAIN_AFTER_EXIT).unwrap_or_default()
+    };
     Ok(Output {
         code: status.code(),
-        stdout: out.join().unwrap_or_default(),
-        stderr: err.join().unwrap_or_default(),
+        stdout: collect(out),
+        stderr: collect(err),
     })
 }
 
@@ -1096,26 +1107,10 @@ pub fn undo_apply(
         let ids = applicable(&plan, chosen);
         if !ids.is_empty() {
             let root_text = root.display().to_string();
-            let only = ids.join(",");
-            result = applied(run(
-                node(
-                    &cli(kit),
-                    &[
-                        "setup",
-                        "--undo",
-                        "--apply",
-                        "--only",
-                        &only,
-                        "--json",
-                        "--lang",
-                        lang(),
-                        "--cwd",
-                        &root_text,
-                    ],
-                    root,
-                ),
-                TIMEOUT,
-            )?)?;
+            let undo = undo_args(&ids);
+            let mut args: Vec<&str> = undo.iter().map(String::as_str).collect();
+            args.extend(["--json", "--lang", lang(), "--cwd", &root_text]);
+            result = applied(run(node(&cli(kit), &args, root), TIMEOUT)?)?;
         }
     }
     // Some files did not go: the plugin stays, so the person can retry from the same page.
@@ -1267,6 +1262,18 @@ pub fn apply_args(plan: &[PlanItem], chosen: &[String], checks: &[String]) -> Op
         args.extend(["--checks".into(), checks.join(",")]);
     }
     Some(args)
+}
+
+/// Аргументы `setup --undo --apply`: единственный необратимый шаг, поэтому собираются здесь
+/// и проверяются точным сравнением, как `apply_args`.
+pub fn undo_args(ids: &[String]) -> Vec<String> {
+    vec![
+        "setup".into(),
+        "--undo".into(),
+        "--apply".into(),
+        "--only".into(),
+        ids.join(","),
+    ]
 }
 
 /// Пункт плана, который создаёт файл проверок проекта.
@@ -1747,6 +1754,21 @@ mod tests {
         let guard = body.find("undo_blind(").unwrap();
         assert!(
             guard < body.find("applied(run(").unwrap() && guard < body.find("run_claude(").unwrap()
+        );
+    }
+
+    #[test]
+    fn the_undo_command_carries_undo_and_the_ticked_ids() {
+        // Необратимый шаг: без `--undo` agent-kit создал бы файлы вместо удаления.
+        assert_eq!(
+            undo_args(&strings(&["AGENTS.md", VERIFY_FILE])),
+            strings(&[
+                "setup",
+                "--undo",
+                "--apply",
+                "--only",
+                "AGENTS.md,.claude/verify.json"
+            ])
         );
     }
 
@@ -2306,6 +2328,24 @@ mod tests {
             args,
             strings(&["setup", "--apply", "--only", "deny-secrets"])
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_descendant_holding_the_pipe_does_not_hang_run() {
+        // PowerShell оставляет ping держать наш stdout и выходит: без дедлайна run() ждал бы
+        // конца ping.
+        let mut command = Command::new("powershell.exe");
+        command.args([
+            "-NoProfile",
+            "-Command",
+            "Start-Process -NoNewWindow ping -ArgumentList '-n','20','127.0.0.1'",
+        ]);
+        let started = Instant::now();
+        let output = run(command, Duration::from_secs(15)).expect("run");
+        assert_eq!(output.code, Some(0));
+        let took = started.elapsed();
+        assert!(took < Duration::from_secs(10), "ждал потомка {took:?}");
     }
 
     #[test]

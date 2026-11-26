@@ -116,12 +116,60 @@ async fn stream_openai_becomes_anthropic_sse() {
         "text/event-stream"
     );
     let body = text_body(response).await;
-    assert!(body.contains("event: message_start"));
+    // Порядок событий — контракт Claude (rules/gateway.md), а не только их наличие.
+    let order = |name: &str| {
+        let needle = format!("event: {name}");
+        body.lines()
+            .position(|line| line == needle)
+            .unwrap_or_else(|| panic!("нет события {name}:\n{body}"))
+    };
+    assert!(order("message_start") < order("content_block_start"));
+    assert!(order("content_block_start") < order("content_block_delta"));
+    assert!(order("content_block_delta") < order("content_block_stop"));
+    assert!(order("content_block_stop") < order("message_delta"));
+    assert!(order("message_delta") < order("message_stop"));
     assert!(body.contains("\"type\":\"text_delta\""));
     assert!(body.contains("\"text\":\"he\""));
     assert!(body.contains("\"text\":\"llo\""));
     assert!(body.contains("\"stop_reason\":\"end_turn\""));
-    assert!(body.contains("event: message_stop"));
+}
+
+#[tokio::test]
+async fn a_provider_that_ignores_stream_gets_a_whole_sse_message() {
+    let upstream = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": "hello"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 3}
+        })))
+        .mount(&upstream)
+        .await;
+
+    let state = state_with(&upstream.uri(), "openai", "gpt-5.2");
+    let response = app(state)
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000",
+            "max_tokens": 32,
+            "stream": true,
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get("content-type").unwrap(),
+        "text/event-stream"
+    );
+    let body = text_body(response).await;
+    assert!(body.starts_with("event: message_start"), "{body}");
+    assert!(body.contains("\"text\":\"hello\""));
+    assert!(
+        body.trim_end()
+            .ends_with("data: {\"type\":\"message_stop\"}"),
+        "{body}"
+    );
 }
 
 #[tokio::test]
@@ -197,6 +245,16 @@ async fn auth_is_enforced() {
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     let body = json_body(response).await;
     assert_eq!(body["type"], "error");
+
+    // `/v1/models` проверяет токен сам, а не middleware: у него свой тест.
+    let state = state_with(&upstream.uri(), "openai", "gpt-5.2");
+    let request = Request::builder()
+        .method("GET")
+        .uri("/v1/models")
+        .body(Body::empty())
+        .unwrap();
+    let response = app(state).oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -319,7 +377,18 @@ async fn retries_once_with_smaller_max_tokens() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = json_body(response).await;
     assert_eq!(body["content"][0]["text"], "ok");
-    assert_eq!(upstream.received_requests().await.unwrap().len(), 2);
+    // Повтор уходит именно с уменьшенным пределом, а не с теми же 4096.
+    let requests = upstream.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 2);
+    let limit = |body: &[u8]| {
+        let value: Value = serde_json::from_slice(body).unwrap();
+        value
+            .get("max_completion_tokens")
+            .or_else(|| value.get("max_tokens"))
+            .and_then(Value::as_u64)
+    };
+    assert_eq!(limit(&requests[0].body), Some(4096));
+    assert_eq!(limit(&requests[1].body), Some(1024));
 }
 
 #[tokio::test]
@@ -1576,7 +1645,7 @@ async fn screenshots_count_by_size_where_claude_code_reads_the_context() {
     let counted = json_body(app(state).oneshot(request).await.unwrap()).await;
     let tokens = counted["input_tokens"].as_u64().unwrap();
     // ~1,5 тыс. за картинку, а не ~250 тыс. за её base64.
-    assert!(tokens < 3000, "{tokens}");
+    assert!((1000..3000).contains(&tokens), "{tokens}");
 
     // input_tokens в message_start потокового ответа — по ним Claude Code решает о сжатии.
     let upstream = MockServer::start().await;
@@ -1603,7 +1672,7 @@ async fn screenshots_count_by_size_where_claude_code_reads_the_context() {
         .find(|event| event["type"] == "message_start")
         .unwrap();
     let tokens = start["message"]["usage"]["input_tokens"].as_u64().unwrap();
-    assert!(tokens < 3000, "{tokens}");
+    assert!((1000..3000).contains(&tokens), "{tokens}");
 }
 
 fn unreadable_body() -> Body {

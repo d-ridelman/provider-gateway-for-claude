@@ -16,11 +16,16 @@ if ($Changed) {
     # Against what the remote already has; no upstream yet - check everything.
     $base = git rev-parse --verify --quiet '@{push}' 2>$null
     if ($LASTEXITCODE -eq 0 -and $base) {
+        # A broken base (two refs in @{push}) must not look like "no code changed".
         $files = git diff --name-only "$base" HEAD
-        $code = $files | Where-Object { $_ -notmatch '^(docs/|.*\.md$)' }
-        if (-not $code) {
-            Write-Host 'ci: only docs changed since the last push, checks skipped'
-            exit 0
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host 'ci: cannot diff against the push base, checking everything'
+        } else {
+            $code = $files | Where-Object { $_ -notmatch '^(docs/|.*\.md$)' }
+            if (-not $code) {
+                Write-Host 'ci: only docs changed since the last push, checks skipped'
+                exit 0
+            }
         }
     }
 }

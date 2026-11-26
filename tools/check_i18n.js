@@ -22,6 +22,21 @@ const app = read("app.js");
 const used = new Set(
   [...`${markup}\n${app}`.matchAll(/(?:data-i18n(?:-html|-title|-placeholder|-aria)?="|\bt\(")([\w.]+)/g)].map((m) => m[1]),
 );
+// Every string literal inside a t(...) call, so keys picked by a ternary or a template count too.
+for (let at = app.indexOf("t("); at >= 0; at = app.indexOf("t(", at + 2)) {
+  if (/[\w$.]/.test(app[at - 1] ?? "")) continue;
+  let depth = 0;
+  let end = at + 1;
+  for (; end < app.length; end++) {
+    if (app[end] === "(") depth++;
+    else if (app[end] === ")" && --depth === 0) break;
+  }
+  for (const lit of app.slice(at + 2, end).matchAll(/["']([A-Za-z][\w.]*)["']/g)) {
+    if (/^[a-z][\w]*(?:\.[\w]+)+$/.test(lit[1])) used.add(lit[1]);
+  }
+}
+// data-help="topic" opens help.<topic>.title / .body.
+for (const m of markup.matchAll(/data-help="(\w+)"/g)) used.add(`help.${m[1]}.title`).add(`help.${m[1]}.body`);
 for (const key of used) if (!(key in STRINGS.en)) problems.push(`used but missing: ${key}`);
 
 // Cyrillic outside the dictionary: only preset labels ({ ru: … }) and the language name.

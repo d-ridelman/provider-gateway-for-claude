@@ -610,6 +610,7 @@ if (args.includes("--serve")) {
   await new Promise(() => {});
 }
 const report = [];
+let finding = false;
 for (const shot of shots) {
   const name = `${shot.scenario}-${shot.screen}-${shot.size[0]}-${shot.scheme}-${shot.lang}${shot.scale ? "-x" + shot.scale : ""}`;
   if (only && !name.includes(only)) continue;
@@ -653,6 +654,7 @@ for (const shot of shots) {
   report.push({ name, ...m });
   const flags = [hoverNote, m.cardClipped && "CARD-CLIPPED", m.hscroll && "HSCROLL", m.misaligned?.length && "MISALIGNED " + m.misaligned.join(", "), m.clipped.length && "CLIPPED " + m.clipped.join(", "), m.scrollers.length && "SCROLL " + m.scrollers.join(", ")].filter(Boolean);
   console.log(name.padEnd(42), flags.join(" | ") || "ok");
+  if (hoverNote.startsWith("HOVER-CONTRAST") || m.cardClipped || m.hscroll || m.misaligned?.length || m.clipped.length || m.scrollers.length) finding = true;
 }
 fs.writeFileSync(path.join(outDir, "report.json"), JSON.stringify(report, null, 1));
 
@@ -660,5 +662,5 @@ chrome.kill();
 server.close();
 await sleep(500);
 fs.rmSync(profile, { recursive: true, force: true });
-console.log(`\n${report.length} shots in ${outDir}`);
-process.exit(0);
+console.log(`\n${report.length} shots in ${outDir}${finding ? " - FINDINGS" : ""}`);
+process.exit(finding ? 1 : 0);
