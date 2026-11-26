@@ -23,15 +23,16 @@ use std::path::{Path, PathBuf};
 /// Файл перевода в папке настроек приложения.
 pub const TRANSLATION_FILE: &str = "claude-ru.json";
 /// Меняется, когда меняется сам патч: старые копии пересобираются.
-const PATCH_REV: u32 = 17;
+const PATCH_REV: u32 = 18;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
 
 /// `Exi()`: без MSIX Cowork недоступен. В 3p сессия всё равно идёт на хосте
 /// (`keepsSessionCliOnHost()`), поэтому проверку снимаем — иначе Cowork не
 /// включится на портативной копии.
-const MSIX_CHECK: &str = r#"if\(e==="win32"&&!([A-Za-z0-9_$]+)\(\)\)return\{status:"unsupported",reason:H\(\)\.formatMessage\(\{defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"\}\)"#;
-const MSIX_CHECK_OFF: &str = r#"if(e==="win32"&&!1)return{status:"unsupported",reason:H().formatMessage({defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"})"#;
+const MSIX_CHECK: &str = r#"if\(e==="win32"&&!([A-Za-z0-9_$]+)\(\)\)return\{status:"unsupported",reason:([A-Za-z0-9_$]+)\(\)\.formatMessage\(\{defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"\}\)"#;
+/// Имя функции перед `.formatMessage` меняется от версии к версии (6.28899.6 — `H`, 7.37095.0 — `G`).
+const MSIX_CHECK_OFF: &str = r#"if(e==="win32"&&!1)return{status:"unsupported",reason:${2}().formatMessage({defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"})"#;
 /// `qxi()`: E2E-флаг подменяет всю проверку VM на «supported». Включаем его
 /// всегда, потому что host-loop не нуждается ни в MSIX, ни в HCS.
 const E2E_VM_CHECK: &str = r#"([A-Za-z0-9_$]+)\("CLAUDE_E2E_ASSUME_VM_SUPPORTED"\)\?([A-Za-z0-9_$]+):([A-Za-z0-9_$]+\(\))"#;
@@ -1407,6 +1408,22 @@ mod tests {
             "{text}"
         );
         fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn msix_anchor_does_not_depend_on_the_reason_function() {
+        // 6.28899.6 зовёт `H()`, 7.37095.0 — `G()`; имя меняется, сообщение и id — нет.
+        let regex = Regex::new(MSIX_CHECK).unwrap();
+        for name in ["H", "G"] {
+            let code = format!(
+                r#"if(e==="win32"&&!la())return{{status:"unsupported",reason:{name}().formatMessage({{defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"}})"#
+            );
+            assert_eq!(
+                regex.find_iter(code.as_bytes()).count(),
+                1,
+                "reason {name}: {code}"
+            );
+        }
     }
 
     #[test]

@@ -7,6 +7,7 @@ All notable changes to this project are listed here. The format follows [Keep a 
 ### Fixed
 
 - **"Update the installed Claude" no longer fails with 403.** `claude.ai` now serves the Desktop setup link only to a browser User-Agent and answers `provider-gateway-for-claude/…` with `403 Forbidden`. That one request uses a browser User-Agent; the portable download from `downloads.claude.ai` is unchanged.
+- **Host Cowork patches follow Claude 7.37095.0.** The `msix_required` check now calls its message formatter through a different minified name (`G()` instead of `H()`), so the old anchor found nothing and the whole host patch was skipped ("Cowork (host-loop) does not fit: `msix_required` found 0 places"). The anchor now takes the name as a group; every other anchor of the set matches 7.37095.0 unchanged.
 - **Cowork on the host no longer shows "Claude Code setup failed (prepare: no_vm)".** At session start the main process starts the VM itself (`startVM` → `prepareForVM`), and the earlier patch covered only the window's IPC call. Outside MSIX that path answered the error while the session went on in the host loop. It now leaves through the same "not supported" branch as a machine without the VM feature; the copy is rebuilt once.
 
 ## [0.2.4] - 2026-11-26
