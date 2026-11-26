@@ -16,3 +16,6 @@
 
 # agent-kit snapshot embedded by build.rs (ADR-015): built from kit.pin, not tracked.
 /crates/ctp-app/kit/
+
+# agent-kit critic run state (local)
+/agent-kit-critic/

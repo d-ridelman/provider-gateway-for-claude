@@ -580,7 +580,9 @@ const ENV_PRELUDE: &str = r#";(()=>{try{const real=process.env.CTP_REAL_LOCALAPP
 /// Для самопроверки: есть ли вставка окружения в уже собранной копии этой версии; копии
 /// ещё нет — можно ли её встроить (точка входа главного процесса читается).
 pub fn env_prelude_ok(app_dir: &Path, cache_root: &Path) -> bool {
-    let version = app_dir.file_name().unwrap_or_default();
+    let Ok(version) = version_folder(app_dir) else {
+        return env_prelude_change(&app_dir.join("resources").join("app.asar")).is_ok();
+    };
     let copy_asar = cache_root.join(version).join("resources").join("app.asar");
     if copy_asar.is_file() {
         let entry = read_asar_file(&copy_asar, "package.json")
@@ -741,7 +743,7 @@ static BUILD: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Имя папки версии в кеше копий: `app-X` у портативного и Squirrel, у MSIX папка — `app`
 /// внутри `Claude_X_x64__…` (ADR-021).
-fn version_folder(app_dir: &Path) -> Result<String> {
+pub(crate) fn version_folder(app_dir: &Path) -> Result<String> {
     let name = app_dir
         .file_name()
         .and_then(|n| n.to_str())

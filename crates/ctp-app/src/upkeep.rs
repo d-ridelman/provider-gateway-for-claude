@@ -72,6 +72,17 @@ impl Check {
     }
 }
 
+/// Имя папки копии этой версии (`app-X`): у Squirrel это имя папки, у MSIX — из имени
+/// пакета. Единственное место, где считается версия для копий, меты перевода и проверок.
+fn copy_version(app: &Path) -> String {
+    crate::ruui::version_folder(app).unwrap_or_else(|_| {
+        app.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string()
+    })
+}
+
 /// Папка версии: `…\app-6.6395.0\claude.exe` или `<package>\app\claude.exe` (MSIX);
 /// заглушка или свой путь — `None`.
 pub fn app_dir(exe: &Path) -> Option<PathBuf> {
@@ -344,11 +355,7 @@ pub enum Fetch {
 /// Свежий перевод при смене версии Claude (или если файла нет). Худший по покрытию
 /// строк этой версии не заменяет лучший. Возвращает строку для самопроверки.
 pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result<String> {
-    let version = app
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_string();
+    let version = copy_version(app);
     let file = config_dir.join(ruui::TRANSLATION_FILE);
     let meta_path = config_dir.join(TRANSLATION_META);
     // Перед «Открыть Claude» при наличии перевода качать нечего: не ждём фоновую
@@ -581,12 +588,7 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
         );
         return check;
     };
-    check.version = app
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .trim_start_matches("app-")
-        .to_string();
+    check.version = copy_version(&app).trim_start_matches("app-").to_string();
 
     match apply_rules(config_dir, &exe) {
         Ok(_) => {
@@ -846,11 +848,7 @@ fn prepare_copy(
     let Some(app) = crate::claude::detect(config).as_deref().and_then(app_dir) else {
         return Ok(None);
     };
-    let version = app
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or_default()
-        .to_string();
+    let version = copy_version(&app);
     if !settled(&app, SETTLE) {
         return Ok(None);
     }
@@ -1200,6 +1198,18 @@ mod tests {
         assert!(code_tab_line(true, false).contains("от копии"));
         assert!(code_tab_line(false, true).contains("не найден"));
         assert!(code_tab_line(false, false).contains("нет «Без папки»"));
+    }
+
+    #[test]
+    fn copy_version_is_the_copy_folder_for_both_layouts() {
+        // Иначе фоновая подготовка искала бы копию пакета в папке "app" и удаляла готовую.
+        let package =
+            Path::new(r"C:\Program Files\WindowsApps\Claude_6.28899.6.0_x64__pzs8sxrjxfjjc\app");
+        assert_eq!(copy_version(package), "app-6.28899.6.0");
+        assert_eq!(
+            copy_version(Path::new(r"C:\x\AnthropicClaude\app-7.37095.0")),
+            "app-7.37095.0"
+        );
     }
 
     #[test]
