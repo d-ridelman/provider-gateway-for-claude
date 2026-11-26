@@ -265,7 +265,11 @@ pub struct UiStatus {
 pub struct ModelInfo {
     pub alias: String,
     pub model: String,
+    /// Имя провайдера для меню Claude.
     pub provider: String,
+    /// id строки провайдера: по имени провайдера искать нельзя, люди называют их одинаково.
+    #[serde(default)]
+    pub provider_id: String,
     pub supports_1m: bool,
     /// Потолок уровня рассуждения провайдера; `None` — выбора уровня в Claude нет.
     pub max_effort: Option<String>,

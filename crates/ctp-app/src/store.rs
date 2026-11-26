@@ -100,15 +100,20 @@ pub fn save(dir: &Path, config: &Config) -> anyhow::Result<()> {
     write_file(&path, &text).map_err(anyhow::Error::msg)
 }
 
-/// Запись JSON без полузаписанного файла при сбое: временный файл рядом, `sync_all`,
+/// Запись без полузаписанного файла при сбое: временный файл рядом, `sync_all`,
 /// `rename`. Символическую ссылку пишет насквозь, чтобы не заменить её обычным файлом.
 pub(crate) fn write_file(path: &Path, text: &str) -> Result<(), String> {
+    write_bytes(path, text.as_bytes())
+}
+
+/// То же для готовых байтов (скачанный перевод — JSON как есть).
+pub(crate) fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
     if fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink()) {
-        return fs::write(path, text).map_err(|exc| format!("{}: {exc}", path.display()));
+        return fs::write(path, bytes).map_err(|exc| format!("{}: {exc}", path.display()));
     }
     let temp = path.with_extension("json.ctp-tmp");
     let written = fs::File::create(&temp).and_then(|mut file| {
-        std::io::Write::write_all(&mut file, text.as_bytes())?;
+        std::io::Write::write_all(&mut file, bytes)?;
         file.sync_all()
     });
     if let Err(exc) = written {
@@ -420,8 +425,19 @@ pub fn build_file(config: &Config) -> Result<ProvidersFile, String> {
     Ok(ProvidersFile { default, providers })
 }
 
+/// Ключ не нужен только настоящему loopback: `localhost.evil.com` — не «локальный».
 fn is_local(base_url: &str) -> bool {
-    base_url.contains("127.0.0.1") || base_url.contains("localhost") || base_url.contains("[::1]")
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+    url.host_str().is_some_and(|host| {
+        host.eq_ignore_ascii_case("localhost")
+            || host == "[::1]"
+            || host == "::1"
+            || host
+                .parse::<std::net::Ipv4Addr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    })
 }
 
 fn entry(id: &str) -> Result<keyring::Entry, String> {
@@ -944,5 +960,25 @@ mod tests {
         assert_eq!(role_alias(&config, Some(&role("oc", "gone"))), None);
         assert_eq!(role_alias(&config, Some(&role("other", "glm-5.3"))), None);
         assert_eq!(role_alias(&config, None), None);
+    }
+
+    #[test]
+    fn only_a_real_loopback_needs_no_key() {
+        for local in [
+            "http://127.0.0.1:8080/v1",
+            "http://localhost:11434",
+            "http://[::1]:1/v1",
+        ] {
+            assert!(is_local(local), "{local}");
+        }
+        for remote in [
+            "https://localhost.evil.com/v1",
+            "https://example.com/localhost",
+            "http://10.0.0.1:8080",
+            "",
+            "not a url",
+        ] {
+            assert!(!is_local(remote), "{remote}");
+        }
     }
 }

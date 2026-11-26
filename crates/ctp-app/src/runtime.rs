@@ -50,6 +50,7 @@ pub async fn start(shared: &AppShared) -> Result<UiStatus, String> {
                 alias: alias.clone(),
                 model: route.model.clone(),
                 provider: provider.name.clone(),
+                provider_id: provider.id.clone(),
                 supports_1m: rows.get(alias).is_some_and(|row| row.supports_1m),
                 max_effort: provider.max_effort.map(str::to_string),
                 openai: provider.kind == ctp_gateway::state::ProviderKind::OpenAi,

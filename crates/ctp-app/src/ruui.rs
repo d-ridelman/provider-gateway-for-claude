@@ -637,7 +637,7 @@ pub fn patch_exe(exe: &[u8], old_hash: &str, new_hash: &str) -> Result<Vec<u8>> 
         .with_context(|| tr!("хеш не заменён", "hash not replaced"))
 }
 
-fn stamp(path: &Path) -> Result<(u64, u64)> {
+pub(crate) fn stamp(path: &Path) -> Result<(u64, u64)> {
     let meta = fs::metadata(path).with_context(|| path.display().to_string())?;
     let modified = meta
         .modified()?

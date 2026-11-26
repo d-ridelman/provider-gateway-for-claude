@@ -1977,8 +1977,12 @@ async function installUpdate() {
 }
 
 async function browse(input) {
-  const picked = await invoke("pick_folder", { start: input.value.trim() || null }).catch(() => null);
-  if (picked) input.value = picked;
+  try {
+    const picked = await invoke("pick_folder", { start: input.value.trim() || null });
+    if (picked) input.value = picked;
+  } catch (exc) {
+    toast(formatError(exc), "error");
+  }
 }
 
 async function saveSettings() {

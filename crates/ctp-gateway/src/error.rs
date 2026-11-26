@@ -124,11 +124,6 @@ pub fn without_secret_bytes(body: &[u8], secret: &str) -> Vec<u8> {
     out
 }
 
-/// Достаёт человеческий текст из OpenAI- или Anthropic-ошибки, иначе режет сырой текст.
-pub fn message_from_error_text(text: &str) -> String {
-    clean_error_text(text, "")
-}
-
 pub fn openai_error_message(value: &Value) -> Option<String> {
     let error = value.get("error")?;
     error
@@ -224,12 +219,6 @@ mod tests {
         assert!(!out.contains("sk-abcdefghij"));
         assert!(!out.contains("abcdefghij"));
         assert_eq!(out.chars().count(), 2000);
-    }
-
-    #[test]
-    fn extracts_openai_message() {
-        let text = r#"{"error":{"message":"model does not exist","type":"invalid_request_error"}}"#;
-        assert_eq!(message_from_error_text(text), "model does not exist");
     }
 
     #[test]

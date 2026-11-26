@@ -472,6 +472,21 @@ pub fn parse_proposal(text: &str) -> Result<Proposal, String> {
     })
 }
 
+/// Почему `git rev-parse` не дал корень: код возврата с причиной из stderr или сбой запуска.
+/// Таймаут — тоже причина: «не git-репозиторий» на него не отвечает.
+fn git_error(repo: &Result<Output, String>) -> Option<String> {
+    match repo {
+        Ok(output) if output.code != Some(0) => output
+            .stderr
+            .lines()
+            .next()
+            .map(str::to_string)
+            .filter(|line| !line.trim().is_empty()),
+        Ok(_) => None,
+        Err(exc) => Some(exc.clone()),
+    }
+}
+
 /// Выбранные проверки, которые можно передать: только id из отбора, в его порядке.
 pub fn chosen_checks(proposal: &Proposal, chosen: &[String]) -> Vec<String> {
     proposal
@@ -705,17 +720,7 @@ pub fn facts(config: &Config, status: &crate::model::UiStatus, requested: &Path)
         .ok()
         .filter(|o| o.code == Some(0))
         .map(|o| PathBuf::from(o.stdout.trim().replace('/', "\\")));
-    // Таймаут или git не запустился — это не «не репозиторий», а сбой: называем причину.
-    let git_error = match &repo {
-        Ok(output) if output.code != Some(0) => output
-            .stderr
-            .lines()
-            .next()
-            .map(str::to_string)
-            .filter(|line| !line.trim().is_empty()),
-        Ok(_) => None,
-        Err(exc) => Some(exc.clone()),
-    };
+    let git_error = git_error(&repo);
     let cli = crate::claude::code_cli(config).is_ok();
     let work = root.clone().unwrap_or_else(|| requested.to_path_buf());
     let list = |args: &[&str]| {
@@ -1792,6 +1797,27 @@ mod tests {
         let guard = body.find("undo_blind(").unwrap();
         assert!(
             guard < body.find("applied(run(").unwrap() && guard < body.find("run_claude(").unwrap()
+        );
+    }
+
+    #[test]
+    fn a_failed_git_names_its_reason() {
+        let out = |code, stderr: &str| Output {
+            code: Some(code),
+            stdout: String::new(),
+            stderr: stderr.into(),
+        };
+        assert_eq!(git_error(&Ok(out(0, ""))), None);
+        assert_eq!(
+            git_error(&Ok(out(128, "fatal: not a git repository\nmore"))).as_deref(),
+            Some("fatal: not a git repository")
+        );
+        // Пустой stderr — причины нет, окно скажет своё.
+        assert_eq!(git_error(&Ok(out(1, "\n"))), None);
+        // Таймаут — причина, а не «не репозиторий».
+        assert_eq!(
+            git_error(&Err("git: no answer in 20 s".into())).as_deref(),
+            Some("git: no answer in 20 s")
         );
     }
 

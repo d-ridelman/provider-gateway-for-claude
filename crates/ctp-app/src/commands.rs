@@ -592,7 +592,7 @@ async fn main_model_limits(config: &Config, status: &UiStatus) -> crate::catalog
     let Some(main) = claude::main_model(status, &claude::role_aliases(config)) else {
         return Default::default();
     };
-    let Some(provider) = config.providers.iter().find(|p| p.name == main.provider) else {
+    let Some(provider) = config.providers.iter().find(|p| p.id == main.provider_id) else {
         return Default::default();
     };
     let Ok(Some(catalog)) = tokio::time::timeout(CATALOG_GRACE, crate::catalog::load()).await

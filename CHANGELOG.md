@@ -6,6 +6,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Fixed
 
+- **A provider URL is local only if it points at the loopback address.** The "no key needed" hint matched any address that merely contained `localhost`, so `https://localhost.example.com` was taken for a local one.
+- **A folder picker that fails now says why** instead of doing nothing.
 - **Connect no longer stays broken when agent-kit's `scripts/cli.mjs` disappears.** The built-in copy was checked only by its marker and `plugin.json`, so an antivirus that removed `cli.mjs` left every action failing with "Cannot find module" and no way to repair it from the window; the copy is now rebuilt.
 - **A language switch no longer leaves the Projects page in the previous language.** agent-kit answers in the language it was called with; the check is repeated after a switch and the inspection and plan return with the next Check instead of showing two languages. The "?" buttons of headings that keep their text now follow the switch too.
 - **A deep project path no longer makes the projects card scroll sideways.**

@@ -40,15 +40,6 @@ pub fn count_json_tokens(value: &Value) -> u64 {
     }
 }
 
-pub fn estimate_json_tokens(value: &Value) -> u64 {
-    let mut media = 0u64;
-    let rest = without_media(value, &mut media);
-    match serde_json::to_string(&rest) {
-        Ok(text) => estimate_tokens(&text) + media,
-        Err(_) => media.max(1),
-    }
-}
-
 /// Токенов на картинку, если её размер неизвестен (ссылка, непонятный формат): столько
 /// модель берёт за картинку максимального размера.
 const IMAGE_FALLBACK: u64 = 1600;
@@ -287,7 +278,6 @@ mod tests {
         let tokens = count_json_tokens(&body);
         // Уменьшена до ~1,15 Мп → ~1,5 тыс., а не сотни тысяч за base64.
         assert!((1400..1700).contains(&tokens), "{tokens}");
-        assert!(estimate_json_tokens(&body) < 1700);
         // Маленькая — по размеру, без уменьшения: 200×100 / 750 → 27.
         assert_eq!(image_tokens(&base64(&png(200, 100))), 27);
         // Неизвестный формат и ссылка — как картинка максимального размера.

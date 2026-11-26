@@ -134,19 +134,10 @@ struct RulesCache {
     pattern: String,
 }
 
-fn stamp(path: &Path) -> Result<(u64, u64)> {
-    let meta = fs::metadata(path).with_context(|| path.display().to_string())?;
-    let modified = meta
-        .modified()?
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |d| d.as_secs());
-    Ok((meta.len(), modified))
-}
-
 /// Правило установленного Claude (из кеша, если `app.asar` тот же).
 fn rules_of(config_dir: &Path, app: &Path) -> Result<String> {
     let asar = app.join("resources").join("app.asar");
-    let (len, modified) = stamp(&asar)?;
+    let (len, modified) = crate::ruui::stamp(&asar)?;
     let cache_path = config_dir.join(RULES_CACHE);
     let key = asar.display().to_string();
     if let Some(cache) = fs::read(&cache_path)
@@ -407,9 +398,8 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result
                         " (downloaded translation is worse, kept the previous one)"
                     )
                 } else if current.as_ref() != Some(&fresh) {
-                    let tmp = file.with_extension("json.download");
-                    fs::write(&tmp, &raw)
-                        .and_then(|()| fs::rename(&tmp, &file))
+                    crate::store::write_bytes(&file, &raw)
+                        .map_err(anyhow::Error::msg)
                         .with_context(|| {
                             let target = file.display();
                             tr!(
@@ -425,7 +415,8 @@ pub fn refresh_translation(config_dir: &Path, app: &Path, mode: Fetch) -> Result
                     claude_version: version.clone(),
                     catalog_version: meta.catalog_version.clone(),
                 };
-                fs::write(&meta_path, serde_json::to_vec(&meta)?)?;
+                crate::store::write_bytes(&meta_path, &serde_json::to_vec(&meta)?)
+                    .map_err(anyhow::Error::msg)?;
                 Ok(saved)
             });
         *last_failure = downloaded.is_err().then(|| Failure {
@@ -493,13 +484,13 @@ fn refresh_catalog(config_dir: &Path, version: &str, mode: Fetch) {
     let file = config_dir.join(CATALOG_FILE);
     let result = download_translation(CATALOG_URL, mode != Fetch::Watch).and_then(|raw| {
         parse_catalog(&raw)?;
-        let tmp = file.with_extension("json.download");
-        fs::write(&tmp, &raw).and_then(|()| fs::rename(&tmp, &file))?;
+        crate::store::write_bytes(&file, &raw).map_err(anyhow::Error::msg)?;
         let meta = TranslationMeta {
             catalog_version: version.to_string(),
             ..read_meta()
         };
-        fs::write(&meta_path, serde_json::to_vec(&meta)?)?;
+        crate::store::write_bytes(&meta_path, &serde_json::to_vec(&meta)?)
+            .map_err(anyhow::Error::msg)?;
         Ok(())
     });
     if let Err(exc) = &result {
