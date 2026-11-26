@@ -249,8 +249,9 @@ pub fn signer(path: &Path) -> Result<Signer> {
 /// Отзыв не проверить (CRL/OCSP недоступны): не повод отказывать, подпись и цепочка целы.
 #[cfg(windows)]
 fn revocation_unavailable(status: i32) -> bool {
-    // CRYPT_E_REVOCATION_OFFLINE и CERT_E_REVOCATION_FAILURE.
-    matches!(status as u32, 0x8009_2013 | 0x800B_010E)
+    // CRYPT_E_REVOCATION_OFFLINE, CRYPT_E_NO_REVOCATION_CHECK и CERT_E_REVOCATION_FAILURE:
+    // цепочку без CDP/OCSP за прокси отдаёт и фильтр, и кеш.
+    matches!(status as u32, 0x8009_2013 | 0x8009_2012 | 0x800B_010E)
 }
 
 /// Один проход `WinVerifyTrust`: код возврата и данные подписанта, если проверка прошла.
@@ -300,26 +301,27 @@ fn verify(path: &Path, revocation: u32) -> (i32, Option<Signer>) {
             } else {
                 let chain = (*signer).pasCertChain;
                 if chain.is_null() {
-                    return (status, None);
+                    None
+                } else {
+                    let mut buffer = [0u16; 256];
+                    let len = CertGetNameStringW(
+                        (*chain).pCert,
+                        CERT_NAME_SIMPLE_DISPLAY_TYPE,
+                        0,
+                        std::ptr::null(),
+                        buffer.as_mut_ptr(),
+                        buffer.len() as u32,
+                    );
+                    // `len` — сколько нужно с нулём на конце; длиннее буфера — взять что есть.
+                    let name = (len > 1).then(|| {
+                        String::from_utf16_lossy(&buffer[..(len as usize - 1).min(buffer.len())])
+                    });
+                    // Второй элемент цепочки — тот, кто выпустил листовой сертификат.
+                    let issuer = ((*signer).csCertChain >= 2)
+                        .then(|| thumbprint((*chain.add(1)).pCert))
+                        .flatten();
+                    name.map(|name| Signer { name, issuer })
                 }
-                let mut buffer = [0u16; 256];
-                let len = CertGetNameStringW(
-                    (*chain).pCert,
-                    CERT_NAME_SIMPLE_DISPLAY_TYPE,
-                    0,
-                    std::ptr::null(),
-                    buffer.as_mut_ptr(),
-                    buffer.len() as u32,
-                );
-                // `len` — сколько нужно с нулём на конце; длиннее буфера — взять что есть.
-                let name = (len > 1).then(|| {
-                    String::from_utf16_lossy(&buffer[..(len as usize - 1).min(buffer.len())])
-                });
-                // Второй элемент цепочки — тот, кто выпустил листовой сертификат.
-                let issuer = ((*signer).csCertChain >= 2)
-                    .then(|| thumbprint((*chain.add(1)).pCert))
-                    .flatten();
-                name.map(|name| Signer { name, issuer })
             }
         }
     } else {

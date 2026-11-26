@@ -329,7 +329,7 @@ function renderMain() {
 // back with the next Check instead of showing a mix of languages.
 async function refreshProjectLanguage() {
   const project = state.project;
-  if (!project?.dir || project.busy) return;
+  if (state.view !== "project" || !project?.dir || project.busy) return;
   project.data = null;
   project.undo = null;
   try {

@@ -556,7 +556,14 @@ pub fn run_state(config: &Config, status: &UiStatus) -> ClaudeRun {
     let vm = (config.cowork_mode == "vm")
         .then(|| real_local_appdata().map(|local| local.join("Claude-3p")))
         .flatten();
-    let Some(profile) = [Some(base.join("Claude-3p")), vm]
+    // Сначала профиль текущего режима: если запущены оба, `stale` считается по своему.
+    let base_profile = base.join("Claude-3p");
+    let profiles = if config.cowork_mode == "vm" {
+        [vm, Some(base_profile)]
+    } else {
+        [Some(base_profile), vm]
+    };
+    let Some(profile) = profiles
         .into_iter()
         .flatten()
         .find(|path| profile_in_use(path))

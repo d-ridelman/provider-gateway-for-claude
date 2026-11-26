@@ -2391,13 +2391,15 @@ mod tests {
         command.args([
             "-NoProfile",
             "-Command",
-            "Write-Output hello; Start-Process -NoNewWindow ping -ArgumentList '-n','20','127.0.0.1'",
+            "Write-Output hello; Start-Process -NoNewWindow ping -ArgumentList '-n','45','127.0.0.1'",
         ]);
         let started = Instant::now();
-        let output = run(command, Duration::from_secs(15)).expect("run");
+        let output = run(command, Duration::from_secs(60)).expect("run");
         assert_eq!(output.code, Some(0));
         let took = started.elapsed();
-        assert!(took < Duration::from_secs(10), "ждал потомка {took:?}");
+        // ping живёт ~44 с: без дедлайна run() вернулся бы только после него. Порог 20 с
+        // оставляет запас на медленный старт PowerShell под параллельной нагрузкой.
+        assert!(took < Duration::from_secs(20), "ждал потомка {took:?}");
         // Вывод, пришедший до дедлайна, не теряется.
         assert!(output.stdout.contains("hello"), "{:?}", output.stdout);
     }
