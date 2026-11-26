@@ -7,6 +7,10 @@
 #   .\tools\kit-snapshot.ps1 -Check               only say whether the snapshot matches the pin
 param([string]$Source, [switch]$Check)
 $ErrorActionPreference = 'Stop'
+# Not `tar` from PATH: under a Git Bash-derived PATH that is GNU tar, which reads
+# `C:\...\src.tar` as a remote host and fails with "Cannot connect to C:".
+$systemTar = Join-Path $env:SystemRoot 'System32\tar.exe'
+if (-not (Test-Path $systemTar)) { throw 'tar.exe not found in System32' }
 $root = Split-Path $PSScriptRoot -Parent
 $pin = (Get-Content (Join-Path $root 'crates\ctp-app\kit.pin') -Raw).Trim()
 if ($pin -notmatch '^[0-9a-f]{40}$') { throw "kit.pin must hold a full commit hash, not '$pin'" }
@@ -42,7 +46,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "git archive failed ($LASTEXITCODE)" }
     $tree = Join-Path $work 'tree'
     New-Item -ItemType Directory -Force $tree | Out-Null
-    & tar -xf (Join-Path $work 'src.tar') -C $tree
+    & $systemTar -xf (Join-Path $work 'src.tar') -C $tree
     if ($LASTEXITCODE -ne 0) { throw "tar -x failed ($LASTEXITCODE)" }
     # The version Claude Code keys its plugin cache on: without it a folder plugin is "unknown".
     $manifest = Join-Path $tree '.claude-plugin\plugin.json'
@@ -51,7 +55,7 @@ try {
     [IO.File]::WriteAllText($manifest, ($json | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
     New-Item -ItemType Directory -Force $kitDir | Out-Null
     $next = "$tar.tmp"
-    & tar -cf $next -C $tree @present
+    & $systemTar -cf $next -C $tree @present
     if ($LASTEXITCODE -ne 0) { throw "tar -c failed ($LASTEXITCODE)" }
     Move-Item -Force $next $tar
     [IO.File]::WriteAllText($stamp, $version, [Text.UTF8Encoding]::new($false))
