@@ -872,8 +872,8 @@ pub fn launch(
         command.arg(format!("--proxy-server={proxy}"));
         command.envs(crate::installs::proxy_env());
     }
-    // VM-режим: настоящий exe пакета через Invoke-CommandInDesktopPackage (с профилем и
-    // окружением PGC). Реестр не трогаем: запись делает MSIX-пакет.
+    // VM-режим: настоящий exe пакета через Invoke-CommandInDesktopPackage (со стандартным
+    // профилем Claude-3p и окружением PGC). Реестр не трогаем: запись делает MSIX-пакет.
     if let Some(package) = &msix {
         let args: Vec<String> = command
             .get_args()
@@ -895,8 +895,8 @@ pub fn launch(
         let family = &package.family;
         return Ok(crate::model::LaunchResult {
             message: tr!(
-                "Claude из MSIX (пакет {family}) запущен с профилем PGC: {profile}. Cowork с VM; русского перевода в этом режиме нет.",
-                "Claude from MSIX (package {family}) started with the PGC profile: {profile}. Cowork with the VM; no Russian translation in this mode."
+                "Claude из MSIX (пакет {family}) запущен со стандартным профилем Claude-3p: {profile}. Cowork с VM; русского перевода в этом режиме нет.",
+                "Claude from MSIX (package {family}) started with the standard Claude-3p profile: {profile}. Cowork with the VM; no Russian translation in this mode."
             ),
             warning: false,
         });
