@@ -100,6 +100,7 @@ Carried inside the installer and the portable exe as a separate program (ADR-015
 - fastrand 2.5.0 — Apache-2.0 OR MIT — source: https://github.com/smol-rs/fastrand
 - fax 0.2.7 — MIT — source: https://github.com/pdf-rs/fax
 - fdeflate 0.3.7 — MIT OR Apache-2.0 — source: https://github.com/image-rs/fdeflate
+- filetime 0.2.30 — MIT/Apache-2.0 — source: https://github.com/alexcrichton/filetime
 - flate2 1.1.11 — MIT OR Apache-2.0 — source: https://github.com/rust-lang/flate2-rs
 - fnv 1.0.7 — Apache-2.0 / MIT — source: https://github.com/servo/rust-fnv
 - foldhash 0.2.0 — Zlib — source: https://github.com/orlp/foldhash
@@ -265,6 +266,7 @@ Carried inside the installer and the portable exe as a separate program (ADR-015
 - sync_wrapper 1.0.2 — Apache-2.0 — source: https://github.com/Actyx/sync_wrapper
 - synstructure 0.14.0 — MIT — source: https://github.com/mystor/synstructure
 - tao 0.37.2 — Apache-2.0 — source: https://github.com/tauri-apps/tao
+- tar 0.4.46 — MIT OR Apache-2.0 — source: https://github.com/composefs/tar-rs
 - tauri 2.12.7 — Apache-2.0 OR MIT — source: https://github.com/tauri-apps/tauri
 - tauri-codegen 2.7.6 — Apache-2.0 OR MIT — source: https://github.com/tauri-apps/tauri
 - tauri-macros 2.7.6 — Apache-2.0 OR MIT — source: https://github.com/tauri-apps/tauri
@@ -1364,7 +1366,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 14, used by: atomic-waker 1.1.2, base64 0.22.1, base64 0.23.1, bitflags 2.13.2, bs58 0.5.1, bstr 1.13.1, bumpalo 3.20.4, camino 1.2.6, cfg-if 1.0.5, core_detect 1.0.0, crossbeam-channel 0.5.17, crossbeam-utils 0.8.23, displaydoc 0.2.7, equivalent 1.0.3, fastrand 2.5.0, flate2 1.1.11, fnv 1.0.7, form_urlencoded 1.2.2, glob 0.3.4, hashbrown 0.12.3, hashbrown 0.17.1, heck 0.5.0, html5ever 0.39.0, httparse 1.10.1, hyper-rustls 0.27.10, hyper-tls 0.6.0, idna 1.1.0, idna_adapter 1.2.2, indexmap 1.9.3, indexmap 2.14.2, keyboard-types 0.8.3, lazy_static 1.5.1, lock_api 0.4.14, log 0.4.35, markup5ever 0.39.0, mime 0.3.18, muda 0.20.0, num-traits 0.2.19, once_cell 1.21.4, parking_lot 0.12.5, parking_lot_core 0.9.12, percent-encoding 2.3.2, png 0.18.1, regex 1.13.1, regex-automata 0.4.18, regex-syntax 0.8.11, rustls 0.23.46, scopeguard 1.2.0, serde_with 3.24.0, serde_with_macros 3.24.0, servo_arc 0.4.3, smallvec 1.16.5, socket2 0.6.5, stable_deref_trait 1.2.1, string_cache 0.9.0, symlink 0.1.0, tempfile 3.27.0, tendril 0.5.1, thread_local 1.1.10, tray-icon 0.25.1, unicode-segmentation 1.13.3, url 2.5.8, uuid 1.29.3, web_atoms 0.2.6, weezl 0.1.12, window-vibrancy 0.8.1, wry 0.57.2
+License text 14, used by: atomic-waker 1.1.2, base64 0.22.1, base64 0.23.1, bitflags 2.13.2, bs58 0.5.1, bstr 1.13.1, bumpalo 3.20.4, camino 1.2.6, cfg-if 1.0.5, core_detect 1.0.0, crossbeam-channel 0.5.17, crossbeam-utils 0.8.23, displaydoc 0.2.7, equivalent 1.0.3, fastrand 2.5.0, filetime 0.2.30, flate2 1.1.11, fnv 1.0.7, form_urlencoded 1.2.2, glob 0.3.4, hashbrown 0.12.3, hashbrown 0.17.1, heck 0.5.0, html5ever 0.39.0, httparse 1.10.1, hyper-rustls 0.27.10, hyper-tls 0.6.0, idna 1.1.0, idna_adapter 1.2.2, indexmap 1.9.3, indexmap 2.14.2, keyboard-types 0.8.3, lazy_static 1.5.1, lock_api 0.4.14, log 0.4.35, markup5ever 0.39.0, mime 0.3.18, muda 0.20.0, num-traits 0.2.19, once_cell 1.21.4, parking_lot 0.12.5, parking_lot_core 0.9.12, percent-encoding 2.3.2, png 0.18.1, regex 1.13.1, regex-automata 0.4.18, regex-syntax 0.8.11, rustls 0.23.46, scopeguard 1.2.0, serde_with 3.24.0, serde_with_macros 3.24.0, servo_arc 0.4.3, smallvec 1.16.5, socket2 0.6.5, stable_deref_trait 1.2.1, string_cache 0.9.0, symlink 0.1.0, tar 0.4.46, tempfile 3.27.0, tendril 0.5.1, thread_local 1.1.10, tray-icon 0.25.1, unicode-segmentation 1.13.3, url 2.5.8, uuid 1.29.3, web_atoms 0.2.6, weezl 0.1.12, window-vibrancy 0.8.1, wry 0.57.2
 
 Apache License
                         Version 2.0, January 2004
@@ -2514,7 +2516,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 36, used by: cfg-if 1.0.5, socket2 0.6.5
+License text 36, used by: cfg-if 1.0.5, filetime 0.2.30, socket2 0.6.5
 
 Copyright (c) 2014 Alex Crichton
 
@@ -11604,7 +11606,36 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/tao.git
 Creator: Person: Daniel Thompson-Yvetot
 
 ------------------------------------------------------------------------------
-License text 185, used by: tauri 2.12.7, tauri-codegen 2.7.6, tauri-macros 2.7.6, tauri-plugin-dialog 2.8.4, tauri-plugin-fs 2.7.1, tauri-plugin-updater 2.14.1, tauri-runtime 2.12.4, tauri-runtime-wry 2.12.5, tauri-utils 2.10.4
+License text 185, used by: tar 0.4.46
+
+Copyright (c) The tar-rs Project Contributors
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+------------------------------------------------------------------------------
+License text 186, used by: tauri 2.12.7, tauri-codegen 2.7.6, tauri-macros 2.7.6, tauri-plugin-dialog 2.8.4, tauri-plugin-fs 2.7.1, tauri-plugin-updater 2.14.1, tauri-runtime 2.12.4, tauri-runtime-wry 2.12.5, tauri-utils 2.10.4
 
 MIT License
 
@@ -11629,7 +11660,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 186, used by: tauri-plugin-dialog 2.8.4, tauri-plugin-fs 2.7.1, tauri-plugin-single-instance 2.5.5, tauri-plugin-updater 2.14.1
+License text 187, used by: tauri-plugin-dialog 2.8.4, tauri-plugin-fs 2.7.1, tauri-plugin-single-instance 2.5.5, tauri-plugin-updater 2.14.1
 
 SPDXVersion: SPDX-2.1
 DataLicense: CC0-1.0
@@ -11653,7 +11684,7 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/tauri.git
 Creator: Person: Daniel Thompson-Yvetot
 
 ------------------------------------------------------------------------------
-License text 187, used by: tauri-plugin-single-instance 2.5.5
+License text 188, used by: tauri-plugin-single-instance 2.5.5
 
 MIT License
 
@@ -11678,7 +11709,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 188, used by: tempfile 3.27.0
+License text 189, used by: tempfile 3.27.0
 
 Copyright (c) 2015 Steven Allen
 
@@ -11707,7 +11738,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 189, used by: tendril 0.5.1
+License text 190, used by: tendril 0.5.1
 
 Copyright (c) 2015 Keegan McAllister
 
@@ -11736,7 +11767,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 190, used by: tiff 0.11.3
+License text 191, used by: tiff 0.11.3
 
 MIT License
 
@@ -11761,7 +11792,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 191, used by: time 0.3.55, time-core 0.1.9, time-macros 0.2.32
+License text 192, used by: time 0.3.55, time-core 0.1.9, time-macros 0.2.32
 
 Copyright (c) Jacob Pratt et al.
 
@@ -11784,7 +11815,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 192, used by: tokio 1.54.1, tokio-util 0.7.20
+License text 193, used by: tokio 1.54.1, tokio-util 0.7.20
 
 MIT License
 
@@ -11809,7 +11840,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 193, used by: tokio-macros 2.7.2
+License text 194, used by: tokio-macros 2.7.2
 
 MIT License
 
@@ -11835,7 +11866,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 194, used by: tokio-native-tls 0.3.1, tracing 0.1.44, tracing-appender 0.2.5, tracing-attributes 0.1.31, tracing-core 0.1.36, tracing-log 0.2.0, tracing-subscriber 0.3.23
+License text 195, used by: tokio-native-tls 0.3.1, tracing 0.1.44, tracing-appender 0.2.5, tracing-attributes 0.1.31, tracing-core 0.1.36, tracing-log 0.2.0, tracing-subscriber 0.3.23
 
 Copyright (c) 2019 Tokio Contributors
 
@@ -11864,7 +11895,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 195, used by: tokio-rustls 0.26.6
+License text 196, used by: tokio-rustls 0.26.6
 
 Apache License
                         Version 2.0, January 2004
@@ -12069,7 +12100,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ------------------------------------------------------------------------------
-License text 196, used by: tokio-rustls 0.26.6
+License text 197, used by: tokio-rustls 0.26.6
 
 Copyright (c) 2017 quininer kel
 
@@ -12098,7 +12129,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 197, used by: tower 0.5.3, tower-layer 0.3.3, tower-service 0.3.3
+License text 198, used by: tower 0.5.3, tower-layer 0.3.3, tower-service 0.3.3
 
 Copyright (c) 2019 Tower Contributors
 
@@ -12127,7 +12158,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 198, used by: tower-http 0.6.11
+License text 199, used by: tower-http 0.6.11
 
 Copyright (c) 2019-2021 Tower Contributors
 
@@ -12156,7 +12187,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 199, used by: tray-icon 0.25.1
+License text 200, used by: tray-icon 0.25.1
 
 SPDXVersion: SPDX-2.1
 DataLicense: CC0-1.0
@@ -12179,7 +12210,7 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/tray-icon.git
 Creator: Person: Daniel Thompson-Yvetot
 
 ------------------------------------------------------------------------------
-License text 200, used by: try-lock 0.2.5
+License text 201, used by: try-lock 0.2.5
 
 Copyright (c) 2018-2023 Sean McArthur
 Copyright (c) 2016 Alex Crichton
@@ -12203,12 +12234,12 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 201, used by: typenum 1.20.1
+License text 202, used by: typenum 1.20.1
 
 MIT OR Apache-2.0
 
 ------------------------------------------------------------------------------
-License text 202, used by: typenum 1.20.1
+License text 203, used by: typenum 1.20.1
 
 Apache License
                         Version 2.0, January 2004
@@ -12413,7 +12444,7 @@ See the License for the specific language governing permissions and
 limitations under the License.
 
 ------------------------------------------------------------------------------
-License text 203, used by: typenum 1.20.1
+License text 204, used by: typenum 1.20.1
 
 The MIT License (MIT)
 
@@ -12438,7 +12469,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 204, used by: unicode-ident 1.0.27
+License text 205, used by: unicode-ident 1.0.27
 
 UNICODE LICENSE V3
 
@@ -12481,7 +12512,7 @@ dealings in these Data Files or Software without prior written
 authorization of the copyright holder.
 
 ------------------------------------------------------------------------------
-License text 205, used by: unicode-segmentation 1.13.3
+License text 206, used by: unicode-segmentation 1.13.3
 
 Licensed under the Apache License, Version 2.0
 <LICENSE-APACHE or
@@ -12492,7 +12523,7 @@ notice may not be copied, modified, or distributed except
 according to those terms.
 
 ------------------------------------------------------------------------------
-License text 206, used by: untrusted 0.9.0
+License text 207, used by: untrusted 0.9.0
 
 // Copyright 2015-2016 Brian Smith.
 //
@@ -12509,7 +12540,7 @@ License text 206, used by: untrusted 0.9.0
 // OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 207, used by: urlpattern 0.6.0
+License text 208, used by: urlpattern 0.6.0
 
 MIT License
 
@@ -12534,7 +12565,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 208, used by: utf8_iter 1.1.0
+License text 209, used by: utf8_iter 1.1.0
 
 Copyright Mozilla Foundation
 
@@ -12580,7 +12611,7 @@ licensed under the Apache License, Version 2.0 <LICENSE-APACHE> or
 <LICENSE-MIT> or <http://opensource.org/licenses/MIT>, at your option.
 
 ------------------------------------------------------------------------------
-License text 209, used by: utf8parse 0.2.2
+License text 210, used by: utf8parse 0.2.2
 
 Copyright (c) 2016 Joe Wilm
 
@@ -12609,7 +12640,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 210, used by: utf_types 1.0.0
+License text 211, used by: utf_types 1.0.0
 
 Copyright Mozilla Foundation
 
@@ -12633,7 +12664,7 @@ Test code is dedicated to the Public Domain when so designated (see
 the individual files for PD/CC0-dedicated sections).
 
 ------------------------------------------------------------------------------
-License text 211, used by: uuid 1.29.3
+License text 212, used by: uuid 1.29.3
 
 Copyright (c) 2014 The Rust Project Developers
 Copyright (c) 2018 Ashley Mannix, Christopher Armstrong, Dylan DPC, Hunar Roop Kahlon
@@ -12663,7 +12694,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 212, used by: want 0.3.2
+License text 213, used by: want 0.3.2
 
 Copyright (c) 2018-2019 Sean McArthur
 
@@ -12686,7 +12717,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 213, used by: web-time 1.1.0
+License text 214, used by: web-time 1.1.0
 
 Apache License
                            Version 2.0, January 2004
@@ -12891,7 +12922,7 @@ Apache License
    limitations under the License.
 
 ------------------------------------------------------------------------------
-License text 214, used by: web-time 1.1.0
+License text 215, used by: web-time 1.1.0
 
 MIT License
 
@@ -12916,7 +12947,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 215, used by: weezl 0.1.12
+License text 216, used by: weezl 0.1.12
 
 The MIT License (MIT)
 
@@ -12941,7 +12972,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 216, used by: window-vibrancy 0.8.1
+License text 217, used by: window-vibrancy 0.8.1
 
 MIT License
 
@@ -12966,7 +12997,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 217, used by: window-vibrancy 0.8.1
+License text 218, used by: window-vibrancy 0.8.1
 
 SPDXVersion: SPDX-2.1
 DataLicense: CC0-1.0
@@ -12989,7 +13020,7 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/window-vibrancy.git
 Creator: Person: Daniel Thompson-Yvetot
 
 ------------------------------------------------------------------------------
-License text 218, used by: windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.53.5, windows-threading 0.2.1, windows-version 0.1.7, windows_x86_64_msvc 0.53.1
+License text 219, used by: windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.53.5, windows-threading 0.2.1, windows-version 0.1.7, windows_x86_64_msvc 0.53.1
 
 Apache License
                            Version 2.0, January 2004
@@ -13194,7 +13225,7 @@ Apache License
    limitations under the License.
 
 ------------------------------------------------------------------------------
-License text 219, used by: windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.53.5, windows-threading 0.2.1, windows-version 0.1.7, windows_x86_64_msvc 0.53.1
+License text 220, used by: windows 0.62.2, windows-collections 0.3.2, windows-core 0.62.2, windows-future 0.3.2, windows-implement 0.60.2, windows-interface 0.59.3, windows-link 0.2.1, windows-numerics 0.3.1, windows-registry 0.6.1, windows-result 0.4.1, windows-strings 0.5.1, windows-sys 0.60.2, windows-sys 0.61.2, windows-targets 0.53.5, windows-threading 0.2.1, windows-version 0.1.7, windows_x86_64_msvc 0.53.1
 
 MIT License
 
@@ -13219,7 +13250,7 @@ MIT License
     SOFTWARE
 
 ------------------------------------------------------------------------------
-License text 220, used by: winnow 1.0.5
+License text 221, used by: winnow 1.0.5
 
 Permission is hereby granted, free of charge, to any person obtaining
 a copy of this software and associated documentation files (the
@@ -13241,7 +13272,7 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 221, used by: wry 0.57.2
+License text 222, used by: wry 0.57.2
 
 MIT License
 
@@ -13266,7 +13297,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 222, used by: wry 0.57.2
+License text 223, used by: wry 0.57.2
 
 SPDXVersion: SPDX-2.1
 DataLicense: CC0-1.0
@@ -13290,7 +13321,7 @@ PackageDownloadLocation: git+ssh://github.com/tauri-apps/wry.git
 Creator: Person: Daniel Thompson-Yvetot
 
 ------------------------------------------------------------------------------
-License text 223, used by: zerocopy 0.8.63, zerocopy-derive 0.8.63
+License text 224, used by: zerocopy 0.8.63, zerocopy-derive 0.8.63
 
 Apache License
                            Version 2.0, January 2004
@@ -13495,7 +13526,7 @@ Apache License
    limitations under the License.
 
 ------------------------------------------------------------------------------
-License text 224, used by: zerocopy 0.8.63, zerocopy-derive 0.8.63
+License text 225, used by: zerocopy 0.8.63, zerocopy-derive 0.8.63
 
 Copyright 2019 The Fuchsia Authors.
 
@@ -13523,7 +13554,7 @@ THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ------------------------------------------------------------------------------
-License text 225, used by: zerocopy 0.8.63, zerocopy-derive 0.8.63
+License text 226, used by: zerocopy 0.8.63, zerocopy-derive 0.8.63
 
 Copyright 2023 The Fuchsia Authors
 
@@ -13552,7 +13583,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 226, used by: zeroize 1.9.2
+License text 227, used by: zeroize 1.9.2
 
 Copyright (c) 2018-2026 The RustCrypto Project Developers
 
@@ -13581,7 +13612,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 227, used by: zeroize_derive 1.5.0
+License text 228, used by: zeroize_derive 1.5.0
 
 Copyright (c) 2019-2026 The RustCrypto Project Developers
 
@@ -13610,7 +13641,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 228, used by: zip 9.7.3
+License text 229, used by: zip 9.7.3
 
 The MIT License (MIT)
 
@@ -13635,7 +13666,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 229, used by: zlib-rs 0.6.8
+License text 230, used by: zlib-rs 0.6.8
 
 (C) 2024 Trifecta Tech Foundation 
 
@@ -13658,7 +13689,7 @@ freely, subject to the following restrictions:
 3. This notice may not be removed or altered from any source distribution.
 
 ------------------------------------------------------------------------------
-License text 230, used by: zopfli 0.8.4
+License text 231, used by: zopfli 0.8.4
 
 Apache License
                            Version 2.0, January 2004
@@ -13863,7 +13894,7 @@ Apache License
    limitations under the License.
 
 ------------------------------------------------------------------------------
-License text 231, used by: zune-core 0.5.3, zune-jpeg 0.5.15
+License text 232, used by: zune-core 0.5.3, zune-jpeg 0.5.15
 
 MIT License
 
@@ -13888,7 +13919,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ------------------------------------------------------------------------------
-License text 232, used by: zune-core 0.5.3, zune-jpeg 0.5.15
+License text 233, used by: zune-core 0.5.3, zune-jpeg 0.5.15
 
 zlib License
 
