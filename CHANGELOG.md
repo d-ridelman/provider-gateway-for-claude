@@ -4,6 +4,11 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Fixed
+
+- **The built-in agent-kit unpacks when the profile path has Cyrillic letters.** The archive was unpacked by the system `tar.exe`, which on an English-locale Windows cannot open a path under `C:\Users\<кириллица>\…`, so "Connect project" failed for a Windows account with a Russian name. The archive is now unpacked in Rust, with no external program.
+- **The release script states that it needs PowerShell 7** instead of failing after the build on an encoding that Windows PowerShell 5.1 does not have.
+
 ## [0.2.4] - 2026-11-26
 
 ### Fixed

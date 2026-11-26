@@ -3,8 +3,6 @@
 
 use crate::tr;
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::Duration;
 
 /// Версия встроенного снимка: первые 12 знаков коммита agent-kit; пусто — не встроен.
 const VERSION: &str = env!("PGC_KIT_VERSION");
@@ -48,24 +46,27 @@ pub fn ensure(dir: &Path, tar: &[u8], version: &str) -> Result<PathBuf, String> 
     std::fs::create_dir_all(parent).map_err(|exc| exc.to_string())?;
     let id = uuid::Uuid::new_v4().simple().to_string();
     let next = parent.join(format!("agent-kit.new-{id}"));
-    let archive = parent.join(format!("agent-kit.{id}.tar"));
     let result = (|| {
         std::fs::create_dir_all(&next).map_err(|exc| exc.to_string())?;
-        std::fs::write(&archive, tar).map_err(|exc| exc.to_string())?;
-        let mut untar = Command::new("tar");
-        untar.arg("-xf").arg(&archive).arg("-C").arg(&next);
-        let output = crate::connect::run(untar, Duration::from_secs(60))?;
-        if output.code != Some(0) || !whole(&next) {
-            let said = output.stderr.trim();
+        // Свой распаковщик, а не `tar.exe`: на английской локали Windows он не открывает
+        // архив по пути с кириллицей — а имя учётной записи Windows бывает русским.
+        tar::Archive::new(std::io::Cursor::new(tar))
+            .unpack(&next)
+            .map_err(|exc| {
+                tr!(
+                    "встроенный agent-kit не распаковался: {exc}",
+                    "the built-in agent-kit did not unpack: {exc}"
+                )
+            })?;
+        if !whole(&next) {
             return Err(tr!(
-                "встроенный agent-kit не распаковался: {said}",
-                "the built-in agent-kit did not unpack: {said}"
+                "встроенный agent-kit распаковался неполностью",
+                "the built-in agent-kit unpacked incomplete"
             ));
         }
         std::fs::write(next.join(MARKER), version).map_err(|exc| exc.to_string())?;
         replace(dir, &next, &parent.join(format!("agent-kit.old-{id}")))
     })();
-    let _ = std::fs::remove_file(&archive);
     if result.is_err() {
         let _ = std::fs::remove_dir_all(&next);
     }
@@ -96,27 +97,20 @@ mod tests {
     use super::*;
 
     /// Снимок как у `kit-snapshot.ps1`: tar с `.claude-plugin/plugin.json` и `scripts/cli.mjs`.
-    fn snapshot(work: &Path, text: &str) -> Vec<u8> {
-        let tree = work.join(format!("tree-{text}"));
-        std::fs::create_dir_all(tree.join(".claude-plugin")).unwrap();
-        std::fs::create_dir_all(tree.join("scripts")).unwrap();
-        std::fs::write(tree.join(".claude-plugin").join("plugin.json"), text).unwrap();
-        std::fs::write(tree.join("scripts").join("cli.mjs"), "// cli").unwrap();
-        let tar = work.join(format!("{text}.tar"));
-        let mut make = Command::new("tar");
-        make.arg("-cf")
-            .arg(&tar)
-            .arg("-C")
-            .arg(&tree)
-            .arg(".claude-plugin")
-            .arg("scripts");
-        assert_eq!(
-            crate::connect::run(make, Duration::from_secs(30))
-                .unwrap()
-                .code,
-            Some(0)
-        );
-        std::fs::read(&tar).unwrap()
+    fn snapshot(text: &str) -> Vec<u8> {
+        let mut make = tar::Builder::new(Vec::new());
+        for (path, body) in [
+            (".claude-plugin/plugin.json", text),
+            ("scripts/cli.mjs", "// cli"),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(body.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            make.append_data(&mut header, path, body.as_bytes())
+                .unwrap();
+        }
+        make.into_inner().unwrap()
     }
 
     #[test]
@@ -127,7 +121,7 @@ mod tests {
         std::fs::create_dir_all(&work).unwrap();
         let dir = work.join("профиль").join("agent-kit");
         let plugin = dir.join(".claude-plugin").join("plugin.json");
-        let v1 = snapshot(&work, "one");
+        let v1 = snapshot("one");
         assert_eq!(ensure(&dir, &v1, "v1").unwrap(), dir);
         assert_eq!(std::fs::read_to_string(&plugin).unwrap(), "one");
         // Та же версия — ничего не трогает.
@@ -144,7 +138,7 @@ mod tests {
         ensure(&dir, &v1, "v1").unwrap();
         assert!(cli.is_file());
         // Новая версия — папка заменяется целиком, без остатков старой.
-        let v2 = snapshot(&work, "two");
+        let v2 = snapshot("two");
         ensure(&dir, &v2, "v2").unwrap();
         assert_eq!(std::fs::read_to_string(&plugin).unwrap(), "two");
         assert!(!dir.join("local-note").exists());
