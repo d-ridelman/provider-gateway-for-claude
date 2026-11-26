@@ -13,6 +13,9 @@ import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const uiDir = path.join(root, "crates", "ctp-app", "ui");
+// The stub's version comes from Cargo.toml: a copy in the stub drifts with every release.
+const VERSION =
+  /^version = "([^"]+)"/m.exec(fs.readFileSync(path.join(root, "crates", "ctp-app", "Cargo.toml"), "utf8"))?.[1] ?? "0.0.0";
 const args = process.argv.slice(2);
 const opt = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 const outDir = path.resolve(opt("--out", path.join(root, "state", "shots")));
@@ -71,7 +74,7 @@ const STUB = String.raw`
   const cfg = () => ({
     port: 17899, token: "ctp-0000000000000000000000000000000000000", claudePath: null, detectedClaude: home, providers,
     russianUi: false, builtinBrowser: false, artifacts: false, coworkMode: "host", russianFile: true, configDir: "C:\\Users\\user\\AppData\\Roaming\\app.provider-gateway-for-claude",
-    codeDir: null, language: lang, languagePref: "auto", themePref, autoUpdate: true, version: "0.2.3",
+    codeDir: null, language: lang, languagePref: "auto", themePref, autoUpdate: true, version: "${VERSION}",
     modelRoles: { sonnet: providers.length ? { provider: providers[0].id, model: providers[0].models[0] } : null },
     codePortable: scenario === "portable",
     detectedCode: scenario === "empty" ? null : "C:\\Users\\user\\.local\\bin\\claude.exe",
