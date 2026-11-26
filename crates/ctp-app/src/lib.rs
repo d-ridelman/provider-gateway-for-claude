@@ -11,6 +11,7 @@ pub mod installs;
 pub mod kit;
 pub mod mihomo;
 pub mod model;
+pub mod msix;
 pub mod runtime;
 pub mod ruui;
 pub mod state;

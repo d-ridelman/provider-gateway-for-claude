@@ -13,6 +13,7 @@
 
 use crate::tr;
 use anyhow::{Context, Result, ensure};
+use regex::bytes::Regex;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
@@ -22,9 +23,52 @@ use std::path::{Path, PathBuf};
 /// Файл перевода в папке настроек приложения.
 pub const TRANSLATION_FILE: &str = "claude-ru.json";
 /// Меняется, когда меняется сам патч: старые копии пересобираются.
-const PATCH_REV: u32 = 10;
+const PATCH_REV: u32 = 16;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
+
+/// `Exi()`: без MSIX Cowork недоступен. В 3p сессия всё равно идёт на хосте
+/// (`keepsSessionCliOnHost()`), поэтому проверку снимаем — иначе Cowork не
+/// включится на портативной копии.
+const MSIX_CHECK: &str = r#"if\(e==="win32"&&!([A-Za-z0-9_$]+)\(\)\)return\{status:"unsupported",reason:H\(\)\.formatMessage\(\{defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"\}\)"#;
+const MSIX_CHECK_OFF: &str = r#"if(e==="win32"&&!1)return{status:"unsupported",reason:H().formatMessage({defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"})"#;
+/// `qxi()`: E2E-флаг подменяет всю проверку VM на «supported». Включаем его
+/// всегда, потому что host-loop не нуждается ни в MSIX, ни в HCS.
+const E2E_VM_CHECK: &str = r#"([A-Za-z0-9_$]+)\("CLAUDE_E2E_ASSUME_VM_SUPPORTED"\)\?([A-Za-z0-9_$]+):([A-Za-z0-9_$]+\(\))"#;
+const E2E_VM_CHECK_ON: &str = "!0?$2:$3";
+/// Проверка VirtualMachinePlatform: при «VM поддерживается» окно Claude требует включить
+/// компонент Windows (нужны права администратора) и не стартует сессию. Host-режиму VM не
+/// нужна, поэтому проверка всегда отвечает «включена или не нужна».
+const VMP_CHECK: &str = r#"async function ([A-Za-z0-9_$]+)\(\)\{await [A-Za-z0-9_$]+\(\)\.overlayApplied\(\);let [A-Za-z0-9_$]+=[A-Za-z0-9_$]+\(\);return\(.{0,260}?\)\.status!=="supported"\|\|await [A-Za-z0-9_$]+\(\)\}"#;
+const VMP_CHECK_OFF: &str = "async function ${1}(){return!0}";
+/// Признак запуска из MSIX, как у `Qi()`: `process.windowsStore` или сегмент `WindowsApps`
+/// в пути exe. Без него VM-клиента нет, и образ VM (больше 1 ГБ) с Linux-версией Claude Code
+/// качать незачем.
+const FROM_MSIX: &str = r#"(process.windowsStore||process.execPath.split(/[\\/]/).some(e=>e.toLowerCase()==="windowsapps"))"#;
+/// `downloadVM`: скачивание образа VM только из MSIX.
+const VM_DOWNLOAD: &str = r#"(async function [A-Za-z0-9_$]+\([a-z],[a-z]\)\{return await [A-Za-z0-9_$]+\(\),[A-Za-z0-9_$]+\(\)\.status==="supported")(&&\([A-Za-z0-9_$]+\(\(0,)"#;
+/// `prepareForVM`: подготовка Linux-версии Claude Code для VM только из MSIX.
+const VM_PREPARE: &str = r#"(async prepareForVM\([^)]*\)\{)"#;
+/// IPC `startVM`, который окно зовёт при старте Cowork-сессии: без VM-клиента он отвечает
+/// «не удалось запустить рабочее пространство» и окно показывает красный баннер.
+const VM_START: &str =
+    r#"(async startVM\(\)\{try\{)(return await [A-Za-z0-9_$]+\(void 0,void 0,\{caller:"page")"#;
+/// Вне MSIX VM не запускается и баннера нет: ответ «успех» сразу.
+const VM_START_ON: &str = "${1}if(!FROM)return{success:!0};${2}";
+/// Белый список `tools` сессии Cowork в host-loop: только MCP-инструменты и встроенные из списка
+/// (`Bash` в нём нет, его заменяет VM-инструмент). Группа 1 — начало функции, 2 — список.
+const TOOLS_FILTER: &str = r#"(function [A-Za-z0-9_$]+\(e\)\{return )e\.filter\(\(e=>e\.startsWith\("mcp__"\)\|\|([A-Za-z0-9_$]+\.[A-Za-z0-9_$]+)\.includes\(e\)\)\)\}"#;
+/// Вне MSIX к списку добавляются `Bash` и `PowerShell` Claude Code. В `allowedTools` они не попадают
+/// (их вычищает список запретов), поэтому каждый вызов идёт через подтверждение.
+const TOOLS_FILTER_ON: &str = r#"${1}[...e.filter((e=>e.startsWith("mcp__")||${2}.includes(e))),...(FROM?[]:["Bash","PowerShell"])]}"#;
+/// Запреты и псевдонимы инструментов сессии Cowork: `Bash`/`PowerShell` запрещены, а `Bash`
+/// переименован в shell-инструмент VM. Без шаблонных обратных ссылок (в `regex` их нет): группы —
+/// объект настроек (1), модуль (2), список запретов (3), правила (4) и их отображение (5), вызов
+/// `deny` (6), имя shell-инструмента VM (7) и `WebFetch` (8).
+const HOST_SHELL: &str = r#"([A-Za-z0-9_$]+)\.disallowedTools=\[\.\.\.[A-Za-z0-9_$]+\.disallowedTools\?\?\[\],\.\.\.([A-Za-z0-9_$]+)\.([A-Za-z0-9_$]+),\.\.\.([A-Za-z0-9_$]+)\.map\(([A-Za-z0-9_$]+)\)\],([A-Za-z0-9_$]+\.[A-Za-z0-9_$]+\([A-Za-z0-9_$]+,"deny",[A-Za-z0-9_$]+\)),[A-Za-z0-9_$]+\.toolAliases=\{Bash:[A-Za-z0-9_$]+\.([A-Za-z0-9_$]+),WebFetch:[A-Za-z0-9_$]+\.([A-Za-z0-9_$]+)\}"#;
+/// Вне MSIX у сессии нет VM: штатные `Bash` и `PowerShell` Claude Code остаются доступными (как
+/// во вкладке Code), а VM-инструмент закрыт, чтобы модель не выбирала его.
+const HOST_SHELL_ON: &str = r#"${1}.disallowedTools=[...${1}.disallowedTools??[],...${2}.${3}.filter(_q=>FROM||(_q!=="Bash"&&_q!=="PowerShell")),...(FROM?[]:[${2}.${7}]),...${4}.map(${5})],${6},${1}.toolAliases=FROM?{Bash:${2}.${7},WebFetch:${2}.${8}}:{WebFetch:${2}.${8}}"#;
 
 pub fn sha256_hex(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
@@ -101,6 +145,96 @@ fn js_files(node: &Value, prefix: &str, out: &mut Vec<(String, u64, u64)>) {
             }
         }
     }
+}
+
+/// Патчи host-режима Cowork в `.vite/build/*.js`: снять `msix_required`, включить E2E-подмену
+/// проверки VM и ответить «да» на проверку VirtualMachinePlatform. Возвращает изменённые
+/// файлы для `rebuild`.
+fn host_cowork_changes(app_asar: &Path) -> Result<Vec<(String, Vec<u8>)>> {
+    let mut file = File::open(app_asar).with_context(|| app_asar.display().to_string())?;
+    let header = read_header(&mut file)?;
+    let mut js = Vec::new();
+    js_files(&header.json, "", &mut js);
+    let from_msix = FROM_MSIX;
+    // Название, шаблон, замена: каждый патч ровно один раз во всём архиве.
+    let patches = [
+        ("msix_required", MSIX_CHECK, MSIX_CHECK_OFF.to_string()),
+        ("E2E VM", E2E_VM_CHECK, E2E_VM_CHECK_ON.to_string()),
+        ("VMP", VMP_CHECK, VMP_CHECK_OFF.to_string()),
+        (
+            "downloadVM",
+            VM_DOWNLOAD,
+            format!("${{1}}&&{from_msix}${{2}}"),
+        ),
+        (
+            "host shell",
+            HOST_SHELL,
+            HOST_SHELL_ON.replace("FROM", from_msix),
+        ),
+        (
+            "tools filter",
+            TOOLS_FILTER,
+            TOOLS_FILTER_ON.replace("FROM", from_msix),
+        ),
+        ("startVM", VM_START, VM_START_ON.replace("FROM", from_msix)),
+        (
+            "prepareForVM",
+            VM_PREPARE,
+            format!(
+                "${{1}}if(!{from_msix})return{{ready:!1,error:\"VM is not used here\",failure:{{step:\"prepare\",code:\"no_vm\"}}}};"
+            ),
+        ),
+    ];
+    let compiled = patches
+        .iter()
+        .map(|(name, pattern, with)| Ok((*name, Regex::new(pattern)?, with.as_bytes())))
+        .collect::<Result<Vec<_>>>()?;
+    let mut found = vec![0usize; compiled.len()];
+    let mut changes = Vec::new();
+    for (path, offset, size) in js {
+        if !path.starts_with(".vite/build/") {
+            continue;
+        }
+        let mut data = vec![0u8; size as usize];
+        file.seek(SeekFrom::Start(header.base + offset))?;
+        file.read_exact(&mut data)?;
+        let mut patched = data.clone();
+        for (i, (what, regex, with)) in compiled.iter().enumerate() {
+            let count = regex.find_iter(&patched).count();
+            if count == 0 {
+                continue;
+            }
+            ensure!(
+                count == 1,
+                "{}",
+                tr!(
+                    "патч «{what}» в {path} нашёл {count} мест, ожидалось 1",
+                    "patch \"{what}\" found {count} places in {path}, expected 1"
+                )
+            );
+            patched = regex.replace_all(&patched, *with).into_owned();
+            found[i] += 1;
+        }
+        if patched != data {
+            changes.push((path, patched));
+        }
+    }
+    for ((what, _, _), count) in compiled.iter().zip(&found) {
+        ensure!(
+            *count == 1,
+            "{}",
+            tr!(
+                "патч «{what}» не нашёл места в app.asar (нашёл {count} раз)",
+                "patch \"{what}\" found no place in app.asar (found {count})"
+            )
+        );
+    }
+    Ok(changes)
+}
+
+/// Ложится ли host-патч Cowork на `app.asar` этой версии (без записи).
+pub fn host_cowork_available(app_dir: &Path) -> Result<()> {
+    host_cowork_changes(&app_dir.join("resources").join("app.asar")).map(|_| ())
 }
 
 /// Запись файла по пути `a/b/c`; недостающие папки создаются.
@@ -772,9 +906,39 @@ fn build(
     // Копия без перевода без неё не нужна: тогда отказ, и запускается оригинал.
     let src_app = app_dir.join("resources").join("app.asar");
     let dst_app = building.join("resources").join("app.asar");
-    let applied = env_prelude_change(&src_app)
-        .and_then(|change| rebuild(&src_app, &dst_app, &[change]))
-        .and_then(|(old_app, new_app)| patch_exe(&exe, &old_app, &new_app));
+    let mut changes: Vec<(String, Vec<u8>)> = Vec::new();
+    match env_prelude_change(&src_app) {
+        Ok(change) => changes.push(change),
+        Err(exc) if ru_json.is_empty() => return Err(exc),
+        Err(exc) => {
+            tracing::warn!(error = %format!("{exc:#}"), "child environment fix not applied");
+        }
+    }
+    match host_cowork_changes(&src_app) {
+        Ok(host) => {
+            for (path, data) in host {
+                if changes.iter().any(|(existing, _)| existing == &path) {
+                    tracing::warn!(
+                        "host Cowork patch and env prelude target the same file: {path}"
+                    );
+                    continue;
+                }
+                changes.push((path, data));
+            }
+        }
+        Err(exc) => {
+            tracing::warn!(error = %format!("{exc:#}"), "host Cowork patch not applied");
+        }
+    }
+    let applied = if changes.is_empty() {
+        Err(anyhow::anyhow!(
+            "{}",
+            tr!("app.asar не изменён", "app.asar not changed")
+        ))
+    } else {
+        rebuild(&src_app, &dst_app, &changes)
+            .and_then(|(old_app, new_app)| patch_exe(&exe, &old_app, &new_app))
+    };
     match applied {
         Ok(patched) => {
             exe = patched;
@@ -784,7 +948,7 @@ fn build(
         Err(exc) => {
             // Исходный app.asar скопирует copy_tree ниже: копия без правки, но целая.
             let _ = fs::remove_file(&dst_app);
-            tracing::warn!(error = %format!("{exc:#}"), "child environment fix not applied");
+            tracing::warn!(error = %format!("{exc:#}"), "app.asar fixes not applied");
         }
     }
     fs::write(building.join("claude.exe"), exe)?;
@@ -1173,6 +1337,73 @@ mod tests {
             Fix::Remove
         );
         assert_eq!(forget_fix(None), Fix::Remove);
+    }
+
+    #[test]
+    fn host_cowork_patch_rewrites_both_checks() {
+        let dir = temp_dir("cowork");
+        let src = dir.join("app.asar");
+        let code = br#"if(e==="win32"&&!oa())return{status:"unsupported",reason:H().formatMessage({defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"}),unsupportedCode:"msix_required"};let x=Bo("CLAUDE_E2E_ASSUME_VM_SUPPORTED")?nV:Xbi();async function Txi(){await U().overlayApplied();let e=hxi();return(e?.status==="unsupported"&&e.unsupportedCode.startsWith("disabled_by_")?e:Oxi(bxi)).status!=="supported"||await i5r()}async function YBa(e,t){return await rV(),iV().status==="supported"&&(pa((0,n.join)(UQ(),G_a),SI.sha).catch((()=>void 0)),EQ?1:2)}class K{async prepareForVM(e,t={}){if(this.noSessionRunsOnThisComputer())return 1}}e.disallowedTools=[...e.disallowedTools??[],...t.JCt,...Ve.map($f)],N.m(e,"deny",Ve),e.toolAliases={Bash:t.eTt,WebFetch:t.tTt};function pf(e){return e.filter((e=>e.startsWith("mcp__")||t.KCt.includes(e)))}let i6={async startVM(){try{return await BZ(void 0,void 0,{caller:"page",autoReinstall:!1}),{success:!0}}catch(e){return{success:!1}}}};"#;
+        write_asar(
+            &src,
+            &[(".vite/build/index.chunk-test.js".into(), code.to_vec())],
+        );
+        let changes = host_cowork_changes(&src).unwrap();
+        assert_eq!(changes.len(), 1);
+        let text = String::from_utf8_lossy(&changes[0].1);
+        assert!(text.contains(r#"if(e==="win32"&&!1)return"#), "{text}");
+        assert!(text.contains("!0?nV:Xbi()"), "{text}");
+        assert!(text.contains("async function Txi(){return!0}"), "{text}");
+        assert!(!text.contains("i5r()"), "{text}");
+        // Образ VM и Linux-версия Claude Code — только из MSIX.
+        assert!(
+            text.contains(r#"status==="supported"&&(process.windowsStore||"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"async prepareForVM(e,t={}){if(!(process.windowsStore||"#),
+            "{text}"
+        );
+        assert!(text.contains(r#"code:"no_vm""#), "{text}");
+        // Без VM штатные Bash и PowerShell остаются, а VM-инструмент закрыт.
+        assert!(
+            text.contains(r#".filter(_q=>(process.windowsStore||"#),
+            "{text}"
+        );
+        assert!(text.contains(r#"_q!=="Bash"&&_q!=="PowerShell""#), "{text}");
+        assert!(text.contains("?[]:[t.eTt]"), "{text}");
+        assert!(text.contains(r#"}:{WebFetch:t.tTt}"#), "{text}");
+        assert!(
+            text.contains(r#"...(!(process.windowsStore||"#)
+                || text.contains(r#"...((process.windowsStore||"#),
+            "{text}"
+        );
+        assert!(text.contains(r#"?[]:["Bash","PowerShell"])]}"#), "{text}");
+        // Без VM окно сразу получает «успех» и не показывает баннер.
+        assert!(
+            text.contains(r#"async startVM(){try{if(!(process.windowsStore||"#),
+            "{text}"
+        );
+        assert!(
+            text.contains(r#"return{success:!0};return await BZ("#),
+            "{text}"
+        );
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn host_cowork_patch_refuses_unknown_bundle() {
+        let dir = temp_dir("cowork-missing");
+        let src = dir.join("app.asar");
+        write_asar(
+            &src,
+            &[(
+                ".vite/build/index.chunk-test.js".into(),
+                b"console.log(1)".to_vec(),
+            )],
+        );
+        assert!(host_cowork_changes(&src).is_err());
+        fs::remove_dir_all(&dir).unwrap();
     }
 
     fn temp_dir(tag: &str) -> PathBuf {

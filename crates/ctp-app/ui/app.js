@@ -48,7 +48,8 @@ const el = Object.fromEntries(
     "keyInput", "keyHint", "clearKeyBtn", "modelsInput", "maxEffortInput", "defaultEffortInput",
     "aliasBox", "aliasList", "deleteBtn", "formNotice", "settingsPanel", "portInput", "languageInput",
     "claudePathInput", "codeDirInput", "compactWindowInput", "launchCodeBtn", "detectedClaude", "tokenInput", "russianInput",
-    "builtinBrowserInput", "claudeState", "claudeStateText", "langBtn", "themeBtn", "themeInput",
+    "builtinBrowserInput", "artifactsInput", "coworkModeInput", "coworkModeHint",
+    "claudeState", "claudeStateText", "langBtn", "themeBtn", "themeInput",
     "russianFileHint", "claudeWarn", "claudeCheckList", "startBtn", "stopBtn", "launchBtn", "modelCount",
     "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
@@ -1232,6 +1233,8 @@ function settingsDirty() {
     el.compactWindowInput.value.trim() !== (c.compactWindow ?? "") ||
     el.russianInput.checked !== !!c.russianUi ||
     el.builtinBrowserInput.checked !== !!c.builtinBrowser ||
+    el.artifactsInput.checked !== !!c.artifacts ||
+    el.coworkModeInput.value !== (c.coworkMode ?? "host") ||
     el.autoUpdateInput.checked !== (c.autoUpdate !== false) ||
     el.codePortableInput.checked !== !!c.codePortable ||
     ROLES.some(([role, id]) => el[id].value !== roleKey(c.modelRoles?.[role]))
@@ -1294,6 +1297,16 @@ function renderNotice() {
       : t("form.aliasesLater");
 }
 
+const COWORK_HINTS = {
+  off: "settings.coworkOffHint",
+  host: "settings.coworkHostHint",
+  vm: "settings.coworkVmHint",
+};
+
+function updateCoworkHint() {
+  el.coworkModeHint.textContent = t(COWORK_HINTS[el.coworkModeInput.value] ?? COWORK_HINTS.host);
+}
+
 function renderSettings() {
   if (!state.config) return;
   el.languageInput.value = state.config.languagePref ?? "auto";
@@ -1311,6 +1324,9 @@ function renderSettings() {
   el.detectedClaude.title = state.config.detectedClaude ?? "";
   el.russianInput.checked = !!state.config.russianUi;
   el.builtinBrowserInput.checked = !!state.config.builtinBrowser;
+  el.artifactsInput.checked = !!state.config.artifacts;
+  el.coworkModeInput.value = state.config.coworkMode ?? "host";
+  updateCoworkHint();
   // Whether the translation is fine is said by the self-check below; here only "not yet".
   el.russianFileHint.textContent = state.config.russianFile ? "" : t("settings.russianFileMissing");
   el.russianFileHint.classList.toggle("hidden", !!state.config.russianFile);
@@ -1503,6 +1519,7 @@ function bind() {
   $("saveSettingsBtn").addEventListener("click", saveSettings);
   el.settingsPanel.addEventListener("input", syncSettingsSave);
   el.settingsPanel.addEventListener("change", syncSettingsSave);
+  el.coworkModeInput.addEventListener("change", updateCoworkHint);
   $("copyTokenBtn").addEventListener("click", () => copyText(el.tokenInput.value, t("toast.tokenCopied")));
   $("openLogsFolderBtn").addEventListener("click", () => invoke("open_logs").catch((e) => toast(formatError(e), "error")));
   el.updateBtn.addEventListener("click", installUpdate);
@@ -1969,6 +1986,8 @@ async function saveSettings() {
         modelRoles: Object.fromEntries(ROLES.map(([role, id]) => [role, readRole(el[id])])),
         russianUi: el.russianInput.checked,
         builtinBrowser: el.builtinBrowserInput.checked,
+        artifacts: el.artifactsInput.checked,
+        coworkMode: el.coworkModeInput.value,
         language: el.languageInput.value,
         theme: el.themeInput.value,
         autoUpdate: el.autoUpdateInput.checked,

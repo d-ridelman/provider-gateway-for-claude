@@ -197,6 +197,9 @@ pub fn save_settings(
         .filter(|path| !path.is_empty());
     next.russian_ui = input.russian_ui;
     next.builtin_browser = input.builtin_browser;
+    next.artifacts = input.artifacts;
+    next.cowork_mode = pick(Some(input.cowork_mode), crate::model::COWORK_MODES)
+        .unwrap_or_else(|| "host".to_string());
     next.code_dir = input
         .code_dir
         .map(|dir| dir.trim().to_string())

@@ -70,7 +70,7 @@ const STUB = String.raw`
   const home = long ? "C:\\Users\\a-user-with-a-very-long-name-that-goes-on\\AppData\\Local\\AnthropicClaude\\app-6.28899.6\\claude.exe" : "C:\\Users\\user\\AppData\\Local\\AnthropicClaude\\app-6.28899.6\\claude.exe";
   const cfg = () => ({
     port: 17899, token: "ctp-0000000000000000000000000000000000000", claudePath: null, detectedClaude: home, providers,
-    russianUi: false, builtinBrowser: false, russianFile: true, configDir: "C:\\Users\\user\\AppData\\Roaming\\app.provider-gateway-for-claude",
+    russianUi: false, builtinBrowser: false, artifacts: false, coworkMode: "host", russianFile: true, configDir: "C:\\Users\\user\\AppData\\Roaming\\app.provider-gateway-for-claude",
     codeDir: null, language: lang, languagePref: "auto", themePref, autoUpdate: true, version: "0.2.3",
     modelRoles: { sonnet: providers.length ? { provider: providers[0].id, model: providers[0].models[0] } : null },
     codePortable: scenario === "portable",

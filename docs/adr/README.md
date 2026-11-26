@@ -46,4 +46,6 @@
 | [015](015-agent-kit-in-the-installer.md) | agent-kit приезжает внутри PGC | Accepted |
 | [016](016-smart-setup.md) | Проверки проекта отбирает код; шаг с моделью по замеру не включён | Accepted |
 | [017](017-disconnect-project.md) | Одна страница «Проекты»: подключить, посмотреть, отключить с планом | Accepted |
+| [018](018-cowork-on-host-without-msix.md) | Cowork в 3p: host-loop без MSIX; VM — отдельным режимом | Accepted |
 | [019](019-compact-window.md) | Окно сжатия: одна настройка PGC для Desktop и консоли | Accepted |
+| [020](020-chat-surface-first.md) | Окно PGC открывается в Chat, а не в Code | Accepted |

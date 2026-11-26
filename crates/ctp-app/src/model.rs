@@ -21,6 +21,12 @@ pub struct Config {
     /// в третьестороннем режиме он по умолчанию выключен.
     #[serde(default)]
     pub builtin_browser: bool,
+    /// Артефакты Design/Slides (`artifacts*` в 3p-конфиге), бета.
+    #[serde(default)]
+    pub artifacts: bool,
+    /// Cowork: `off` — только Chat, `host` — на хосте без VM, `vm` — через MSIX.
+    #[serde(default = "default_cowork_mode")]
+    pub cowork_mode: String,
     /// Папка, в которой открывается Claude Code CLI; `None` — домашняя.
     #[serde(default)]
     pub code_dir: Option<String>,
@@ -54,6 +60,10 @@ pub struct Config {
 
 /// Режимы прокси: что идёт через ядро mihomo.
 pub const PROXY_MODES: &[&str] = &["off", "app", "system", "tun"];
+
+/// Режимы Cowork: `off` — только Chat; `host` — на хосте без VM; `vm` — через
+/// установленный MSIX (официальный запуск или гибрид с переведённой копией).
+pub const COWORK_MODES: &[&str] = &["off", "host", "vm"];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -114,6 +124,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_cowork_mode() -> String {
+    "host".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -123,6 +137,8 @@ impl Default for Config {
             claude_path: None,
             russian_ui: false,
             builtin_browser: false,
+            artifacts: false,
+            cowork_mode: default_cowork_mode(),
             code_dir: None,
             language: None,
             theme: None,
@@ -178,6 +194,10 @@ pub struct UiConfig {
     pub russian_ui: bool,
     /// Включён ли встроенный браузер в 3p-профиле Claude.
     pub builtin_browser: bool,
+    /// Артефакты Design/Slides в 3p-профиле Claude.
+    pub artifacts: bool,
+    /// Режим Cowork: `off`, `host` или `vm`.
+    pub cowork_mode: String,
     /// Есть ли файл перевода `claude-ru.json` в папке настроек.
     pub russian_file: bool,
     pub config_dir: String,
@@ -298,6 +318,10 @@ pub struct SettingsInput {
     pub russian_ui: bool,
     #[serde(default)]
     pub builtin_browser: bool,
+    #[serde(default)]
+    pub artifacts: bool,
+    #[serde(default = "default_cowork_mode")]
+    pub cowork_mode: String,
     #[serde(default)]
     pub code_dir: Option<String>,
     #[serde(default)]

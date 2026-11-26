@@ -508,6 +508,19 @@ fn library_entry(
     if config.builtin_browser {
         entry["builtinBrowserEnabled"] = json!(true);
     }
+    // Cowork в 3p идёт host-loop (см. ruui: снят msix_required). `standard` разрешает
+    // Chat+Cowork; `off` оставляет Chat без VM-анализа, чтобы Cowork не включался.
+    entry["desktopHome"] = json!(if config.cowork_mode == "off" {
+        "no-vm"
+    } else {
+        "standard"
+    });
+    entry["projectsEnabled"] = json!(true);
+    if config.artifacts {
+        entry["artifactsEnabled"] = json!(true);
+        entry["artifactsDesignEnabled"] = json!(true);
+        entry["artifactsSlidesEnabled"] = json!(true);
+    }
     entry
 }
 
@@ -708,11 +721,32 @@ pub fn launch(
     // Claude уже открыт в этом профиле: его не перезапускаем, русскую копию не пересобираем
     // (она занята), запись настроек меняем только если изменились наши ключи.
     let running = profile_in_use(&profile);
+    // VM-режим: служба CoworkVMService принимает только exe из каталога пакета (ADR-018),
+    // поэтому запускается настоящий claude.exe пакета с профилем PGC, без русской копии.
+    let mut vm_note = String::new();
+    let msix = if config.cowork_mode == "vm" {
+        let found = crate::msix::detect();
+        if found.is_none() {
+            vm_note = tr!(
+                " MSIX Claude не найден — Cowork запущен на хосте, без VM.",
+                " Claude MSIX not found; Cowork runs on the host without a VM."
+            );
+        } else if !crate::msix::service_installed() {
+            vm_note = tr!(
+                " Служба CoworkVMService не установлена — Cowork запущен на хосте, без VM.",
+                " CoworkVMService is not installed; Cowork runs on the host without a VM."
+            );
+        }
+        found.filter(|_| crate::msix::service_installed())
+    } else {
+        None
+    };
+    let vm = msix.is_some();
     let copies = base.join("claude-ru");
     let original = exe.clone();
     // Копия и без русского: только в ней процессы Claude (сессии Code, их npm, uv, git,
     // MCP) получают настоящую AppData\Local, а не папку PGC.
-    let (exe, from_copy, note) = if running {
+    let (exe, from_copy, note) = if running || vm {
         (exe, false, String::new())
     } else {
         match claude_copy(&exe, &copies, config, config_dir) {
@@ -782,6 +816,35 @@ pub fn launch(
         command.arg(format!("--proxy-server={proxy}"));
         command.envs(crate::installs::proxy_env());
     }
+    // VM-режим: настоящий exe пакета через Invoke-CommandInDesktopPackage (с профилем и
+    // окружением PGC). Реестр не трогаем: запись делает MSIX-пакет.
+    if let Some(package) = &msix {
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        let envs: Vec<(String, String)> = command
+            .get_envs()
+            .filter_map(|(name, value)| {
+                value.map(|value| {
+                    (
+                        name.to_string_lossy().into_owned(),
+                        value.to_string_lossy().into_owned(),
+                    )
+                })
+            })
+            .collect();
+        crate::msix::launch(package, &args, &envs).map_err(|exc| format!("{exc:#}"))?;
+        let profile = profile.display();
+        let family = &package.family;
+        return Ok(crate::model::LaunchResult {
+            message: tr!(
+                "Claude из MSIX (пакет {family}) запущен с профилем PGC: {profile}. Cowork с VM; русского перевода в этом режиме нет.",
+                "Claude from MSIX (package {family}) started with the PGC profile: {profile}. Cowork with the VM; no Russian translation in this mode."
+            ),
+            warning: false,
+        });
+    }
     if running {
         // Второй запуск с тем же профилем только показывает первый экземпляр и выходит;
         // новых настроек он не подхватит — человек закрывает Claude сам, мы его не трогаем.
@@ -795,13 +858,13 @@ pub fn launch(
         return Ok(crate::model::LaunchResult {
             message: if changed {
                 tr!(
-                    "Claude уже открыт, а настройки шлюза изменились (порт, модели или флажки). Закройте Claude и откройте снова — иначе он останется со старыми.",
-                    "Claude is already open, and the gateway settings have changed (port, models or switches). Close Claude and open it again, or it keeps the old ones."
+                    "Claude уже открыт, а настройки шлюза изменились (порт, модели или флажки). Закройте Claude и откройте снова — иначе он останется со старыми.{vm_note}",
+                    "Claude is already open, and the gateway settings have changed (port, models or switches). Close Claude and open it again, or it keeps the old ones.{vm_note}"
                 )
             } else {
                 tr!(
-                    "Claude уже открыт в этом профиле — показан существующий.",
-                    "Claude is already open in this profile; showing it."
+                    "Claude уже открыт в этом профиле — показан существующий.{vm_note}",
+                    "Claude is already open in this profile; showing it.{vm_note}"
                 )
             },
             warning: changed,
@@ -874,12 +937,12 @@ pub fn launch(
     let profile = profile.display();
     Ok(crate::model::LaunchResult {
         message: tr!(
-            "Claude запущен (PID {pid}). Профиль: {profile}.{note}",
-            "Claude started (PID {pid}). Profile: {profile}.{note}"
+            "Claude запущен (PID {pid}). Профиль: {profile}.{note}{vm_note}",
+            "Claude started (PID {pid}). Profile: {profile}.{note}{vm_note}"
         ),
         // Открылся обычный Claude, а не копия (без перевода или без настоящей
         // AppData\Local у процессов) — окно покажет это как ошибку.
-        warning: !from_copy,
+        warning: !from_copy || !vm_note.is_empty(),
     })
 }
 
@@ -1083,9 +1146,21 @@ fn inference_models(
 /// `deploymentMode: "3p"` в `claude_desktop_config.json`. Заодно убирается запись MCP-поиска
 /// `PGC Web search`, которую писали ранние dev-сборки: её exe больше не MCP-сервер, и Claude
 /// при каждом старте поднимал бы окно шлюза. Чужие серверы человека остаются.
+///
+/// И поверхность окна: `preferences.sidebarMode`. `code` и `epitaxy` (вкладка Code) PGC
+/// переключает на `chat` — окно открывается на Claude/Chat, а не в Code (ADR-020). Явно
+/// выбранный Chat и любое другое значение не трогаются.
 fn set_deployment_mode(path: &Path) -> Result<(), String> {
     update_desktop_config(path, |config| {
         config["deploymentMode"] = json!("3p");
+        let code_surface = config
+            .get("preferences")
+            .and_then(|prefs| prefs.get("sidebarMode"))
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|mode| mode == "code" || mode == "epitaxy");
+        if code_surface {
+            config["preferences"]["sidebarMode"] = json!("chat");
+        }
         if let Some(servers) = config
             .get_mut("mcpServers")
             .and_then(serde_json::Value::as_object_mut)
@@ -1495,6 +1570,17 @@ mod tests {
             serde_json::Value::Bool(true)
         );
         assert_eq!(entry["inferenceGatewayBaseUrl"], "http://127.0.0.1:17899");
+        // Cowork по умолчанию на хосте (ADR-018): Chat и Cowork вместе.
+        assert_eq!(entry["desktopHome"], "standard");
+        assert_eq!(entry["projectsEnabled"], true);
+        assert_eq!(entry.get("artifactsEnabled"), None);
+        config.artifacts = true;
+        let entry = library_entry(&config, &status, &[]);
+        assert_eq!(entry["artifactsEnabled"], true);
+        assert_eq!(entry["artifactsDesignEnabled"], true);
+        assert_eq!(entry["artifactsSlidesEnabled"], true);
+        config.cowork_mode = "off".into();
+        assert_eq!(library_entry(&config, &status, &[])["desktopHome"], "no-vm");
     }
 
     #[test]
@@ -1617,8 +1703,22 @@ mod tests {
         let saved: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
         assert_eq!(saved["deploymentMode"], "3p");
-        assert_eq!(saved["preferences"]["sidebarMode"], "epitaxy");
+        // Code (`epitaxy`) переключается на Chat (ADR-020); остальное в preferences цело.
+        assert_eq!(saved["preferences"]["sidebarMode"], "chat");
         assert_eq!(saved["coworkUserFilesPath"], "C:\\x");
+
+        // Явный Chat и незнакомое значение не трогаются.
+        for mode in ["chat", "projects"] {
+            fs::write(
+                &path,
+                format!(r#"{{"deploymentMode":"3p","preferences":{{"sidebarMode":"{mode}"}}}}"#),
+            )
+            .unwrap();
+            set_deployment_mode(&path).unwrap();
+            let saved: serde_json::Value =
+                serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+            assert_eq!(saved["preferences"]["sidebarMode"], mode);
+        }
 
         // BOM (Блокнот) — настройки сохраняются, а не уходят в «битые».
         fs::write(&path, "\u{feff}{\"deploymentMode\":\"1p\",\"keep\":1}").unwrap();

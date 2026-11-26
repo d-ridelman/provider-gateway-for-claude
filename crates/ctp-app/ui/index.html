@@ -400,6 +400,24 @@
             </div>
 
             <div class="field">
+              <label for="coworkModeInput" data-i18n="settings.coworkMode"></label>
+              <select id="coworkModeInput">
+                <option value="off" data-i18n="settings.coworkOff"></option>
+                <option value="host" data-i18n="settings.coworkHost"></option>
+                <option value="vm" data-i18n="settings.coworkVm"></option>
+              </select>
+              <small id="coworkModeHint"></small>
+            </div>
+
+            <div class="field">
+              <label class="check">
+                <input id="artifactsInput" type="checkbox">
+                <span data-i18n="settings.artifacts"></span>
+              </label>
+              <small data-i18n-html="settings.artifactsHint"></small>
+            </div>
+
+            <div class="field">
               <span class="field-label" data-i18n="settings.check"></span>
               <ul id="claudeCheckList" class="check-list" aria-live="polite"></ul>
               <small data-i18n="settings.checkHint"></small>

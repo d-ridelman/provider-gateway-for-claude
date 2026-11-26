@@ -336,6 +336,8 @@ pub fn ui_config(config: &Config, dir: &Path) -> UiConfig {
         providers,
         russian_ui: config.russian_ui,
         builtin_browser: config.builtin_browser,
+        artifacts: config.artifacts,
+        cowork_mode: config.cowork_mode.clone(),
         code_dir: config.code_dir.clone(),
         compact_window: config.compact_window.clone(),
         language: crate::i18n::current().to_string(),
