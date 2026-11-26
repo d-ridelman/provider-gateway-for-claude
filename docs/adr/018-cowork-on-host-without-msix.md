@@ -12,9 +12,8 @@ Cowork в 3p выполняется на хосте, а не в VM; попытк
 («created to run inside the VM sandbox, which this deployment no longer uses»).
 
 Тем не менее проверка установки отключает Cowork на любой копии, запущенной не из MSIX
-(код `msix_required`), затем проверяются Windows 10 19041+, службы HCS и
-`connectNamedPipeSystemOwned`. Признак MSIX — `process.windowsStore` или сегмент `WindowsApps`
-в пути `claude.exe`.
+(код `msix_required`), затем проверяются Windows 10 19041+, службы HCS и именованный канал
+службы. Признак MSIX — `process.windowsStore` или сегмент `WindowsApps` в пути `claude.exe`.
 
 Штатный MSIX на Windows требует администратора: пакет регистрирует службу
 `CoworkVMService` (LocalSystem), без неё установка идёт «без Cowork» (`0x80073D28`).
@@ -35,9 +34,9 @@ was not started from the package directory C:\Program Files\WindowsApps\Claude_�
    - в ветке `msix_required` проверка установки заменяется на «всегда да»;
    - E2E-проверка переменной окружения заменяется на «поддержка VM подтверждена» (иначе на
      машине без HCS/VMP остаётся `hcs_not_available`);
-   - проверка VirtualMachinePlatform (`isVirtualMachinePlatformEnabledOrUnneeded`) всегда
-     отвечает «да»: при «VM поддерживается» окно Claude иначе требует включить компонент
-     Windows (права администратора) и не стартует сессию (`VMP_NOT_ENABLED`);
+   - проверка VirtualMachinePlatform всегда отвечает «да»: при «VM поддерживается» окно
+     Claude иначе требует включить компонент Windows (права администратора) и не стартует
+     сессию (`VMP_NOT_ENABLED`);
    - `downloadVM` (образ VM, больше 1 ГБ) и `prepareForVM` (Linux-версия Claude Code) выполняются
      только если копия запущена из MSIX (`process.windowsStore` или сегмент `WindowsApps`);
      иначе при «VM поддерживается» они качались впустую на первом сообщении;

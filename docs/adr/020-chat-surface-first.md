@@ -15,7 +15,7 @@ PGC писал `deploymentMode: "3p"` и сохранял `preferences` как �
 Code в окне в профиле оставался `sidebarMode: "epitaxy"`, и каждый следующий запуск из PGC
 открывался в Code. Пользователь видел только Code и считал, что Chat не работает.
 
-При этом Chat в 3P не требует ни MSIX, ни VM: `chatIn3p` объявлен supported,
+При этом Chat в 3P не требует ни MSIX, ни VM: этот режим объявлен supported,
 host-loop включается провайдером custom-3p, а проверки установки/HCS/VMP
 касаются только Cowork и advanced file analysis (документация Anthropic; разбор кода — в
 личных заметках владельца, в git они не входят).

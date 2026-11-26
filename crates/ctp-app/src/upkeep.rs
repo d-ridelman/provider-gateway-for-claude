@@ -657,8 +657,9 @@ pub fn check(config: &Config, config_dir: &Path, build_copy: bool) -> Check {
         ),
     }
 
-    // Патч нужен только host-режиму: `off` не включает Cowork, `vm` запускает exe пакета.
-    if config.cowork_mode == "host" {
+    // `off` не включает Cowork — патч не нужен; `vm` без MSIX откатывается на host-копию,
+    // поэтому там проверка тоже уместна.
+    if config.cowork_mode != "off" {
         match ruui::host_cowork_available(&app) {
             Ok(()) => check.push(
                 true,

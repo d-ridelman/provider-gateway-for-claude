@@ -27,14 +27,13 @@ const PATCH_REV: u32 = 19;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
 
-/// `Exi()`: без MSIX Cowork недоступен. В 3p сессия всё равно идёт на хосте
-/// (`keepsSessionCliOnHost()`), поэтому проверку снимаем — иначе Cowork не
-/// включится на портативной копии.
+/// Проверка установки: без MSIX Cowork недоступен. В 3p сессия всё равно идёт на
+/// хосте, поэтому проверку снимаем — иначе Cowork не включится на портативной копии.
 const MSIX_CHECK: &str = r#"if\(e==="win32"&&!([A-Za-z0-9_$]+)\(\)\)return\{status:"unsupported",reason:([A-Za-z0-9_$]+)\(\)\.formatMessage\(\{defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"\}\)"#;
 /// Имя функции перед `.formatMessage` меняется от версии к версии (6.28899.6 — `H`, 7.37095.0 — `G`).
 const MSIX_CHECK_OFF: &str = r#"if(e==="win32"&&!1)return{status:"unsupported",reason:${2}().formatMessage({defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"})"#;
-/// `qxi()`: E2E-флаг подменяет всю проверку VM на «supported». Включаем его
-/// всегда, потому что host-loop не нуждается ни в MSIX, ни в HCS.
+/// E2E-флаг подменяет всю проверку VM на «supported». Включаем его всегда,
+/// потому что host-loop не нуждается ни в MSIX, ни в HCS.
 const E2E_VM_CHECK: &str = r#"([A-Za-z0-9_$]+)\("CLAUDE_E2E_ASSUME_VM_SUPPORTED"\)\?([A-Za-z0-9_$]+):([A-Za-z0-9_$]+\(\))"#;
 const E2E_VM_CHECK_ON: &str = "!0?$2:$3";
 /// Проверка VirtualMachinePlatform: при «VM поддерживается» окно Claude требует включить
@@ -42,9 +41,9 @@ const E2E_VM_CHECK_ON: &str = "!0?$2:$3";
 /// нужна, поэтому проверка всегда отвечает «включена или не нужна».
 const VMP_CHECK: &str = r#"async function ([A-Za-z0-9_$]+)\(\)\{await [A-Za-z0-9_$]+\(\)\.overlayApplied\(\);let [A-Za-z0-9_$]+=[A-Za-z0-9_$]+\(\);return\(.{0,260}?\)\.status!=="supported"\|\|await [A-Za-z0-9_$]+\(\)\}"#;
 const VMP_CHECK_OFF: &str = "async function ${1}(){return!0}";
-/// Признак запуска из MSIX, как у `Qi()`: `process.windowsStore` или сегмент `WindowsApps`
-/// в пути exe. Без него VM-клиента нет, и образ VM (больше 1 ГБ) с Linux-версией Claude Code
-/// качать незачем.
+/// Признак запуска из MSIX: `process.windowsStore` или сегмент `WindowsApps` в пути exe.
+/// Без него VM-клиента нет, и образ VM (больше 1 ГБ) с Linux-версией Claude Code качать
+/// незачем.
 const FROM_MSIX: &str = r#"(process.windowsStore||process.execPath.split(/[\\/]/).some(e=>e.toLowerCase()==="windowsapps"))"#;
 /// `downloadVM`: скачивание образа VM только из MSIX.
 const VM_DOWNLOAD: &str = r#"(async function [A-Za-z0-9_$]+\([a-z],[a-z]\)\{return await [A-Za-z0-9_$]+\(\),[A-Za-z0-9_$]+\(\)\.status==="supported")(&&\([A-Za-z0-9_$]+\(\(0,)"#;
