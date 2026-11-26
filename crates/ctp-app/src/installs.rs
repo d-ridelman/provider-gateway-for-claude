@@ -398,10 +398,10 @@ async fn get_desktop_with(
     portable: bool,
     progress: download::Progress<'_>,
 ) -> Result<DesktopResult> {
-    let client = download::client()?;
     let home = desktop_home().context("no AppData\\Local")?;
     let staging = home.join("downloads");
     if !portable {
+        let client = download::client_browser()?;
         let setup = staging.join("Claude-Setup.exe");
         let url = format!("{DESKTOP_SETUP}/{}/setup/latest/redirect", arch());
         let expect = Expect {
@@ -423,6 +423,7 @@ async fn get_desktop_with(
             exe: None,
         });
     }
+    let client = download::client()?;
     let release = latest_desktop(&client).await?;
     let version = release.version.clone();
     let package = staging.join(&release.file);

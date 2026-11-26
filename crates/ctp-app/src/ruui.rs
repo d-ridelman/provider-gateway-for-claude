@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 /// Файл перевода в папке настроек приложения.
 pub const TRANSLATION_FILE: &str = "claude-ru.json";
 /// Меняется, когда меняется сам патч: старые копии пересобираются.
-const PATCH_REV: u32 = 16;
+const PATCH_REV: u32 = 17;
 const BLOCK: usize = 4 * 1024 * 1024;
 const MARKER: &str = ".ctp-ru.json";
 
@@ -55,6 +55,11 @@ const VM_START: &str =
     r#"(async startVM\(\)\{try\{)(return await [A-Za-z0-9_$]+\(void 0,void 0,\{caller:"page")"#;
 /// Вне MSIX VM не запускается и баннера нет: ответ «успех» сразу.
 const VM_START_ON: &str = "${1}if(!FROM)return{success:!0};${2}";
+/// Внутренний запуск VM (`startVM` окна зовёт его через IPC): при старте сессии проверяет
+/// поддержку и качает образ. Вне MSIX выходим по той же ветке «не поддерживается», иначе
+/// `prepareForVM` отвечает ошибкой и окно показывает «Claude Code setup failed (prepare: no_vm)».
+const VM_START_INNER: &str = r#"if\(([A-Za-z0-9_$]+)\.status!=="supported"\)\{let ([A-Za-z0-9_$]+)=([A-Za-z0-9_$]+)\.status==="unsupported"\?([A-Za-z0-9_$]+)\.unsupportedCode:([A-Za-z0-9_$]+)\.status;([A-Za-z0-9_$]+)\.warn\(`\[startVM] VM not supported"#;
+const VM_START_INNER_ON: &str = r#"if(FROM||${1}.status!=="supported"){let ${2}=${3}.status==="unsupported"?${4}.unsupportedCode:${5}.status;${6}.warn(`[startVM] VM not supported"#;
 /// Белый список `tools` сессии Cowork в host-loop: только MCP-инструменты и встроенные из списка
 /// (`Bash` в нём нет, его заменяет VM-инструмент). Группа 1 — начало функции, 2 — список.
 const TOOLS_FILTER: &str = r#"(function [A-Za-z0-9_$]+\(e\)\{return )e\.filter\(\(e=>e\.startsWith\("mcp__"\)\|\|([A-Za-z0-9_$]+\.[A-Za-z0-9_$]+)\.includes\(e\)\)\)\}"#;
@@ -177,6 +182,11 @@ fn host_cowork_changes(app_asar: &Path) -> Result<Vec<(String, Vec<u8>)>> {
             TOOLS_FILTER_ON.replace("FROM", from_msix),
         ),
         ("startVM", VM_START, VM_START_ON.replace("FROM", from_msix)),
+        (
+            "startVM inner",
+            VM_START_INNER,
+            VM_START_INNER_ON.replace("FROM", from_msix),
+        ),
         (
             "prepareForVM",
             VM_PREPARE,
@@ -1343,7 +1353,7 @@ mod tests {
     fn host_cowork_patch_rewrites_both_checks() {
         let dir = temp_dir("cowork");
         let src = dir.join("app.asar");
-        let code = br#"if(e==="win32"&&!oa())return{status:"unsupported",reason:H().formatMessage({defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"}),unsupportedCode:"msix_required"};let x=Bo("CLAUDE_E2E_ASSUME_VM_SUPPORTED")?nV:Xbi();async function Txi(){await U().overlayApplied();let e=hxi();return(e?.status==="unsupported"&&e.unsupportedCode.startsWith("disabled_by_")?e:Oxi(bxi)).status!=="supported"||await i5r()}async function YBa(e,t){return await rV(),iV().status==="supported"&&(pa((0,n.join)(UQ(),G_a),SI.sha).catch((()=>void 0)),EQ?1:2)}class K{async prepareForVM(e,t={}){if(this.noSessionRunsOnThisComputer())return 1}}e.disallowedTools=[...e.disallowedTools??[],...t.JCt,...Ve.map($f)],N.m(e,"deny",Ve),e.toolAliases={Bash:t.eTt,WebFetch:t.tTt};function pf(e){return e.filter((e=>e.startsWith("mcp__")||t.KCt.includes(e)))}let i6={async startVM(){try{return await BZ(void 0,void 0,{caller:"page",autoReinstall:!1}),{success:!0}}catch(e){return{success:!1}}}};"#;
+        let code = br#"if(e==="win32"&&!oa())return{status:"unsupported",reason:H().formatMessage({defaultMessage:"Cowork requires Claude Desktop be installed with our modern installer",id:"EmeqFY8DA1"}),unsupportedCode:"msix_required"};let x=Bo("CLAUDE_E2E_ASSUME_VM_SUPPORTED")?nV:Xbi();async function Txi(){await U().overlayApplied();let e=hxi();return(e?.status==="unsupported"&&e.unsupportedCode.startsWith("disabled_by_")?e:Oxi(bxi)).status!=="supported"||await i5r()}async function YBa(e,t){return await rV(),iV().status==="supported"&&(pa((0,n.join)(UQ(),G_a),SI.sha).catch((()=>void 0)),EQ?1:2)}class K{async prepareForVM(e,t={}){if(this.noSessionRunsOnThisComputer())return 1}}e.disallowedTools=[...e.disallowedTools??[],...t.JCt,...Ve.map($f)],N.m(e,"deny",Ve),e.toolAliases={Bash:t.eTt,WebFetch:t.tTt};function pf(e){return e.filter((e=>e.startsWith("mcp__")||t.KCt.includes(e)))}let i6={async startVM(){try{return await BZ(void 0,void 0,{caller:"page",autoReinstall:!1}),{success:!0}}catch(e){return{success:!1}}}};async function BZ(e,t,n){let r=Date.now();if(await Jz(),bZ)return X.info("[startVM] VM startup already in progress, waiting..."),bZ.promise;let o=Yz();if(o.status!=="supported"){let e=o.status==="unsupported"?o.unsupportedCode:o.status;X.warn(`[startVM] VM not supported (${process.platform}/${process.arch}, ${e}), skipping`);return}if(Qy())return}"#;
         write_asar(
             &src,
             &[(".vite/build/index.chunk-test.js".into(), code.to_vec())],
@@ -1386,6 +1396,14 @@ mod tests {
         );
         assert!(
             text.contains(r#"return{success:!0};return await BZ("#),
+            "{text}"
+        );
+        // Внутренний запуск VM вне MSIX выходит сразу: иначе prepareForVM отвечает
+        // «no_vm» и окно показывает «Claude Code setup failed».
+        assert!(
+            text.contains(
+                r#"||o.status!=="supported"){let e=o.status==="unsupported"?o.unsupportedCode:o.status;"#
+            ),
             "{text}"
         );
         fs::remove_dir_all(&dir).unwrap();

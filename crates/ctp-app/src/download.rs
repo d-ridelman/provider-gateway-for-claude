@@ -36,6 +36,14 @@ pub fn client() -> Result<reqwest::Client> {
     Ok(ctp_gateway::proxy::apply(builder()).build()?)
 }
 
+/// `claude.ai` отдаёт ссылку на установщик Desktop только браузерному User-Agent,
+/// со своим — 403 Forbidden.
+pub fn client_browser() -> Result<reqwest::Client> {
+    const UA: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
+                      (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36";
+    Ok(ctp_gateway::proxy::apply(builder().user_agent(UA)).build()?)
+}
+
 /// Клиент мимо прокси приложения и системного прокси — для самого ядра mihomo: пока оно
 /// не скачано или остановлено для замены, оба указывают на неработающий порт.
 pub fn client_direct() -> Result<reqwest::Client> {
