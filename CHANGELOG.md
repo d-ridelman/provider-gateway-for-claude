@@ -4,6 +4,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-26
+
 ### Fixed
 
 - **A provider URL is local only if it points at the loopback address.** The "no key needed" hint matched any address that merely contained `localhost`, so `https://localhost.example.com` was taken for a local one.
@@ -26,10 +28,6 @@ All notable changes to this project are listed here. The format follows [Keep a 
 ### Added
 
 - **The translated copy can be built from the MSIX package.** Anthropic's Windows installer now ships Claude as an MSIX package and removes the Squirrel folder, so `Claude Desktop not found` would appear again once the portable nupkg feed goes away. When no explicit path, Squirrel folder or `Programs\claude` is found, PGC now takes `claude.exe` from the installed package (found through the per-user `AppModel\Repository\Packages` registry key, no PowerShell: 33 ms instead of 1.3 s for `Get-AppxPackage`). The copy folder version comes from the package name (`Claude_6.28899.6.0_x64__…` → `app-6.28899.6.0`); registry repair and the upkeep checks accept `<package>\app` as a version folder. Priority is unchanged, so a configured portable Claude is not displaced by an older package. Checked live on the real package: a copy was built and patched in 25 s (ADR-021). Not checked: launching that copy.
-
-## [0.2.4] - 2026-11-26
-
-### Added
 
 - **Cowork in Claude Desktop on 3P, without an MSIX install.** In 3P Claude runs Cowork sessions on the host, yet its `msix_required` check turns Cowork off for any copy not started from MSIX. The Russian copy now carries small `app.asar` patches that skip that check, the VM capability and Windows-feature checks and the VM image download (over 1 GB), so Cowork opens on the portable copy with no administrator rights and no VM; the gateway profile gets `desktopHome: "standard"`. Checked in Windows Sandbox: a message starts a Cowork session that runs Claude Code on the host. File tools, web and MCP work. Cowork's own shell tool lives in the VM, so on the host the session gets Claude Code's PowerShell and Bash instead: not isolated, like the Code tab on Windows, and every call asks for approval (checked: a file-writing command waited, then ran and wrote the file). Advanced file analysis stays unavailable (ADR-018).
 - **Cowork with the VM, through MSIX, as an option.** The new `Cowork` setting offers `On the host, no VM` (the default, portable), `Off` (Chat only) and `Through MSIX, with VM`. The last one starts the real `claude.exe` from an installed Claude MSIX package with the standard `%LOCALAPPDATA%\Claude-3p` profile (the VM service keeps its image there and refuses a junction), because the VM service accepts only a client started from the package folder (a translated copy with the package identity is refused: checked). PGC writes its gateway entry into that profile's `configLibrary` without deleting other entries, so keys, models, artifacts, search and Code work; there is no Russian translation in this mode (the package's asar is signed and read-only). Without the MSIX or its service PGC falls back to the host mode and says so. Checked on a machine with the MSIX and HCS: with the standard profile the service configures, the VM boots in about 14 seconds and a shell command runs inside the VM.
@@ -217,7 +215,8 @@ The first public release.
 - Updates from GitHub Releases, verified with the signing key built into the app.
 - Provider keys in Windows Credential Manager; the gateway requires a local token.
 
-[Unreleased]: https://github.com/d-ridelman/provider-gateway-for-claude/compare/v0.2.3...HEAD
+[Unreleased]: https://github.com/d-ridelman/provider-gateway-for-claude/compare/v0.2.4...HEAD
+[0.2.4]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.4
 [0.2.3]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.3
 [0.2.2]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.2
 [0.2.1]: https://github.com/d-ridelman/provider-gateway-for-claude/releases/tag/v0.2.1
