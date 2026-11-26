@@ -699,15 +699,23 @@ pub fn facts(config: &Config, status: &crate::model::UiStatus, requested: &Path)
         c.args(["rev-parse", "--show-toplevel"])
             .current_dir(requested);
         c
-    })
-    .ok();
+    });
     let root = repo
         .as_ref()
+        .ok()
         .filter(|o| o.code == Some(0))
         .map(|o| PathBuf::from(o.stdout.trim().replace('/', "\\")));
-    let git_error = repo
-        .filter(|o| o.code != Some(0))
-        .map(|o| o.stderr.lines().next().unwrap_or_default().to_string());
+    // Таймаут или git не запустился — это не «не репозиторий», а сбой: называем причину.
+    let git_error = match &repo {
+        Ok(output) if output.code != Some(0) => output
+            .stderr
+            .lines()
+            .next()
+            .map(str::to_string)
+            .filter(|line| !line.trim().is_empty()),
+        Ok(_) => None,
+        Err(exc) => Some(exc.clone()),
+    };
     let cli = crate::claude::code_cli(config).is_ok();
     let work = root.clone().unwrap_or_else(|| requested.to_path_buf());
     let list = |args: &[&str]| {

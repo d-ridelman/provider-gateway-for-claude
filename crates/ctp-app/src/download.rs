@@ -311,7 +311,10 @@ fn verify(path: &Path, revocation: u32) -> (i32, Option<Signer>) {
                     buffer.as_mut_ptr(),
                     buffer.len() as u32,
                 );
-                let name = (len > 1).then(|| String::from_utf16_lossy(&buffer[..len as usize - 1]));
+                // `len` — сколько нужно с нулём на конце; длиннее буфера — взять что есть.
+                let name = (len > 1).then(|| {
+                    String::from_utf16_lossy(&buffer[..(len as usize - 1).min(buffer.len())])
+                });
                 // Второй элемент цепочки — тот, кто выпустил листовой сертификат.
                 let issuer = ((*signer).csCertChain >= 2)
                     .then(|| thumbprint((*chain.add(1)).pCert))

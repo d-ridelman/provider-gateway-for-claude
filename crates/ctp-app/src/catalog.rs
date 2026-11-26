@@ -3,6 +3,7 @@
 //! (сеть, смена схемы — URL помечен `experimental`) оставляет всё как без него.
 
 use crate::tr;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::Read;
@@ -172,7 +173,15 @@ async fn download() -> Result<Catalog, String> {
     if response.content_length().is_some_and(|len| len > MAX_BYTES) {
         return Err(tr!("ответ больше 64 МБ", "response is larger than 64 MB"));
     }
-    let body = response.bytes().await.map_err(|exc| exc.to_string())?;
+    // Считаем и без `Content-Length` (chunked у CDN): тело не должно набраться в память.
+    let mut body = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        body.extend_from_slice(&chunk.map_err(|exc| exc.to_string())?);
+        if body.len() as u64 > MAX_BYTES {
+            return Err(tr!("ответ больше 64 МБ", "response is larger than 64 MB"));
+        }
+    }
     tokio::task::spawn_blocking(move || parse(&body, gzip))
         .await
         .map_err(|exc| exc.to_string())?

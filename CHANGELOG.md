@@ -6,6 +6,12 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Fixed
 
+- **Connect no longer stays broken when agent-kit's `scripts/cli.mjs` disappears.** The built-in copy was checked only by its marker and `plugin.json`, so an antivirus that removed `cli.mjs` left every action failing with "Cannot find module" and no way to repair it from the window; the copy is now rebuilt.
+- **A language switch no longer leaves the Projects page in the previous language.** agent-kit answers in the language it was called with; the check is repeated after a switch and the inspection and plan return with the next Check instead of showing two languages. The "?" buttons of headings that keep their text now follow the switch too.
+- **A deep project path no longer makes the projects card scroll sideways.**
+- **The VPN toggle no longer freezes the window while the core stops** (up to 10 s in TUN mode), and a failed core download reports the download instead of "the mihomo core was not downloaded".
+- **After a Claude update the model aliases use the new rules from the first launch.** The Desktop rule list was read after the aliases were written, so the first start after an update could keep stale names.
+- **The state line sees a Claude started in VM mode** (the profile there is the standard `%LOCALAPPDATA%\Claude-3p`, not the PGC one).
 - **A substituted Claude is rejected.** The Authenticode check compared only the certificate's CN, so a code-signing certificate from a corporate proxy's root (or a revoked one) passed for `Claude-Setup.exe` and the portable `claude.exe`. Both must now be issued by Anthropic's DigiCert code-signing CA; the revocation check runs when the network allows it and is skipped behind a proxy instead of blocking the update (ADR-022).
 - **The project checks can no longer pass silently.** `ci.ps1 -Changed` took a failed `git diff` for "only docs changed" and skipped fmt, clippy and the tests; `ui-shots.mjs` printed `CLIPPED`/`HSCROLL` findings and always exited 0; `check_i18n.js` did not look at `data-help` topics or at keys picked by a ternary. All three now fail, and the i18n check covers the `help.*` texts and both sides of `t(…)` ternaries.
 - **"Connect project" can no longer hang forever.** A grandchild (`node` under `claude.cmd`) that keeps the pipe open after the command exits left the window waiting for EOF; the output is now read as it comes, capped at 8 MB per stream, and the wait after exit is 2 s, keeping what already arrived.

@@ -549,12 +549,20 @@ pub struct ClaudeRun {
 
 /// Состояние для строки статуса в окне: только чтение, ничего не пишется и не копируется.
 pub fn run_state(config: &Config, status: &UiStatus) -> ClaudeRun {
-    let Some(profile) = base_dir().map(|base| base.join("Claude-3p")) else {
+    let Some(base) = base_dir() else {
         return ClaudeRun::default();
     };
-    if !profile_in_use(&profile) {
+    // VM-режим (ADR-018) запускает Claude со стандартным профилем; остальное — с папкой PGC.
+    let vm = (config.cowork_mode == "vm")
+        .then(|| real_local_appdata().map(|local| local.join("Claude-3p")))
+        .flatten();
+    let Some(profile) = [Some(base.join("Claude-3p")), vm]
+        .into_iter()
+        .flatten()
+        .find(|path| profile_in_use(path))
+    else {
         return ClaudeRun::default();
-    }
+    };
     // Остановленный шлюз с нашей записью не сравнить: «устарело» не утверждаем.
     let stale = status.running && {
         let path = profile

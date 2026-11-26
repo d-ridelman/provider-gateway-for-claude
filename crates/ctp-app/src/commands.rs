@@ -915,10 +915,15 @@ pub async fn proxy_download_core(
     let progress = progress_to(&app, "core");
     let downloaded = mihomo::download_core(&progress).await;
     let on = shared.config.lock().unwrap().proxy.is_on();
+    if downloaded.is_err() && on {
+        // Скачать не вышло: вернуть прежнее ядро, если оно осталось, но ответить именно
+        // про скачивание — иначе человек чинит не то.
+        let _ = apply_proxy(&app, &shared).await;
+    }
+    downloaded.map_err(|exc| format!("{exc:#}"))?;
     if on {
         apply_proxy(&app, &shared).await?;
     }
-    downloaded.map_err(|exc| format!("{exc:#}"))?;
     Ok(proxy_state_of(&shared).await)
 }
 

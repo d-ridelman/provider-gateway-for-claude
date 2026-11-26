@@ -35,8 +35,11 @@ pub fn extracted() -> Result<Option<PathBuf>, String> {
 /// папка заменяется через временную: на полпути `dir` не бывает наполовину новой.
 pub fn ensure(dir: &Path, tar: &[u8], version: &str) -> Result<PathBuf, String> {
     let manifest = |d: &Path| d.join(".claude-plugin").join("plugin.json");
+    // `scripts/cli.mjs` запускают все команды agent-kit: без него копия цела по метке,
+    // но каждое действие падает.
+    let whole = |d: &Path| manifest(d).is_file() && d.join("scripts").join("cli.mjs").is_file();
     let have = std::fs::read_to_string(dir.join(MARKER)).unwrap_or_default();
-    if have.trim() == version && manifest(dir).is_file() {
+    if have.trim() == version && whole(dir) {
         return Ok(dir.to_path_buf());
     }
     let parent = dir
@@ -52,7 +55,7 @@ pub fn ensure(dir: &Path, tar: &[u8], version: &str) -> Result<PathBuf, String> 
         let mut untar = Command::new("tar");
         untar.arg("-xf").arg(&archive).arg("-C").arg(&next);
         let output = crate::connect::run(untar, Duration::from_secs(60))?;
-        if output.code != Some(0) || !manifest(&next).is_file() {
+        if output.code != Some(0) || !whole(&next) {
             let said = output.stderr.trim();
             return Err(tr!(
                 "встроенный agent-kit не распаковался: {said}",
@@ -92,18 +95,21 @@ fn replace(dir: &Path, next: &Path, old: &Path) -> Result<(), String> {
 mod tests {
     use super::*;
 
-    /// Снимок как у `kit-snapshot.ps1`: tar с `.claude-plugin/plugin.json`.
+    /// Снимок как у `kit-snapshot.ps1`: tar с `.claude-plugin/plugin.json` и `scripts/cli.mjs`.
     fn snapshot(work: &Path, text: &str) -> Vec<u8> {
         let tree = work.join(format!("tree-{text}"));
         std::fs::create_dir_all(tree.join(".claude-plugin")).unwrap();
+        std::fs::create_dir_all(tree.join("scripts")).unwrap();
         std::fs::write(tree.join(".claude-plugin").join("plugin.json"), text).unwrap();
+        std::fs::write(tree.join("scripts").join("cli.mjs"), "// cli").unwrap();
         let tar = work.join(format!("{text}.tar"));
         let mut make = Command::new("tar");
         make.arg("-cf")
             .arg(&tar)
             .arg("-C")
             .arg(&tree)
-            .arg(".claude-plugin");
+            .arg(".claude-plugin")
+            .arg("scripts");
         assert_eq!(
             crate::connect::run(make, Duration::from_secs(30))
                 .unwrap()
@@ -132,6 +138,11 @@ mod tests {
         std::fs::remove_file(&plugin).unwrap();
         ensure(&dir, &v1, "v1").unwrap();
         assert_eq!(std::fs::read_to_string(&plugin).unwrap(), "one");
+        // Метка на месте, а `scripts/cli.mjs` унёс антивирус — копия неполная.
+        let cli = dir.join("scripts").join("cli.mjs");
+        std::fs::remove_file(&cli).unwrap();
+        ensure(&dir, &v1, "v1").unwrap();
+        assert!(cli.is_file());
         // Новая версия — папка заменяется целиком, без остатков старой.
         let v2 = snapshot(&work, "two");
         ensure(&dir, &v2, "v2").unwrap();

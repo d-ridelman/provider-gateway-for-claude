@@ -82,6 +82,14 @@ pub fn run() {
 
             let config = store::load_or_create(&dir)?;
             i18n::apply(config.language.as_deref());
+            // Правило блок-листа Desktop — до псевдонимов: `codemodel::restore` и
+            // `compact::sync` ниже считают имена по правилу уже установленного Claude,
+            // иначе после его обновления первый запуск пишет старые псевдонимы (ADR-005).
+            if let Some(exe) = claude::detect(&config)
+                && let Err(exc) = upkeep::apply_rules(&dir, &exe)
+            {
+                tracing::warn!(error = %format!("{exc:#}"), "Claude model rules");
+            }
             // Прошлый выход мог не дойти до возврата модели в настройках Claude Code (ADR-010).
             codemodel::restore(&config);
             // Модели могли добавиться, а `settings.json` — смениться (ADR-019).
@@ -100,13 +108,6 @@ pub fn run() {
             // После журнала и языка: предупреждение есть куда записать, меню — на нужном языке.
             if let Err(exc) = tray::build(app.handle()) {
                 tracing::warn!(error = %exc, "tray icon not created, closing the window will exit");
-            }
-            // До автозапуска шлюза: псевдонимы моделей считаются по правилу именно
-            // установленного Claude (из кеша — без чтения 50 МБ на каждом старте).
-            if let Some(exe) = claude::detect(&config)
-                && let Err(exc) = upkeep::apply_rules(&dir, &exe)
-            {
-                tracing::warn!(error = %format!("{exc:#}"), "Claude model rules");
             }
             // Прокси шлюза — до его автозапуска из окна.
             let proxy_on = config.proxy.is_on();

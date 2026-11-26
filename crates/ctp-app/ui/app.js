@@ -151,6 +151,7 @@ async function setUi(patch) {
       applyLanguage(config.language);
       applyTheme(config.themePref);
       render();
+      await refreshProjectLanguage();
     } else {
       state.config.themePref = config.themePref;
       el.themeInput.value = config.themePref;
@@ -322,6 +323,22 @@ function renderMain() {
 // Check (nothing changes) → Connect (the plugin, local to this machine unless "for the team")
 // → the inspection and the plan with ticks → Apply the ticked ones. Every step is the
 // backend's answer drawn as it is; agent-kit's own lines come in its language.
+
+// agent-kit answers in the language it was called with: after a switch the old lines would
+// stay. The check is cheap and read-only, so it runs again; the inspection and the plan come
+// back with the next Check instead of showing a mix of languages.
+async function refreshProjectLanguage() {
+  const project = state.project;
+  if (!project?.dir || project.busy) return;
+  project.data = null;
+  project.undo = null;
+  try {
+    project.check = await invoke("connect_check", { dir: project.dir });
+  } catch {
+    /* keep the previous check */
+  }
+  render();
+}
 
 async function openProject() {
   if (state.view === "project") return;
@@ -2080,9 +2097,14 @@ function helpButton(open, name = "") {
 
 function addHelpButtons(root = document) {
   for (const node of root.querySelectorAll("[data-help]")) {
-    if (node.querySelector(":scope > .help-btn")) continue;
-    // A language switch rewrites the heading's text and drops the button: applyLanguage adds it back.
     const topic = node.dataset.help;
+    // A language switch keeps the button of a heading it did not rewrite: relabel it.
+    const have = node.querySelector(":scope > .help-btn");
+    if (have) {
+      have.setAttribute("aria-label", `${t(`help.${topic}.title`)}: ${t("help.what")}`);
+      have.title = t("help.what");
+      continue;
+    }
     node.append(helpButton(() => openHelp(t(`help.${topic}.title`), t(`help.${topic}.body`)), t(`help.${topic}.title`)));
   }
 }

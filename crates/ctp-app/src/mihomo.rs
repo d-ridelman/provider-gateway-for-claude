@@ -529,7 +529,10 @@ pub fn start(config: &Config) -> Result<Option<u16>> {
 }
 
 pub fn stop() {
-    if let Some(core) = CORE.lock().unwrap_or_else(|e| e.into_inner()).take() {
+    // Забираем ядро под мьютексом, а останавливаем уже без него: остановка в TUN ждёт
+    // процесс до 10 с, и окно не должно всё это время стоять в running()/state().
+    let core = CORE.lock().unwrap_or_else(|e| e.into_inner()).take();
+    if let Some(core) = core {
         core.process.stop();
         tracing::info!(tun = core.tun, "mihomo core stopped");
     }

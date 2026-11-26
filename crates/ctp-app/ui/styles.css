@@ -378,6 +378,8 @@ button, .card, .dialog form { position: relative; }
 .row-endpoint { grid-template-columns: 1.2fr 1fr; }
 .row-models { grid-template-columns: 1.7fr 1fr; }
 #detectedClaude { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; overflow-wrap: normal; }
+/* A deep project path has no spaces: without this the projects card scrolls sideways. */
+#projectStateLine { overflow-wrap: anywhere; }
 .effort-col { display: flex; flex-direction: column; gap: 10px; }
 .effort-col > small { color: var(--muted); font-size: var(--fs-xs); line-height: 16px; }
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
