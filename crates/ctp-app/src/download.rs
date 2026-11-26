@@ -4,6 +4,7 @@
 //! Скачанное — недоверенные данные: пока сумма не сошлась, файл называется `*.part`
 //! и ничем не запускается; распаковка не выпускает пути за пределы своей папки.
 
+use crate::tr;
 use anyhow::{Context, Result, bail, ensure};
 use futures_util::StreamExt;
 use sha1::Sha1;
@@ -216,18 +217,53 @@ pub fn unzip(archive: &Path, dest: &Path, map: impl Fn(&str) -> Option<PathBuf>)
     Ok(count)
 }
 
-/// Подписант файла по Authenticode, если подпись действительна и цепочка доверена
-/// (WinVerifyTrust, без отзыва — проверка отзыва ходит в сеть и на доменных ПК висит).
+/// Что известно о подписанте файла: имя из CN и отпечаток того, кто выпустил его сертификат.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Signer {
+    pub name: String,
+    pub issuer: Option<String>,
+}
+
+/// Подписант файла по Authenticode, если подпись действительна и цепочка доверена.
+/// Отзыв проверяется, когда это возможно: за прокси CRL/OCSP часто недоступны (ADR-022).
 #[cfg(windows)]
-pub fn signer(path: &Path) -> Result<String> {
+pub fn signer(path: &Path) -> Result<Signer> {
+    use windows_sys::Win32::Security::WinTrust::{WTD_REVOKE_NONE, WTD_REVOKE_WHOLECHAIN};
+    let (status, found) = verify(path, WTD_REVOKE_WHOLECHAIN);
+    let (status, found) = if revocation_unavailable(status) {
+        verify(path, WTD_REVOKE_NONE)
+    } else {
+        (status, found)
+    };
+    match found {
+        Some(signer) => Ok(signer),
+        None if status == 0 => bail!("{}: signed, but the signer is unreadable", path.display()),
+        None => bail!(
+            "{}: no valid Authenticode signature (0x{:08x})",
+            path.display(),
+            status as u32
+        ),
+    }
+}
+
+/// Отзыв не проверить (CRL/OCSP недоступны): не повод отказывать, подпись и цепочка целы.
+#[cfg(windows)]
+fn revocation_unavailable(status: i32) -> bool {
+    // CRYPT_E_REVOCATION_OFFLINE и CERT_E_REVOCATION_FAILURE.
+    matches!(status as u32, 0x8009_2013 | 0x800B_010E)
+}
+
+/// Один проход `WinVerifyTrust`: код возврата и данные подписанта, если проверка прошла.
+#[cfg(windows)]
+fn verify(path: &Path, revocation: u32) -> (i32, Option<Signer>) {
     use std::os::windows::ffi::OsStrExt;
     use windows_sys::Win32::Security::Cryptography::{
         CERT_NAME_SIMPLE_DISPLAY_TYPE, CertGetNameStringW,
     };
     use windows_sys::Win32::Security::WinTrust::{
         WINTRUST_ACTION_GENERIC_VERIFY_V2, WINTRUST_DATA, WINTRUST_FILE_INFO, WTD_CHOICE_FILE,
-        WTD_REVOKE_NONE, WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE,
-        WTHelperGetProvSignerFromChain, WTHelperProvDataFromStateData, WinVerifyTrust,
+        WTD_STATEACTION_CLOSE, WTD_STATEACTION_VERIFY, WTD_UI_NONE, WTHelperGetProvSignerFromChain,
+        WTHelperProvDataFromStateData, WinVerifyTrust,
     };
 
     let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
@@ -239,7 +275,7 @@ pub fn signer(path: &Path) -> Result<String> {
     let mut data = WINTRUST_DATA {
         cbStruct: size_of::<WINTRUST_DATA>() as u32,
         dwUIChoice: WTD_UI_NONE,
-        fdwRevocationChecks: WTD_REVOKE_NONE,
+        fdwRevocationChecks: revocation,
         dwUnionChoice: WTD_CHOICE_FILE,
         dwStateAction: WTD_STATEACTION_VERIFY,
         ..Default::default()
@@ -249,7 +285,7 @@ pub fn signer(path: &Path) -> Result<String> {
     // SAFETY: `data` и `file` живут до закрытия состояния ниже; `wide` оканчивается нулём.
     let status =
         unsafe { WinVerifyTrust(std::ptr::null_mut(), &mut action, (&raw mut data).cast()) };
-    let name = if status == 0 {
+    let found = if status == 0 {
         // SAFETY: после успешной проверки состояние держит данные провайдера; указатели
         // проверяются на null перед разыменованием, буфер имени — нашего размера.
         unsafe {
@@ -262,17 +298,25 @@ pub fn signer(path: &Path) -> Result<String> {
             if signer.is_null() || (*signer).csCertChain == 0 {
                 None
             } else {
-                let cert = (*(*signer).pasCertChain).pCert;
+                let chain = (*signer).pasCertChain;
+                if chain.is_null() {
+                    return (status, None);
+                }
                 let mut buffer = [0u16; 256];
                 let len = CertGetNameStringW(
-                    cert,
+                    (*chain).pCert,
                     CERT_NAME_SIMPLE_DISPLAY_TYPE,
                     0,
                     std::ptr::null(),
                     buffer.as_mut_ptr(),
                     buffer.len() as u32,
                 );
-                (len > 1).then(|| String::from_utf16_lossy(&buffer[..len as usize - 1]))
+                let name = (len > 1).then(|| String::from_utf16_lossy(&buffer[..len as usize - 1]));
+                // Второй элемент цепочки — тот, кто выпустил листовой сертификат.
+                let issuer = ((*signer).csCertChain >= 2)
+                    .then(|| thumbprint((*chain.add(1)).pCert))
+                    .flatten();
+                name.map(|name| Signer { name, issuer })
             }
         }
     } else {
@@ -281,32 +325,66 @@ pub fn signer(path: &Path) -> Result<String> {
     data.dwStateAction = WTD_STATEACTION_CLOSE;
     // SAFETY: закрываем то же состояние той же структурой.
     unsafe { WinVerifyTrust(std::ptr::null_mut(), &mut action, (&raw mut data).cast()) };
-    match name {
-        Some(name) => Ok(name),
-        None if status == 0 => bail!("{}: signed, but the signer is unreadable", path.display()),
-        None => bail!(
-            "{}: no valid Authenticode signature (0x{:08x})",
-            path.display(),
-            status as u32
-        ),
-    }
+    (status, found)
+}
+
+/// Отпечаток SHA-1 в том же виде, что показывает Windows (`Get-AuthenticodeSignature`).
+#[cfg(windows)]
+fn thumbprint(
+    cert: *const windows_sys::Win32::Security::Cryptography::CERT_CONTEXT,
+) -> Option<String> {
+    use windows_sys::Win32::Security::Cryptography::{
+        CERT_SHA1_HASH_PROP_ID, CertGetCertificateContextProperty,
+    };
+    let mut bytes = [0u8; 20];
+    let mut size = bytes.len() as u32;
+    // SAFETY: буфер нашего размера, и `size` его описывает.
+    let ok = unsafe {
+        CertGetCertificateContextProperty(
+            cert,
+            CERT_SHA1_HASH_PROP_ID,
+            bytes.as_mut_ptr().cast(),
+            &mut size,
+        )
+    };
+    (ok != 0 && size as usize == bytes.len())
+        .then(|| bytes.iter().map(|byte| format!("{byte:02X}")).collect())
 }
 
 #[cfg(not(windows))]
-pub fn signer(path: &Path) -> Result<String> {
+pub fn signer(path: &Path) -> Result<Signer> {
     bail!("{}: signature checks need Windows", path.display())
 }
 
 /// Подписант Claude Desktop и Claude Code (CN сертификата, сверено на обоих 23.11.2026).
 pub const ANTHROPIC: &str = "Anthropic, PBC";
 
-/// Файл подписан Anthropic (Claude Desktop, Claude Code).
+/// Удостоверяющий центр Anthropic — DigiCert Trusted G4 Code Signing RSA4096 SHA384 2021
+/// CA1. Лист перевыпускается каждый год под тем же центром; цепочка через корпоративный
+/// прокси сюда не придёт (ADR-022).
+pub const ANTHROPIC_CA: &str = "7B0F360B775F76C94A12CA48445AA2D2A875701C";
+
+/// Файл подписан Anthropic (Claude Desktop, Claude Code) и его сертификат выпущен их центром.
 pub fn ensure_anthropic(path: &Path) -> Result<()> {
-    let name = signer(path)?;
+    check_anthropic(&signer(path)?, &path.display().to_string())
+}
+
+/// Решение по данным подписи — без вызовов Windows, чтобы его можно было проверить тестом.
+fn check_anthropic(signer: &Signer, shown: &str) -> Result<()> {
     ensure!(
-        name == ANTHROPIC,
-        "{}: signed by {name}, not by {ANTHROPIC}",
-        path.display()
+        signer.name == ANTHROPIC,
+        "{shown}: signed by {}, not by {ANTHROPIC}",
+        signer.name
+    );
+    let issuer = signer.issuer.as_deref().unwrap_or("?");
+    let pinned = ANTHROPIC_CA;
+    ensure!(
+        signer.issuer.as_deref() == Some(ANTHROPIC_CA),
+        "{}",
+        tr!(
+            "{shown}: сертификат выпущен не центром Anthropic {pinned}, а {issuer} — подмена или корпоративный прокси",
+            "{shown}: the certificate was issued by {issuer}, not by Anthropic's CA {pinned} — a substitute or a corporate proxy"
+        )
     );
     Ok(())
 }
@@ -447,6 +525,24 @@ pub(crate) mod tests {
         assert!(err.to_string().contains("mihomo"), "{err}");
         vpn_ready(Some(&uri), true).unwrap();
         vpn_ready(None, false).unwrap();
+    }
+
+    #[test]
+    fn only_anthropics_name_and_ca_pass() {
+        let anthropic = |issuer: Option<&str>| Signer {
+            name: ANTHROPIC.to_string(),
+            issuer: issuer.map(str::to_string),
+        };
+        check_anthropic(&anthropic(Some(ANTHROPIC_CA)), "claude.exe").unwrap();
+        // Другое имя — не Anthropic, даже с их центром.
+        let other = Signer {
+            name: "Example, Inc".into(),
+            issuer: Some(ANTHROPIC_CA.into()),
+        };
+        assert!(check_anthropic(&other, "x.exe").is_err());
+        // Чужой центр (корпоративный прокси) — не Anthropic, даже с их именем.
+        assert!(check_anthropic(&anthropic(Some("AA")), "x.exe").is_err());
+        assert!(check_anthropic(&anthropic(None), "x.exe").is_err());
     }
 
     #[cfg(windows)]
