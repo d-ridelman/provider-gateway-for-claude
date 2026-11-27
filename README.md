@@ -49,7 +49,7 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 - **Russian interface for Claude Desktop** (optional): a separate patched copy of Claude with claude.ai's own Russian translation. The copy also brings back **No folder** in the Code folder picker, which third-party mode hides. When Claude updates, the app prepares the new copy in the background, so **Open Claude** does not wait. Your installed Claude is not modified. The copy is built without Russian too (no translation): only in it do the processes Claude starts (Code sessions, their npm, uv, git, MCP servers) see the real `AppData\Local` instead of the app's folder. When Claude comes as an MSIX package with no Squirrel folder, the copy is built from the installed package. The copy itself does not update Claude; new versions come from the regular Claude.
 - **Cowork in Claude Desktop on 3P.** In third-party mode Claude runs Cowork on the host, but its own check turns Cowork off for any copy not started from MSIX. The app patches its copy so Cowork works there without an MSIX package, administrator rights or a VM, and Claude opens on Chat rather than the Code tab. Cowork's own shell lives in the VM, so on the host the session gets Claude Code's PowerShell and Bash, not isolated: every call asks for approval. A Settings choice offers three modes: on the host (portable), off (Chat only), and through an installed Claude MSIX package with the VM (no Russian translation in that mode).
 - **Artifacts (Design and Slides, beta)**: a tick in Settings enables them in the third-party profile; live artifacts work without it.
-- **A conversation compaction window**: a Settings field takes `400k`, `400000` or `40%` of the model's window for models marked `[1m]`, for Desktop and the console.
+- **A conversation compaction window**: a Settings field takes `400k`, `400000` or `40%` of the model's window (at least 100k), for Desktop and the console.
 - **Projects: connect agent-kit and disconnect it** without typing commands: checks after the agent's edits, a second model that reviews its work, and secret guarding. The project's own checks are listed with ticks, nothing leaves the computer, and Disconnect removes only what agent-kit added and you did not change. See [Projects](#projects).
 - **A critic model for project scripts**: pick another gateway model that reviews an agent's work, so a reviewer works without a Claude subscription too.
 - **"?" next to the harder settings** opens a short explanation in plain words: what it is, why it is there and what happens if you leave it alone.
@@ -163,7 +163,7 @@ Settings → **Download Claude Desktop** and **Download Claude Code**: both come
 
 With the VPN on in PGC, downloads go through it. If the core is not running, the download does not start and the window says why; if the node does not answer, the error suggests picking another. The mihomo core itself is downloaded directly.
 
-Checks: sha256 from the release manifest for Claude Code, sha1 from `RELEASES` for Claude Desktop (the same check Squirrel makes). Every `claude.exe` must carry an Authenticode signature by "Anthropic, PBC". A portable Claude writes `claude://` into the registry when it starts; once it closes, PGC gives those keys back to the installed Claude, or removes them if there is none.
+Checks: sha256 from the release manifest for Claude Code, sha1 from `RELEASES` for Claude Desktop (the same check Squirrel makes). Every `claude.exe` must carry an Authenticode signature by "Anthropic, PBC", issued by Anthropic's own code-signing authority. A portable Claude writes `claude://` into the registry when it starts; once it closes, PGC gives those keys back to the installed Claude, or removes them if there is none.
 
 ## Privacy and network
 
@@ -173,7 +173,7 @@ The app talks to:
 |---|---|
 | The providers you add | When Claude or Claude Code sends a request, and on **Load from provider** / **Test connection** |
 | `models.opencode.ai` | On **Load from provider**, for model names and limits; nothing about you is sent |
-| `claude.ai/i18n/ru.json`, `claude.ai/i18n/dynamic/ru.json` | Only with the Russian Claude interface turned on, when Claude updates |
+| `claude.ai/i18n/ru.json`, `claude.ai/i18n/dynamic/ru.json` | Only with the Russian Claude interface turned on: when Claude updates, and when the translation is missing |
 | An agent-kit source you type yourself on **Projects** | Only if Claude Code has no agent-kit marketplace and you set one; the built-in agent-kit needs no network |
 | `github.com` (this repository's releases) | Update check at start and once a day; turn it off in Settings |
 | `html.duckduckgo.com`, `lite.duckduckgo.com`, `search.brave.com` | When Claude's built-in web search runs: the gateway answers it itself and sends the words the model chose to search for (no account, no keys). It is always on (there is no switch for it yet) |
@@ -191,7 +191,7 @@ There is no telemetry. Prompts and answers go only between Claude and your provi
 |---|---|
 | Settings and log | `%APPDATA%\app.provider-gateway-for-claude` |
 | Provider keys | Windows Credential Manager, service `claude-provider-gateway` |
-| Claude Desktop profile used by the app | `%LOCALAPPDATA%\ClaudeProviderGateway\Claude-3p` |
+| Claude Desktop profile used by the app | `%LOCALAPPDATA%\ClaudeProviderGateway\Claude-3p` (the VM mode uses the standard `%LOCALAPPDATA%\Claude-3p`) |
 | Claude copy (~700 MB, with or without the translation) | `%LOCALAPPDATA%\ClaudeProviderGateway\claude-ru` |
 | Russian translation of claude.ai | `%APPDATA%\app.provider-gateway-for-claude\claude-ru.json` |
 | What the gateway learned about picky models | `%APPDATA%\app.provider-gateway-for-claude\model-profiles.json` |
