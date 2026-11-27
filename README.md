@@ -60,10 +60,12 @@ Claude Desktop can run in third-party inference mode and Claude Code can talk to
 
 ## Requirements
 
-- Windows 10 or 11, x64, with WebView2 (built into Windows 11).
-- [Claude Desktop](https://claude.ai/download) for the desktop chat. Tested with Claude Desktop 6.28899.6.
+- Windows 10 version 2004 (build 19041) or Windows 11, x64, with WebView2 (built into Windows 11).
+- [Claude Desktop](https://claude.ai/download) for the desktop chat. Tested with Claude Desktop 6.28899.6; on a newer release the app checks it at launch and says in Settings if one of its patches no longer matches.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) for the terminal agent (optional). Tested with Claude Code 2.1.331.
 - An account and API key with at least one provider, or a local model server.
+- Internet access for the downloads: Claude from Anthropic's own addresses, app updates from GitHub Releases, the Cowork VM image (more than 1 GB) from `downloads.claude.ai`.
+- **Cowork with the VM** (the third Cowork mode) also needs Claude installed from Anthropic's `.msix` package (administrator rights), working hardware virtualization and the Virtual Machine Platform optional feature, and the **Log on as a service** right for `NT VIRTUAL MACHINE\Virtual Machines`, which a domain policy can take away. Cowork on the host needs none of this.
 - For **Projects** only: [Node.js](https://nodejs.org) 22 or newer, git and Claude Code.
 
 ## Install
