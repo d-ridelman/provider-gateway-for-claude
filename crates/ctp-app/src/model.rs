@@ -118,6 +118,9 @@ pub struct ModelRoles {
     /// Модель-критик для скриптов проекта (ADR-012); шлюзу не нужна.
     #[serde(default)]
     pub critic: Option<ModelRef>,
+    /// Запасная модель: шлюз уходит на неё, когда основная не дала пригодного ответа (ADR-023).
+    #[serde(default)]
+    pub backup: Option<ModelRef>,
 }
 
 fn default_true() -> bool {

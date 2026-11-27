@@ -101,6 +101,10 @@ Set **Max reasoning level** on a provider and Claude offers a level picker for i
 
 Settings → **Model for Claude Code** picks the gateway model for Claude Code. In the **Claude Code** console every role Claude Code asks for goes to it: the session, subagents that inherit the model (Explore, Plan), `model: opus`, `model: haiku` and `model: fable`, and every row of `/model` shows it by name instead of Anthropic's own Opus or Fable. In the Code tab of Claude Desktop (from the next **Open Claude**) it is the main (`sonnet`) model; the other roles there are Desktop's own choice. A subagent can also name any gateway model directly in its `model:` field, and `/model <name>` switches the session.
 
+### Backup model
+
+Settings → **Backup model** picks a second gateway model for when the main one gives no usable answer: a network failure, a timeout, an exhausted balance or quota, a 5xx error, or a response body that cannot be read. The gateway retries the same request there once and gives the client the backup's answer; errors of the request itself (400, 401, 403, 404, 413, 422) are not moved. The conversation goes to the backup's provider and the spend goes there too; the switch is not visible in Claude, the log says which model answered. If both fail, the client gets the main model's refusal, as without a backup. Changing the backup restarts the gateway.
+
 ### Critic for project scripts
 
 Settings → **Critic for project scripts** picks a second gateway model that reviews an agent's work (agent-kit's critic answers ACCEPT or REJECT with a reason). Another model than the main one is better: the same model has the same blind spots. When a critic is chosen and the gateway runs, Claude Desktop and the console opened from PGC get `AGENT_KIT_PGC_URL`, `AGENT_KIT_PGC_TOKEN` (the gateway's local token), `AGENT_KIT_PGC_MODEL` and `AGENT_KIT_CRITIC_VIA=pgc`, so project scripts started there can call it. The token works only on `127.0.0.1`; still, every script started from those sessions can read it. Changing the critic does not restart the gateway.

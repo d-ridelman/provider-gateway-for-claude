@@ -3,7 +3,8 @@ use crate::error;
 use crate::openai;
 use crate::passthrough;
 use crate::sse;
-use crate::state::{AppState, ProviderKind};
+use crate::state::{AppState, Provider, ProviderKind, Route};
+use crate::upstream::Failure;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
@@ -104,7 +105,6 @@ pub async fn messages(
     };
     let upstream_model = route.model.clone();
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    body["model"] = json!(upstream_model.clone());
     // Советника (`/advisor`) шлюз не исполняет: его объявление (остался `advisorModel` в
     // настройках Claude Code) и блоки в истории старых сессий провайдер бы не понял. До
     // распознавания пробы и `WebSearch`: те смотрят на список инструментов.
@@ -174,15 +174,7 @@ pub async fn messages(
             .unwrap_or("-")
             .to_string(),
         // Anthropic-провайдеру уровень уходит в том же поле — с потолком и по умолчанию.
-        ProviderKind::Anthropic => {
-            if let Some(level) = level {
-                if !body.get("output_config").is_some_and(Value::is_object) {
-                    body["output_config"] = json!({});
-                }
-                body["output_config"]["effort"] = json!(level);
-            }
-            level.unwrap_or("-").to_string()
-        }
+        ProviderKind::Anthropic => level.unwrap_or("-").to_string(),
     };
     info!(
         provider = %provider.id,
@@ -194,20 +186,110 @@ pub async fn messages(
     );
 
     let session = crate::state::session_id(&headers, &body);
+    let primary = attempt(
+        &state,
+        &provider,
+        &route,
+        &response_model,
+        &body,
+        stream,
+        started,
+        session.as_deref(),
+        &uri,
+        &headers,
+    )
+    .await;
+    let failure = match primary {
+        Ok(response) => return response,
+        Err(failure) => failure,
+    };
+    // Запасная — одна попытка, пока клиенту не отправлен ни байт ответа (ADR-023).
+    let backup = state
+        .router
+        .backup
+        .clone()
+        .filter(|backup| backup.provider != route.provider || backup.model != route.model);
+    let Some(backup) = backup.filter(|_| failure.retryable()) else {
+        return failure.response(&provider);
+    };
+    let backup_provider = &state.router.providers[backup.provider];
+    info!(
+        provider = %provider.id,
+        model = %upstream_model,
+        backup_provider = %backup_provider.id,
+        backup_model = %backup.model,
+        reason = %failure.label(),
+        "no usable answer from the model, trying the backup"
+    );
+    match attempt(
+        &state,
+        backup_provider,
+        &backup,
+        &response_model,
+        &body,
+        stream,
+        started,
+        session.as_deref(),
+        &uri,
+        &headers,
+    )
+    .await
+    {
+        Ok(response) => response,
+        Err(second) => {
+            warn!(
+                provider = %provider.id,
+                model = %upstream_model,
+                backup_provider = %backup_provider.id,
+                backup_model = %backup.model,
+                first = %failure.label(),
+                second = %second.label(),
+                "both the model and the backup gave no usable answer"
+            );
+            failure.response(&provider)
+        }
+    }
+}
+
+/// Один заход к провайдеру. Тело — исходное клиентское: модель и уровень рассуждения —
+/// параметры попытки, поэтому запрос к запасной строится по её протоколу и потолку (ADR-023).
+#[allow(clippy::too_many_arguments)]
+async fn attempt(
+    state: &AppState,
+    provider: &Provider,
+    route: &Route,
+    client_model: &str,
+    body: &Value,
+    stream: bool,
+    started: Instant,
+    session: Option<&str>,
+    uri: &Uri,
+    incoming: &HeaderMap,
+) -> Result<Response, Failure> {
+    let mut body = body.clone();
+    body["model"] = json!(route.model);
+    if provider.kind == ProviderKind::Anthropic
+        && let Some(level) = provider.reasoning_effort(&body)
+    {
+        if !body.get("output_config").is_some_and(Value::is_object) {
+            body["output_config"] = json!({});
+        }
+        body["output_config"]["effort"] = json!(level);
+    }
     match provider.kind {
         ProviderKind::Anthropic => {
-            passthrough::messages(&state, &provider, &uri, &headers, body, stream, started).await
+            passthrough::messages(state, provider, uri, incoming, body, stream, started).await
         }
         ProviderKind::OpenAi => {
             openai::messages(
-                &state,
-                &provider,
-                &response_model,
-                &upstream_model,
+                state,
+                provider,
+                client_model,
+                &route.model,
                 body,
                 stream,
                 started,
-                session.as_deref(),
+                session,
             )
             .await
         }

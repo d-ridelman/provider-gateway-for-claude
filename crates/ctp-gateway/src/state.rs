@@ -225,6 +225,8 @@ pub struct ModelRouter {
     route_index: HashMap<String, usize>,
     by_model: HashMap<String, Route>,
     pub default: Option<Route>,
+    /// Модель на случай, когда основная не дала пригодного ответа (ADR-023).
+    pub backup: Option<Route>,
 }
 
 impl ModelRouter {
@@ -272,6 +274,7 @@ impl ModelRouter {
             .as_deref()
             .and_then(find)
             .or_else(|| routes.first().map(|(_, route)| route.clone()));
+        let backup = file.backup.as_deref().and_then(find);
 
         for provider in &providers {
             if provider.base_url.is_empty() {
@@ -285,6 +288,7 @@ impl ModelRouter {
             route_index,
             by_model,
             default,
+            backup,
         })
     }
 
@@ -505,6 +509,7 @@ mod tests {
     fn routes_by_alias_model_and_default() {
         let router = ModelRouter::new(ProvidersFile {
             default: Some("claude-openai-80673633".into()),
+            backup: None,
             providers: vec![
                 provider(
                     "openai",

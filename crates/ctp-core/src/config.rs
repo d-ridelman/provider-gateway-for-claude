@@ -7,6 +7,10 @@ use std::collections::BTreeMap;
 pub struct ProvidersFile {
     #[serde(default)]
     pub default: Option<String>,
+    /// Псевдоним модели, к которой шлюз уходит, когда основная не дала пригодного ответа
+    /// (ADR-023).
+    #[serde(default)]
+    pub backup: Option<String>,
     #[serde(default)]
     pub providers: Vec<ProviderConfig>,
 }

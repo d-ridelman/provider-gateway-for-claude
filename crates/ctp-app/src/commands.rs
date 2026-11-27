@@ -129,6 +129,7 @@ pub async fn test_provider(input: ProbeInput) -> Result<String, String> {
         .ok_or_else(|| tr!("Добавьте хотя бы одну модель", "Add at least one model"))?;
     let file = ctp_core::config::ProvidersFile {
         default: Some(alias.clone()),
+        backup: None,
         providers: vec![config],
     };
     let started = std::time::Instant::now();
@@ -157,6 +158,16 @@ fn delete_provider_in(shared: &AppShared, id: &str) -> Result<UiConfig, String> 
     drop(config);
     runtime::stop(shared);
     Ok(ui)
+}
+
+/// Останавливать ли шлюз: порт, основная модель (она же `default` в файле шлюза) или запасная
+/// (ADR-023). Критик шлюзу не нужен (ADR-012).
+fn restarts_gateway(
+    port_changed: bool,
+    previous: &crate::model::ModelRoles,
+    next: &crate::model::ModelRoles,
+) -> bool {
+    port_changed || previous.sonnet != next.sonnet || previous.backup != next.backup
 }
 
 #[tauri::command(async)]
@@ -217,10 +228,9 @@ pub fn save_settings(
     next.model_roles = crate::model::ModelRoles {
         sonnet: keep(input.model_roles.sonnet),
         critic: keep(input.model_roles.critic),
+        backup: keep(input.model_roles.backup),
     };
-    // Основная модель — модель шлюза по умолчанию (store::build_file): нужен перезапуск.
-    // Критик шлюзу не нужен (ADR-012).
-    let port_changed = port_changed || next.model_roles.sonnet != config.model_roles.sonnet;
+    let port_changed = restarts_gateway(port_changed, &config.model_roles, &next.model_roles);
     store::save(&shared.config_dir, &next).map_err(|exc| exc.to_string())?;
     *config = next;
     crate::compact::sync(&config, previous_compact.as_deref());
@@ -1084,6 +1094,22 @@ mod tests {
     /// Папка на месте временного файла: запись конфига не удаётся (а прежний остаётся целым).
     fn block_config_writes(dir: &std::path::Path) {
         std::fs::create_dir(dir.join("config.json.ctp-tmp")).unwrap();
+    }
+
+    #[test]
+    fn a_changed_backup_model_restarts_the_gateway_but_a_changed_critic_does_not() {
+        let base = crate::model::ModelRoles::default();
+        let mut with_backup = base.clone();
+        with_backup.backup = Some(crate::model::ModelRef {
+            provider: "p".into(),
+            model: "m".into(),
+        });
+        assert!(restarts_gateway(false, &base, &with_backup));
+        assert!(!restarts_gateway(false, &with_backup, &with_backup.clone()));
+        assert!(restarts_gateway(true, &with_backup, &with_backup.clone()));
+        let mut with_critic = with_backup.clone();
+        with_critic.critic = with_backup.backup.clone();
+        assert!(!restarts_gateway(false, &with_backup, &with_critic));
     }
 
     #[test]

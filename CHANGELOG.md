@@ -6,6 +6,8 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ### Added
 
+- **A backup model keeps the session going when the main provider fails.** Settings → **Backup model** picks a second gateway model; the gateway retries the same request there once when the main one gives no usable answer — a network failure, a timeout, 402, 429 or 5xx after classification, or a 2xx body it cannot read. Request errors (400, 401, 403, 404, 413, 422) are not moved. The conversation goes to the backup's provider and the spend goes there too; the switch is visible only in the log, and if both fail the client gets the main model's refusal. Changing the backup restarts the gateway (ADR-023).
+
 - **The built-in agent-kit now cleans build and debug junk, and every connected project gets the rule that asks for it.** `agent-kit clean` counts compiler caches, `node_modules`, `dist` and `state` of finished worktrees and temp folders in the project root; `--apply` removes only paths git ignores and only from a known list, a clean worktree goes as a whole, a worktree with work keeps its code, and a file a build holds stays with a reason. The Projects page offers the new `.claude/rules/cleanup.md` to an existing project as one more rule, without touching the rules it already has.
 
 ### Fixed

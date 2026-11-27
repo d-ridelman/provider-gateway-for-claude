@@ -2256,3 +2256,641 @@ async fn an_overflow_error_inside_the_stream_reaches_claude_code_as_prompt_too_l
         "{body}"
     );
 }
+
+// ADR-023: the gateway retries the same request on the backup model, once, before the client
+// gets a byte of the answer.
+
+fn state_from(config: Value) -> AppState {
+    let file: ProvidersFile = serde_json::from_value(config).unwrap();
+    let router = ModelRouter::new(file).unwrap();
+    AppState::new(router, "local-token".into(), false, "user:inference".into()).unwrap()
+}
+
+fn pair_state(
+    primary_url: &str,
+    primary_kind: &str,
+    backup_url: &str,
+    backup_kind: &str,
+) -> AppState {
+    state_from(json!({
+        "default": "claude-p-00000000",
+        "backup": "claude-b-11111111",
+        "providers": [
+            {
+                "id": "p", "name": "P", "type": primary_kind, "base_url": primary_url,
+                "api_key": "sk-primary-key", // agent-kit: allow-secret
+                "models": {
+                    "claude-p-00000000": "primary-model",
+                    "claude-critic-22222222": "critic-model"
+                }
+            },
+            {
+                "id": "b", "name": "B", "type": backup_kind, "base_url": backup_url,
+                "api_key": "sk-backup-key", // agent-kit: allow-secret
+                "models": {"claude-b-11111111": "backup-model"}
+            }
+        ]
+    }))
+}
+
+fn ask(model: &str) -> Request<Body> {
+    post_messages(json!({
+        "model": model,
+        "max_tokens": 32,
+        "messages": [{"role": "user", "content": "hi"}]
+    }))
+}
+
+fn chat_reply(text: &str) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({
+        "id": "chatcmpl-backup",
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": text},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 7, "completion_tokens": 3}
+    }))
+}
+
+fn anthropic_reply(text: &str) -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({
+        "id": "msg_backup",
+        "type": "message",
+        "role": "assistant",
+        "model": "backup-model",
+        "content": [{"type": "text", "text": text}],
+        "stop_reason": "end_turn",
+        "stop_sequence": null,
+        "usage": {"input_tokens": 5, "output_tokens": 3}
+    }))
+}
+
+async fn mount_failure(server: &MockServer, kind: &str, status: u16, body: Value) {
+    let route = if kind == "anthropic" {
+        "/v1/messages"
+    } else {
+        "/v1/chat/completions"
+    };
+    Mock::given(method("POST"))
+        .and(path(route))
+        .respond_with(ResponseTemplate::new(status).set_body_json(body))
+        .mount(server)
+        .await;
+}
+
+/// Порт, на котором заведомо никто не слушает.
+fn closed_port_url() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+    format!("http://127.0.0.1:{port}")
+}
+
+#[tokio::test]
+async fn the_backup_model_answers_when_the_main_one_gives_no_usable_answer() {
+    for status in [402u16, 429, 500, 502, 503, 504, 529] {
+        let primary = MockServer::start().await;
+        let backup = MockServer::start().await;
+        mount_failure(
+            &primary,
+            "openai",
+            status,
+            json!({"error": {"message": "down"}}),
+        )
+        .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer sk-backup-key"))
+            .respond_with(chat_reply("backup says hi"))
+            .mount(&backup)
+            .await;
+
+        let response = app(pair_state(
+            &primary.uri(),
+            "openai",
+            &backup.uri(),
+            "openai",
+        ))
+        .oneshot(ask("claude-p-00000000"))
+        .await
+        .unwrap();
+
+        assert_eq!(response.status(), StatusCode::OK, "status {status}");
+        let body = json_body(response).await;
+        assert_eq!(
+            body["content"][0]["text"], "backup says hi",
+            "status {status}"
+        );
+        // The client asked for its own model and must see it, not the backup's.
+        assert_eq!(body["model"], "claude-p-00000000", "status {status}");
+        assert_eq!(
+            backup.received_requests().await.unwrap().len(),
+            1,
+            "status {status}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_quota_429_and_a_closed_port_also_go_to_the_backup() {
+    let primary = MockServer::start().await;
+    let backup = MockServer::start().await;
+    mount_failure(
+        &primary,
+        "openai",
+        429,
+        json!({"error": {"message": "You exceeded your current quota"}}),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .respond_with(chat_reply("quota backup"))
+        .mount(&backup)
+        .await;
+    let response = app(pair_state(
+        &primary.uri(),
+        "openai",
+        &backup.uri(),
+        "openai",
+    ))
+    .oneshot(ask("claude-p-00000000"))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await["content"][0]["text"],
+        "quota backup"
+    );
+
+    let backup = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(chat_reply("network backup"))
+        .mount(&backup)
+        .await;
+    let response = app(pair_state(
+        &closed_port_url(),
+        "openai",
+        &backup.uri(),
+        "openai",
+    ))
+    .oneshot(ask("claude-p-00000000"))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await["content"][0]["text"],
+        "network backup"
+    );
+}
+
+#[tokio::test]
+async fn request_errors_do_not_move_to_the_backup() {
+    for status in [400u16, 401, 403, 404, 413, 422] {
+        let primary = MockServer::start().await;
+        let backup = MockServer::start().await;
+        mount_failure(
+            &primary,
+            "anthropic",
+            status,
+            json!({"type": "error", "error": {"type": "invalid_request_error", "message": "bad request"}}),
+        )
+        .await;
+        Mock::given(method("POST"))
+            .respond_with(chat_reply("must not happen"))
+            .mount(&backup)
+            .await;
+
+        let response = app(pair_state(
+            &primary.uri(),
+            "anthropic",
+            &backup.uri(),
+            "openai",
+        ))
+        .oneshot(ask("claude-p-00000000"))
+        .await
+        .unwrap();
+
+        assert_eq!(response.status().as_u16(), status, "status {status}");
+        assert_eq!(
+            backup.received_requests().await.unwrap().len(),
+            0,
+            "status {status}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn without_a_backup_a_refusal_stays_a_refusal() {
+    let primary = MockServer::start().await;
+    mount_failure(
+        &primary,
+        "openai",
+        503,
+        json!({"error": {"message": "busy"}}),
+    )
+    .await;
+    let response = app(state_with(&primary.uri(), "openai", "gpt-5.2"))
+        .oneshot(ask("claude-p-00000000"))
+        .await
+        .unwrap();
+    assert_eq!(response.status().as_u16(), 529);
+    assert_eq!(primary.received_requests().await.unwrap().len(), 1);
+}
+
+#[derive(Clone, Default)]
+struct CapturedLogs(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+impl std::io::Write for CapturedLogs {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturedLogs {
+    type Writer = Self;
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+#[tokio::test]
+async fn both_failing_models_leave_the_main_error_and_no_keys_anywhere() {
+    let primary = MockServer::start().await;
+    let backup = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(429)
+                .insert_header("retry-after", "7")
+                .set_body_json(json!({"error": {"message": "slow sk-primary-key"}})),
+        )
+        .mount(&primary)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(500)
+                .set_body_json(json!({"error": {"message": "broke sk-backup-key"}})),
+        )
+        .mount(&backup)
+        .await;
+
+    let logs = CapturedLogs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .with_writer(logs.clone())
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+    let response = app(pair_state(
+        &primary.uri(),
+        "openai",
+        &backup.uri(),
+        "openai",
+    ))
+    .oneshot(ask("claude-p-00000000"))
+    .await
+    .unwrap();
+    let status = response.status();
+    let retry_after = response
+        .headers()
+        .get("retry-after")
+        .map(|value| value.to_str().unwrap().to_string());
+    let body = json_body(response).await;
+    let logged = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+    drop(guard);
+
+    // The main model's refusal, whole: status, kind, retry-after.
+    assert_eq!(status.as_u16(), 429);
+    assert_eq!(retry_after.as_deref(), Some("7"));
+    assert_eq!(body["error"]["type"], "rate_limit_error");
+    let text = body.to_string();
+    assert!(!text.contains("sk-primary-key"), "{text}");
+    assert!(!text.contains("sk-backup-key"), "{text}");
+    assert_eq!(backup.received_requests().await.unwrap().len(), 1);
+    assert!(logged.contains("trying the backup"), "{logged}");
+    assert!(logged.contains("both the model and the backup"), "{logged}");
+    assert!(!logged.contains("sk-primary-key"), "{logged}");
+    assert!(!logged.contains("sk-backup-key"), "{logged}");
+}
+
+#[tokio::test]
+async fn a_stream_from_the_backup_reaches_the_client() {
+    let primary = MockServer::start().await;
+    let backup = MockServer::start().await;
+    mount_failure(
+        &primary,
+        "openai",
+        503,
+        json!({"error": {"message": "busy"}}),
+    )
+    .await;
+    let sse = concat!(
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"backup stream\"},\"finish_reason\":\"stop\"}]}\n\n",
+        "data: [DONE]\n\n"
+    );
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+        .mount(&backup)
+        .await;
+
+    let response = app(pair_state(
+        &primary.uri(),
+        "openai",
+        &backup.uri(),
+        "openai",
+    ))
+    .oneshot(post_messages(json!({
+        "model": "claude-p-00000000",
+        "max_tokens": 32,
+        "stream": true,
+        "messages": [{"role": "user", "content": "hi"}]
+    })))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = text_body(response).await;
+    assert!(body.contains("event: message_start"), "{body}");
+    assert!(body.contains("backup stream"), "{body}");
+    assert!(body.contains("event: message_stop"), "{body}");
+}
+
+#[tokio::test]
+async fn a_stream_that_already_started_is_not_moved_to_the_backup() {
+    let primary = MockServer::start().await;
+    let backup = MockServer::start().await;
+    let sse = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"he\"},\"finish_reason\":null}]}\n\n";
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"))
+        .mount(&primary)
+        .await;
+    Mock::given(method("POST"))
+        .respond_with(chat_reply("must not happen"))
+        .mount(&backup)
+        .await;
+
+    let response = app(pair_state(
+        &primary.uri(),
+        "openai",
+        &backup.uri(),
+        "openai",
+    ))
+    .oneshot(post_messages(json!({
+        "model": "claude-p-00000000",
+        "max_tokens": 32,
+        "stream": true,
+        "messages": [{"role": "user", "content": "hi"}]
+    })))
+    .await
+    .unwrap();
+    let body = text_body(response).await;
+    assert!(body.contains("\"type\":\"error\""), "{body}");
+    assert_eq!(backup.received_requests().await.unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn the_backup_is_not_called_when_it_is_the_same_route() {
+    let primary = MockServer::start().await;
+    mount_failure(
+        &primary,
+        "openai",
+        503,
+        json!({"error": {"message": "busy"}}),
+    )
+    .await;
+    let state = state_from(json!({
+        "default": "claude-p-00000000",
+        "backup": "claude-p-00000000",
+        "providers": [{
+            "id": "p", "type": "openai", "base_url": primary.uri(),
+            "models": {"claude-p-00000000": "m"}
+        }]
+    }));
+    let response = app(state).oneshot(ask("claude-p-00000000")).await.unwrap();
+    assert_eq!(response.status().as_u16(), 529);
+    assert_eq!(primary.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_critic_request_falls_back_and_a_request_for_the_backup_does_not() {
+    let primary = MockServer::start().await;
+    let backup = MockServer::start().await;
+    mount_failure(
+        &primary,
+        "openai",
+        503,
+        json!({"error": {"message": "busy"}}),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .respond_with(chat_reply("critic backup"))
+        .mount(&backup)
+        .await;
+
+    // The critic is just another route: when it fails, the backup answers.
+    let response = app(pair_state(
+        &primary.uri(),
+        "openai",
+        &backup.uri(),
+        "openai",
+    ))
+    .oneshot(ask("claude-critic-22222222"))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = json_body(response).await;
+    assert_eq!(body["content"][0]["text"], "critic backup");
+    assert_eq!(body["model"], "claude-critic-22222222");
+    assert_eq!(backup.received_requests().await.unwrap().len(), 1);
+
+    // A request that already goes to the backup is not retried anywhere.
+    let primary = MockServer::start().await;
+    let backup = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(chat_reply("must not happen"))
+        .mount(&primary)
+        .await;
+    mount_failure(
+        &backup,
+        "openai",
+        503,
+        json!({"error": {"message": "busy"}}),
+    )
+    .await;
+    let response = app(pair_state(
+        &primary.uri(),
+        "openai",
+        &backup.uri(),
+        "openai",
+    ))
+    .oneshot(ask("claude-b-11111111"))
+    .await
+    .unwrap();
+    assert_eq!(response.status().as_u16(), 529);
+    assert_eq!(primary.received_requests().await.unwrap().len(), 0);
+    assert_eq!(backup.received_requests().await.unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_backup_gets_the_request_in_its_own_shape_and_effort_ceiling() {
+    // OpenAI main model, Anthropic backup: its protocol, its model id, its effort ceiling.
+    let primary = MockServer::start().await;
+    let backup = MockServer::start().await;
+    mount_failure(
+        &primary,
+        "openai",
+        500,
+        json!({"error": {"message": "down"}}),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/messages"))
+        .respond_with(anthropic_reply("from anthropic backup"))
+        .mount(&backup)
+        .await;
+    let state = state_from(json!({
+        "default": "claude-p-00000000",
+        "backup": "claude-b-11111111",
+        "providers": [
+            {
+                "id": "p", "type": "openai", "base_url": primary.uri(),
+                "api_key": "sk-primary-key", // agent-kit: allow-secret
+                "models": {"claude-p-00000000": "primary-model"}
+            },
+            {
+                "id": "b", "type": "anthropic", "base_url": backup.uri(),
+                "api_key": "sk-backup-key", "maxEffort": "high", // agent-kit: allow-secret
+                "models": {"claude-b-11111111": "backup-model"}
+            }
+        ]
+    }));
+    let response = app(state)
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000",
+            "max_tokens": 32,
+            "output_config": {"effort": "max"},
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await["content"][0]["text"],
+        "from anthropic backup"
+    );
+    let sent: Value =
+        serde_json::from_slice(&backup.received_requests().await.unwrap()[0].body).unwrap();
+    assert_eq!(sent["model"], "backup-model");
+    assert_eq!(sent["output_config"]["effort"], "high");
+    assert!(sent.get("reasoning_effort").is_none());
+
+    // Anthropic main model, OpenAI backup: reasoning_effort is built by its own ceiling.
+    let primary = MockServer::start().await;
+    let backup = MockServer::start().await;
+    mount_failure(
+        &primary,
+        "anthropic",
+        500,
+        json!({"type": "error", "error": {"message": "down"}}),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(chat_reply("from openai backup"))
+        .mount(&backup)
+        .await;
+    let state = state_from(json!({
+        "default": "claude-p-00000000",
+        "backup": "claude-b-11111111",
+        "providers": [
+            {
+                "id": "p", "type": "anthropic", "base_url": primary.uri(),
+                "api_key": "sk-primary-key", // agent-kit: allow-secret
+                "models": {"claude-p-00000000": "primary-model"}
+            },
+            {
+                "id": "b", "type": "openai", "base_url": backup.uri(),
+                "api_key": "sk-backup-key", "maxEffort": "low", // agent-kit: allow-secret
+                "models": {"claude-b-11111111": "backup-model"}
+            }
+        ]
+    }));
+    let response = app(state)
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000",
+            "max_tokens": 32,
+            "output_config": {"effort": "high"},
+            "messages": [{"role": "user", "content": "hi"}]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await["content"][0]["text"],
+        "from openai backup"
+    );
+    let sent: Value =
+        serde_json::from_slice(&backup.received_requests().await.unwrap()[0].body).unwrap();
+    assert_eq!(sent["model"], "backup-model");
+    assert_eq!(sent["reasoning_effort"], "low");
+    assert!(sent.get("output_config").is_none());
+}
+
+#[tokio::test]
+async fn local_routes_never_use_the_backup() {
+    let backup = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(chat_reply("must not happen"))
+        .mount(&backup)
+        .await;
+    let state = pair_state(&closed_port_url(), "openai", &backup.uri(), "openai");
+
+    // A probe answers locally.
+    let response = app(state.clone())
+        .oneshot(post_messages(json!({
+            "model": "claude-p-00000000",
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "."}]
+        })))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // Token counting of an OpenAI provider is local.
+    let response = app(state.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/v1/messages/count_tokens")
+                .header("x-api-key", "local-token")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({
+                        "model": "claude-p-00000000",
+                        "messages": [{"role": "user", "content": "x"}]
+                    })
+                    .to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    // The model list comes from the router.
+    let response = app(state)
+        .oneshot(
+            Request::builder()
+                .method("GET")
+                .uri("/v1/models")
+                .header("x-api-key", "local-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(backup.received_requests().await.unwrap().len(), 0);
+}

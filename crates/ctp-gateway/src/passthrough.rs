@@ -1,5 +1,6 @@
 use crate::error;
 use crate::state::{AppState, Provider};
+use crate::upstream::{Failure, Raw};
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
@@ -11,7 +12,7 @@ use tracing::{info, warn};
 
 pub(crate) const ANTHROPIC_VERSION: &str = "2023-06-01";
 
-pub async fn messages(
+pub(crate) async fn messages(
     state: &AppState,
     provider: &Provider,
     uri: &Uri,
@@ -19,7 +20,7 @@ pub async fn messages(
     mut body: Value,
     stream: bool,
     started: Instant,
-) -> Response {
+) -> Result<Response, Failure> {
     body["stream"] = json!(stream);
     entrypoint_as_sdk_cli(&mut body);
     let url = provider.anthropic_url("/messages", uri.query());
@@ -30,7 +31,7 @@ pub async fn messages(
         Ok(response) => response,
         Err(exc) => {
             warn!(provider = %provider.id, error = %exc, "Anthropic passthrough: network");
-            return error::anthropic_error(502, "api_error", exc.to_string());
+            return Err(Failure::Network(exc.to_string()));
         }
     };
     let status = upstream.status();
@@ -43,21 +44,46 @@ pub async fn messages(
             .unwrap_or("application/json")
             .to_string();
         let relayed = relayed_headers(upstream.headers());
-        let mut payload = match upstream.bytes().await {
+        let retry_after = upstream
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let payload = match upstream.bytes().await {
             Ok(payload) => payload,
-            Err(exc) => return error::anthropic_error(502, "api_error", exc.to_string()),
+            Err(exc) => return Err(Failure::Body(exc.to_string())),
         };
-        // Провайдер или прокси может повторить ключ в тексте отказа; в окно Claude и в его
-        // журнал он не должен попасть (OpenAI-путь вырезает его так же).
-        // В байтах, а не в тексте: тело не в UTF-8 (HTML прокси в cp1251) остаётся целым.
         if !status.is_success() {
             // Anthropic-совместимые провайдеры не Anthropic пишут о переполнении окна своими
             // словами, а Claude Code сжимает разговор только по «prompt is too long».
             let text = String::from_utf8_lossy(&payload);
-            if crate::openai::adapt::is_overflow(&text) && !text.contains("prompt is too long") {
-                return error::upstream_error(status.as_u16(), &text, &provider.api_key);
-            }
-            payload = error::without_secret_bytes(&payload, &provider.api_key).into();
+            let overflow =
+                crate::openai::adapt::is_overflow(&text) && !text.contains("prompt is too long");
+            // Провайдер или прокси может повторить ключ в тексте отказа; в окно Claude и в его
+            // журнал он не должен попасть. В байтах, а не в тексте: тело не в UTF-8 (HTML
+            // прокси в cp1251) остаётся целым.
+            let text = error::without_secret(&text, &provider.api_key);
+            let raw = (!overflow).then(|| {
+                Box::new(Raw {
+                    status: status.as_u16(),
+                    content_type,
+                    payload: error::without_secret_bytes(&payload, &provider.api_key).into(),
+                    headers: relayed,
+                })
+            });
+            info!(
+                provider = %provider.id,
+                status = status.as_u16(),
+                ms = started.elapsed().as_millis(),
+                "POST /v1/messages passthrough"
+            );
+            return Err(Failure::Status {
+                status: status.as_u16(),
+                text,
+                // Переполнение сегодня уходит словами Anthropic и без заголовков.
+                retry_after: if overflow { None } else { retry_after },
+                raw,
+            });
         }
         info!(
             provider = %provider.id,
@@ -67,7 +93,7 @@ pub async fn messages(
         );
         let mut response = bytes_response(status.as_u16(), &content_type, payload);
         response.headers_mut().extend(relayed);
-        return response;
+        return Ok(response);
     }
 
     info!(provider = %provider.id, "POST /v1/messages passthrough: stream");
@@ -87,7 +113,7 @@ pub async fn messages(
         .body(Body::from_stream(stream_body))
         .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
     response.headers_mut().extend(relayed);
-    response
+    Ok(response)
 }
 
 /// Счётчик токенов Anthropic-провайдера. Ошибку сети вызывающий превращает

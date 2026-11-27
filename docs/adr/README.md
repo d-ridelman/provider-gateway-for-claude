@@ -51,3 +51,4 @@
 | [020](020-chat-surface-first.md) | Окно PGC открывается в Chat, а не в Code | Accepted |
 | [021](021-msix-as-claude-source.md) | Копия Claude собирается из MSIX-пакета, когда Squirrel-папки нет | Accepted |
 | [022](022-claude-signature-ca-pin.md) | Подпись скачиваемого Claude: CN и отпечаток удостоверяющего центра | Accepted |
+| [023](023-backup-model.md) | Запасная модель: отказ провайдера не останавливает сессию | Accepted |

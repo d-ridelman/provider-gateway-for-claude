@@ -2,6 +2,7 @@ use crate::error;
 use crate::passthrough::RequestLog;
 use crate::sse;
 use crate::state::{AppState, Provider};
+use crate::upstream::Failure;
 use axum::body::{Body, Bytes};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -17,37 +18,6 @@ pub mod request;
 pub mod response;
 pub mod stream;
 
-/// Отказ провайдера до первого байта ответа.
-enum SendError {
-    Network(String),
-    Status {
-        status: u16,
-        text: String,
-        retry_after: Option<String>,
-    },
-}
-
-impl SendError {
-    fn response(self, provider: &Provider) -> Response {
-        match self {
-            Self::Network(text) => error::anthropic_error(502, "api_error", text),
-            Self::Status {
-                status,
-                text,
-                retry_after,
-            } => {
-                let mut response = error::upstream_error(status, &text, &provider.api_key);
-                if let Some(value) = retry_after
-                    && let Ok(value) = HeaderValue::from_str(&value)
-                {
-                    response.headers_mut().insert("retry-after", value);
-                }
-                response
-            }
-        }
-    }
-}
-
 /// Запрос к провайдеру. Один повтор, если он ругается на слишком большой max_tokens.
 /// Неясный 400 — лесенка упрощений (`adapt`): шаги по одному, пока не примет; помогало
 /// дважды — модель выучена и запрос упрощается заранее.
@@ -57,7 +27,7 @@ async fn send(
     headers: &HeaderMap,
     upstream_model: &str,
     payload: &mut Value,
-) -> Result<reqwest::Response, SendError> {
+) -> Result<reqwest::Response, Failure> {
     let started = Instant::now();
     let url = provider.chat_url();
     let key = format!("{}/{}", provider.id, upstream_model);
@@ -90,7 +60,7 @@ async fn send(
             Ok(response) => response,
             Err(exc) => {
                 warn!(provider = %provider.id, error = %exc, "OpenAI upstream: network");
-                return Err(SendError::Network(exc.to_string()));
+                return Err(Failure::Network(exc.to_string()));
             }
         };
         if response.status().is_success() {
@@ -225,10 +195,11 @@ async fn send(
             provider_said = %snippet(&reason),
             "OpenAI upstream error"
         );
-        return Err(SendError::Status {
+        return Err(Failure::Status {
             status,
             text,
             retry_after,
+            raw: None,
         });
     }
 }
@@ -248,7 +219,7 @@ fn snippet(text: &str) -> String {
 }
 
 #[allow(clippy::too_many_arguments)]
-pub async fn messages(
+pub(crate) async fn messages(
     state: &AppState,
     provider: &Provider,
     client_model: &str,
@@ -257,7 +228,7 @@ pub async fn messages(
     stream: bool,
     started: Instant,
     session: Option<&str>,
-) -> Response {
+) -> Result<Response, Failure> {
     let mut payload = request::build(provider, &body, stream);
     // Если провайдеру придётся сокращать имена инструментов, в ответе они вернутся прежними.
     let names = adapt::name_map(&body);
@@ -268,32 +239,32 @@ pub async fn messages(
         tokio::task::spawn_blocking(move || ctp_core::tokens::count_json_tokens(&body)).await;
     let input_tokens = match counted {
         Ok(tokens) => tokens,
-        Err(exc) => return error::anthropic_error(500, "api_error", exc.to_string()),
+        Err(exc) => return Ok(error::anthropic_error(500, "api_error", exc.to_string())),
     };
 
-    let upstream = match send(state, provider, &headers, upstream_model, &mut payload).await {
-        Ok(upstream) => upstream,
-        Err(exc) => return exc.response(provider),
-    };
+    let upstream = send(state, provider, &headers, upstream_model, &mut payload).await?;
 
     let status = upstream.status();
     if !stream {
         let text = match upstream.text().await {
             Ok(text) => text,
-            Err(exc) => return error::anthropic_error(502, "api_error", exc.to_string()),
+            Err(exc) => return Err(Failure::Body(exc.to_string())),
         };
         let value: Value = match serde_json::from_str(&text) {
             Ok(value) => value,
-            Err(_) => {
-                return error::anthropic_error(502, "api_error", "provider returned non-JSON");
-            }
+            Err(_) => return Err(Failure::Body("provider returned non-JSON".into())),
         };
         if value.get("error").is_some() {
-            return error::upstream_error(status.as_u16(), &text, &provider.api_key);
+            return Err(Failure::Status {
+                status: status.as_u16(),
+                text,
+                retry_after: None,
+                raw: None,
+            });
         }
         let mut message = match response::translate(&value, client_model, input_tokens) {
             Ok(message) => message,
-            Err(exc) => return error::anthropic_error(502, "api_error", exc.to_string()),
+            Err(exc) => return Err(Failure::Body(exc.to_string())),
         };
         response::restore_names(&mut message, &names);
         info!(
@@ -302,7 +273,7 @@ pub async fn messages(
             ms = started.elapsed().as_millis(),
             "POST /v1/messages openai"
         );
-        return (StatusCode::OK, axum::Json(message)).into_response();
+        return Ok((StatusCode::OK, axum::Json(message)).into_response());
     }
 
     let content_type = upstream
@@ -316,20 +287,23 @@ pub async fn messages(
         // Провайдер проигнорировал stream и вернул обычный JSON.
         let text = match upstream.text().await {
             Ok(text) => text,
-            Err(exc) => return error::anthropic_error(502, "api_error", exc.to_string()),
+            Err(exc) => return Err(Failure::Body(exc.to_string())),
         };
         let value: Value = match serde_json::from_str(&text) {
             Ok(value) => value,
-            Err(_) => {
-                return error::anthropic_error(502, "api_error", "provider returned non-JSON");
-            }
+            Err(_) => return Err(Failure::Body("provider returned non-JSON".into())),
         };
         if value.get("error").is_some() {
-            return error::upstream_error(status.as_u16(), &text, &provider.api_key);
+            return Err(Failure::Status {
+                status: status.as_u16(),
+                text,
+                retry_after: None,
+                raw: None,
+            });
         }
         let mut message = match response::translate(&value, client_model, input_tokens) {
             Ok(message) => message,
-            Err(exc) => return error::anthropic_error(502, "api_error", exc.to_string()),
+            Err(exc) => return Err(Failure::Body(exc.to_string())),
         };
         response::restore_names(&mut message, &names);
         info!(
@@ -337,7 +311,7 @@ pub async fn messages(
             model = %upstream_model,
             "POST /v1/messages openai: stream replaced with a whole response"
         );
-        return sse::response(response::to_events(&message));
+        return Ok(sse::response(response::to_events(&message)));
     }
 
     let mut translator = stream::StreamTranslator::new(client_model, input_tokens)
@@ -411,12 +385,12 @@ pub async fn messages(
         }
     };
 
-    Response::builder()
+    Ok(Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from_stream(events))
-        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()))
 }
 
 pub(crate) fn upstream_headers(provider: &Provider, session: Option<&str>) -> HeaderMap {

@@ -7,6 +7,7 @@ pub mod probe;
 pub mod proxy;
 pub mod sse;
 pub mod state;
+pub mod upstream;
 pub mod util;
 pub mod websearch;
 pub mod websearch_tool;

@@ -272,10 +272,14 @@ pub fn apply_provider(
     // Переименованный провайдер уносит с собой выбранные на его модели роли.
     if let Some(old) = original.filter(|old| *old != row.id) {
         let roles = &mut next.model_roles;
-        for role in [roles.sonnet.as_mut(), roles.critic.as_mut()]
-            .into_iter()
-            .flatten()
-            .filter(|role| role.provider == old)
+        for role in [
+            roles.sonnet.as_mut(),
+            roles.critic.as_mut(),
+            roles.backup.as_mut(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|role| role.provider == old)
         {
             role.provider = row.id.clone();
         }
@@ -422,7 +426,12 @@ pub fn build_file(config: &Config) -> Result<ProvidersFile, String> {
             .first()
             .and_then(|provider| provider.models.first().map(|(alias, _)| alias.clone()))
     });
-    Ok(ProvidersFile { default, providers })
+    let backup = role_alias(config, config.model_roles.backup.as_ref());
+    Ok(ProvidersFile {
+        default,
+        backup,
+        providers,
+    })
 }
 
 /// Ключ не нужен только настоящему loopback: `localhost.evil.com` — не «локальный».
@@ -652,6 +661,7 @@ mod tests {
         assert_eq!(file.providers.len(), 1);
         assert_eq!(file.providers[0].models.len(), 2);
         assert_eq!(file.providers[0].models[1].1, "qwen3:8b");
+        assert!(file.backup.is_none(), "запасная не выбрана");
         assert_eq!(
             file.default.as_deref(),
             Some(desktop_alias("openai", "gpt-5.2").as_str())
@@ -665,6 +675,16 @@ mod tests {
         assert_eq!(
             build_file(&with_main).unwrap().default,
             Some(desktop_alias("openai", "qwen3:8b"))
+        );
+        // Запасная едет в файл шлюза своим псевдонимом (ADR-023).
+        let mut with_backup = config.clone();
+        with_backup.model_roles.backup = Some(crate::model::ModelRef {
+            provider: "openai".into(),
+            model: "gpt-5.2".into(),
+        });
+        assert_eq!(
+            build_file(&with_backup).unwrap().backup,
+            Some(desktop_alias("openai", "gpt-5.2"))
         );
     }
 
@@ -878,6 +898,7 @@ mod tests {
             model: "gpt-5.2".into(),
         });
         with_role.model_roles.critic = with_role.model_roles.sonnet.clone();
+        with_role.model_roles.backup = with_role.model_roles.sonnet.clone();
         let next = apply_provider(&with_role, renamed, Some("openai")).unwrap();
         assert_eq!(
             next.model_roles
@@ -886,6 +907,14 @@ mod tests {
                 .map(|r| r.provider.as_str()),
             Some("openai2"),
             "и критик"
+        );
+        assert_eq!(
+            next.model_roles
+                .backup
+                .as_ref()
+                .map(|r| r.provider.as_str()),
+            Some("openai2"),
+            "и запасная"
         );
         assert_eq!(next.providers[0].id, "openai2", "позиция сохраняется");
         assert_eq!(next.providers.len(), 2);

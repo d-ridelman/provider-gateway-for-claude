@@ -75,7 +75,10 @@ const STUB = String.raw`
     port: 17899, token: "ctp-0000000000000000000000000000000000000", claudePath: null, detectedClaude: home, providers,
     russianUi: false, builtinBrowser: false, artifacts: false, coworkMode: "host", russianFile: true, configDir: "C:\\Users\\user\\AppData\\Roaming\\app.provider-gateway-for-claude",
     codeDir: null, language: lang, languagePref: "auto", themePref, autoUpdate: true, version: "${VERSION}",
-    modelRoles: { sonnet: providers.length ? { provider: providers[0].id, model: providers[0].models[0] } : null },
+    modelRoles: {
+      sonnet: providers.length ? { provider: providers[0].id, model: providers[0].models[0] } : null,
+      backup: providers.length > 1 ? { provider: providers[1].id, model: providers[1].models[0] } : null,
+    },
     codePortable: scenario === "portable",
     detectedCode: scenario === "empty" ? null : "C:\\Users\\user\\.local\\bin\\claude.exe",
     installed: scenario === "portable"

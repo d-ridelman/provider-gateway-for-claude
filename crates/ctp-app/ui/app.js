@@ -54,7 +54,7 @@ const el = Object.fromEntries(
     "logPanel", "logText", "logsBtn", "toast", "toastText", "presetField", "presetInput", "fetchModelsBtn",
     "testBtn", "pickerBox", "pickerFilter", "pickerCount", "pickerList", "dialog", "dialogTitle",
     "dialogText", "dialogOk", "dialogCancel", "dialogAlt", "dialogCheckRow", "dialogCheck", "dialogCheckText",
-    "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn", "roleSonnet", "roleCritic",
+    "updateBtn", "versionText", "autoUpdateInput", "checkUpdateBtn", "roleSonnet", "roleBackup", "roleCritic",
     "desktopPortableBtn", "desktopInstallBtn", "desktopGetHint", "codeFound",
     "codePortableInput", "codePortableBtn", "codeInstallBtn", "codeGetHint",
     "proxyBtn", "proxyChip", "proxyChipText", "proxyPanel", "proxyError", "proxyCoreLine", "proxyCoreBtn",
@@ -1259,9 +1259,11 @@ function settingsDirty() {
 }
 
 // Model roles: role, select id, text of the "not chosen" option. The main one (the strong and
-// fast roles are gone, every role goes to it) and the critic for project scripts (ADR-012).
+// fast roles are gone, every role goes to it), the backup the gateway retries on (ADR-023) and
+// the critic for project scripts (ADR-012).
 const ROLES = [
   ["sonnet", "roleSonnet", "settings.roleFirst"],
+  ["backup", "roleBackup", "settings.roleBackupNone"],
   ["critic", "roleCritic", "settings.roleCriticNone"],
 ];
 
@@ -1992,10 +1994,12 @@ async function saveSettings() {
     el.portInput.focus();
     return;
   }
-  // A new port or a new main model (the gateway's default) stop the gateway; then bring it
-  // back if it was running. The critic is for scripts only and needs no restart.
+  // A new port, main model (the gateway's default) or backup model stop the gateway; then bring
+  // it back if it was running. The critic is for scripts only and needs no restart.
   const portChanged = port !== state.config?.port;
-  const rolesChanged = el.roleSonnet.value !== roleKey(state.config?.modelRoles?.sonnet);
+  const rolesChanged =
+    el.roleSonnet.value !== roleKey(state.config?.modelRoles?.sonnet) ||
+    el.roleBackup.value !== roleKey(state.config?.modelRoles?.backup);
   const wasRunning = (portChanged || rolesChanged) && (starting > 0 || !!state.status?.running);
   try {
     state.config = await invoke("save_settings", {
