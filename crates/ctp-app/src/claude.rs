@@ -156,7 +156,7 @@ const MAX_OUTPUT: u64 = 128_000;
 
 /// Переменные Claude Code для любой его сессии через шлюз: в консоли кнопки «Claude Code» и
 /// во вкладке Code у Claude Desktop (Desktop передаёт сессиям своё окружение).
-pub const SESSION_ENV: [(&str, &str); 5] = [
+pub const SESSION_ENV: [(&str, &str); 6] = [
     // Проверку auto mode делает классификатор самого Claude Code, а не сервер
     // (code.claude.com/docs/en/auto-mode-config).
     ("CLAUDE_CODE_AUTO_MODE_SERVER", "0"),
@@ -172,6 +172,9 @@ pub const SESSION_ENV: [(&str, &str); 5] = [
     ("CLAUDE_CODE_ATTRIBUTION_HEADER", "0"),
     // Коннекторы claude.ai требуют входа в аккаунт Anthropic — через шлюз их нет.
     ("ENABLE_CLAUDEAI_MCP_SERVERS", "false"),
+    // `/ship` и `/steward` из Claude Code 2.1.331 — команды Anthropic; Desktop гасит их своим
+    // сессиям сам, а консоль PGC запускает CLI напрямую, поэтому переменную ставим ей.
+    ("CLAUDE_CODE_DISABLE_SHIP", "1"),
 ];
 
 /// Основная модель шлюза: роль `sonnet` или первая. Роль, чьей модели нет среди запущенных
@@ -1688,6 +1691,7 @@ mod tests {
             ("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST", "1"),
             ("CLAUDE_CODE_ENABLE_TODO_TOOLS", "1"),
             ("CLAUDE_CODE_INLINE_TOOLS", "false"),
+            ("CLAUDE_CODE_DISABLE_SHIP", "1"),
             ("ENABLE_TOOL_SEARCH", "true"),
         ] {
             assert!(env.contains(&(pair.0.into(), pair.1.into())), "{pair:?}");

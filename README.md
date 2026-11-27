@@ -126,7 +126,7 @@ No model is asked and no project file is sent anywhere: on 15 open projects a pi
 
 #### agent-kit
 
-The installer and the portable exe carry a pinned agent-kit (MIT). When Claude Code has no agent-kit marketplace, PGC unpacks it to its own folder and installs it from there. When the agent-kit in PGC, or in a marketplace folder you added yourself, differs from the project's copy, the page offers **Update agent-kit**; nothing updates by itself.
+The installer and the portable exe carry a pinned agent-kit (MIT). When Claude Code has no agent-kit marketplace, PGC unpacks it to its own folder and installs it from there. When the agent-kit in PGC, or in a marketplace folder you added yourself, differs from the project's copy, the page offers **Update agent-kit**; nothing updates by itself. The kit also carries the cleanup rule for every connected project and `agent-kit clean`: it counts compiler caches, finished worktrees and temp folders, and removes only paths git ignores.
 
 ### Web search
 

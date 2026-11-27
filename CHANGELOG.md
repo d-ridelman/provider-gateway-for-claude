@@ -4,6 +4,14 @@ All notable changes to this project are listed here. The format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- **The built-in agent-kit now cleans build and debug junk, and every connected project gets the rule that asks for it.** `agent-kit clean` counts compiler caches, `node_modules`, `dist` and `state` of finished worktrees and temp folders in the project root; `--apply` removes only paths git ignores and only from a known list, a clean worktree goes as a whole, a worktree with work keeps its code, and a file a build holds stays with a reason. The Projects page offers the new `.claude/rules/cleanup.md` to an existing project as one more rule, without touching the rules it already has.
+
+### Fixed
+
+- **`/ship` and `/steward` no longer show up in the Claude Code console opened from PGC.** Claude Code 2.1.331 adds these two Anthropic commands; Claude Desktop turns them off for its own sessions with `CLAUDE_CODE_DISABLE_SHIP`, but PGC starts the console's CLI itself, so the variable is now set for it.
+
 ## [0.2.4] - 2026-11-26
 
 ### Fixed
